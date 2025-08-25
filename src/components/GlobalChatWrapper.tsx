@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useGlobalChat } from '../contexts/GlobalChatContext';
 import { useSupabaseAuth } from '../hooks/useSupabaseAuth';
 import IntegratedChatPanel from './IntegratedChatPanel';
-import supabase from '../lib/supabaseClient';
+import { supabase } from '../lib/supabase/client';
 import { Provider } from '../types';
 
 export default function GlobalChatWrapper() {

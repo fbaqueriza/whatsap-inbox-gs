@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { usePushNotifications } from '../hooks/usePushNotifications';
-import supabase from '../lib/supabaseClient';
+import { supabase } from '../lib/supabase/client';
 import { WhatsAppMessage, Contact } from '../types/whatsapp';
 
 // Tipos

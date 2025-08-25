@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSupabaseAuth } from '../../../hooks/useSupabaseAuth';
 import { Eye, EyeOff, ArrowLeft, Lock } from 'lucide-react';
-import supabase from '../../../lib/supabaseClient';
+import { supabase } from '../../../lib/supabase/client';
 
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState('');

@@ -15,7 +15,7 @@ export class OrderNotificationService {
     try {
       const { order, provider, items } = data;
       
-      // Normalizar el número de teléfono del proveedor
+      // Normalizar el número de teléfono del proveedor - CONSISTENTE
       let normalizedPhone = provider.phone.replace(/[\s\-\(\)]/g, '');
       if (!normalizedPhone.startsWith('+')) {
         normalizedPhone = `+${normalizedPhone}`;
@@ -77,7 +77,7 @@ export class OrderNotificationService {
         body: JSON.stringify({
           orderId: order.id,
           providerId: provider.id,
-          providerPhone: provider.phone,
+          providerPhone: normalizedPhone, // Usar el número normalizado
           orderData: {
             order,
             provider,
@@ -122,7 +122,7 @@ export class OrderNotificationService {
       const { order, provider, items } = pendingOrder.orderData;
       const orderMessage = this.createOrderMessage(order, provider, items);
 
-      // Normalizar el número de teléfono
+      // Normalizar el número de teléfono - CONSISTENTE
       let normalizedPhone = providerPhone.replace(/[\s\-\(\)]/g, '');
       if (!normalizedPhone.startsWith('+')) {
         normalizedPhone = `+${normalizedPhone}`;

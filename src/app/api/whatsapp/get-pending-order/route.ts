@@ -53,8 +53,12 @@ export async function POST(request: NextRequest) {
         .single();
       
       console.log('🔍 Resultado de búsqueda sin +:', { data: result.data, error: result.error });
-      data = result.data;
-      error = result.error;
+      
+      // Solo actualizar si encontramos datos
+      if (result.data && !result.error) {
+        data = result.data;
+        error = null; // Resetear el error si encontramos datos
+      }
     }
 
     if (error || !data) {

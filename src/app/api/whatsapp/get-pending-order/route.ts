@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
     console.log('🔍 Buscando pedido pendiente para:', normalizedPhone);
     
     // Buscar con el número normalizado
+    console.log('🔍 Buscando pedido pendiente con número:', normalizedPhone);
     let { data, error } = await supabase
       .from('pending_orders')
       .select('*')
@@ -35,10 +36,13 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .single();
     
+    console.log('🔍 Resultado de búsqueda con +:', { data, error });
+    
     // Si no se encuentra, buscar sin el +
     if (error || !data) {
       console.log('🔍 No encontrado con +, buscando sin +...');
       const phoneWithoutPlus = normalizedPhone.replace('+', '');
+      console.log('🔍 Buscando con número sin +:', phoneWithoutPlus);
       const result = await supabase
         .from('pending_orders')
         .select('*')
@@ -48,6 +52,7 @@ export async function POST(request: NextRequest) {
         .limit(1)
         .single();
       
+      console.log('🔍 Resultado de búsqueda sin +:', { data: result.data, error: result.error });
       data = result.data;
       error = result.error;
     }

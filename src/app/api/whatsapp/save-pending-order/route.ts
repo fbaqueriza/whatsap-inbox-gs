@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
+    console.log('💾 Guardando pedido pendiente con número:', providerPhone);
     const { error } = await supabase
       .from('pending_orders')
       .insert({

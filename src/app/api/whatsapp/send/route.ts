@@ -15,6 +15,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
+    const phoneRegex = /^\+54\d{9,11}$/;
+    if (!phoneRegex.test(to)) {
+      console.error('❌ Formato de teléfono inválido:', to);
+      console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+      return NextResponse.json(
+        { error: 'Formato de teléfono inválido. Debe ser: +54XXXXXXXXXX' },
+        { status: 400 }
+      );
+    }
+
     console.log('🔍 API sendMessage - Estado del servicio:', {
       enabled: metaWhatsAppService.isServiceEnabled(),
       simulationMode: metaWhatsAppService.isSimulationModeEnabled()

@@ -127,7 +127,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           // Filtrar mensajes que correspondan a los proveedores del usuario actual
           .filter((msg: any) => {
             const contactId = normalizeContactIdentifier(msg.contact_id);
-            return userProviderPhones.includes(contactId);
+            const isIncluded = userProviderPhones.includes(contactId);
+            return isIncluded;
           });
         
         // PRESERVAR MENSAJES LOCALES Y DETECTAR NUEVOS MENSAJES

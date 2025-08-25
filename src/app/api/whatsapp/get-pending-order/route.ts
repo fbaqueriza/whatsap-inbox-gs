@@ -17,49 +17,26 @@ export async function POST(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Normalizar el número de teléfono para la búsqueda
-    let normalizedPhone = providerPhone.replace(/[\s\-\(\)]/g, '');
-    if (!normalizedPhone.startsWith('+')) {
-      normalizedPhone = `+${normalizedPhone}`;
+    // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
+    const phoneRegex = /^\+54\d{9,11}$/;
+    if (!phoneRegex.test(providerPhone)) {
+      console.error('❌ Formato de teléfono inválido:', providerPhone);
+      console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+      return NextResponse.json(
+        { success: false, error: 'Formato de teléfono inválido. Debe ser: +54XXXXXXXXXX' },
+        { status: 400 }
+      );
     }
     
-    console.log('🔍 Buscando pedido pendiente para:', normalizedPhone);
-    
-    // Buscar con el número normalizado
-    console.log('🔍 Buscando pedido pendiente con número:', normalizedPhone);
-    let { data, error } = await supabase
+    // Buscar directamente con el número validado
+    const { data, error } = await supabase
       .from('pending_orders')
       .select('*')
-      .eq('provider_phone', normalizedPhone)
+      .eq('provider_phone', providerPhone)
       .eq('status', 'pending_confirmation')
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
-    
-    console.log('🔍 Resultado de búsqueda con +:', { data, error });
-    
-    // Si no se encuentra, buscar sin el +
-    if (error || !data) {
-      console.log('🔍 No encontrado con +, buscando sin +...');
-      const phoneWithoutPlus = normalizedPhone.replace('+', '');
-      console.log('🔍 Buscando con número sin +:', phoneWithoutPlus);
-      const result = await supabase
-        .from('pending_orders')
-        .select('*')
-        .eq('provider_phone', phoneWithoutPlus)
-        .eq('status', 'pending_confirmation')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-      
-      console.log('🔍 Resultado de búsqueda sin +:', { data: result.data, error: result.error });
-      
-      // Solo actualizar si encontramos datos
-      if (result.data && !result.error) {
-        data = result.data;
-        error = null; // Resetear el error si encontramos datos
-      }
-    }
 
     if (error || !data) {
       return NextResponse.json(
@@ -79,7 +56,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error en get-pending-order:', error);
+    console.error('❌ Error en get-pending-order:', error);
     return NextResponse.json(
       { success: false, error: 'Error interno del servidor' },
       { status: 500 }

@@ -57,10 +57,19 @@ export async function POST(request: NextRequest) {
         
         // Procesar cada mensaje - TIEMPO REAL
         for (const message of messages) {
-          // Normalizar el número de teléfono para que coincida con el formato del frontend
+          // Meta envía números SIN el prefijo +, necesitamos agregarlo
           let normalizedFrom = message.from;
-          if (normalizedFrom && !normalizedFrom.startsWith('+')) {
-            normalizedFrom = `+${normalizedFrom}`;
+          if (!normalizedFrom.startsWith('+')) {
+            normalizedFrom = '+' + normalizedFrom;
+          }
+          
+          // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
+          const phoneRegex = /^\+54\d{9,11}$/;
+          
+          if (!phoneRegex.test(normalizedFrom)) {
+            console.error('❌ Formato de teléfono inválido en webhook:', normalizedFrom);
+            console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+            continue; // Saltar este mensaje
           }
 
           // Extraer el contenido del mensaje
@@ -76,61 +85,44 @@ export async function POST(request: NextRequest) {
           } else {
             messageContent = '[Mensaje no soportado]';
           }
-
+          
           // Procesar mensaje en base de datos (incluye SSE)
-          await metaWhatsAppService.processIncomingMessage(message);
+          console.log('💾 Procesando mensaje en base de datos...');
+          await metaWhatsAppService.processIncomingMessage({
+            from: normalizedFrom,
+            to: message.to || process.env.WHATSAPP_PHONE_NUMBER_ID,
+            content: messageContent,
+            timestamp: new Date(parseInt(message.timestamp) * 1000),
+            id: message.id,
+            type: message.type
+          });
+          console.log('✅ Mensaje procesado en base de datos');
 
-          // Verificar si es una respuesta de proveedor y enviar detalles del pedido (solo después del disparador inicial)
-          if (messageContent && messageContent.trim().length > 0) {
-            console.log('🔍 Verificando si es respuesta de proveedor:', normalizedFrom);
+          // Verificar si es respuesta de proveedor y enviar detalles del pedido
+          console.log('🔍 Verificando si es respuesta de proveedor:', normalizedFrom);
+          const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+          
+          const checkResponse = await fetch(`${baseUrl}/api/whatsapp/get-pending-order`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ providerPhone: normalizedFrom }),
+          });
+
+          if (checkResponse.ok) {
+            const checkResult = await checkResponse.json();
             
-            try {
-              // Verificar si hay un pedido pendiente para este proveedor
-              const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
-              const checkResponse = await fetch(`${baseUrl}/api/whatsapp/get-pending-order`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ providerPhone: normalizedFrom }),
-              });
-
-              // Solo enviar la orden si hay un pedido pendiente Y es la primera respuesta después del disparador
-              if (checkResponse.ok) {
-                const checkResult = await checkResponse.json();
-                if (checkResult.success && checkResult.order) {
-                  // Verificar si este es el primer mensaje después del disparador
-                  // Solo enviar la orden si el pedido fue creado recientemente (últimos 2 minutos)
-                  const orderCreatedAt = new Date(checkResult.order.created_at);
-                  const now = new Date();
-                  const timeDiff = now.getTime() - orderCreatedAt.getTime();
-                  const twoMinutes = 2 * 60 * 1000; // 2 minutos en milisegundos
-                  
-                  console.log('⏰ Verificación de tiempo:', {
-                    orderCreatedAt: orderCreatedAt.toISOString(),
-                    now: now.toISOString(),
-                    timeDiff: timeDiff,
-                    twoMinutes: twoMinutes,
-                    shouldSend: timeDiff <= twoMinutes
-                  });
-                  
-                  if (timeDiff <= twoMinutes) {
-                    console.log('📝 Enviando detalles completos del pedido después de confirmación...');
-                    const success = await OrderNotificationService.sendOrderDetailsAfterConfirmation(normalizedFrom);
-                    if (success) {
-                      console.log('✅ Detalles del pedido enviados exitosamente después de confirmación');
-                    }
-                  } else {
-                    console.log('ℹ️ Pedido pendiente pero no es la primera respuesta (pasaron más de 2 minutos), no se envía orden automática');
-                  }
-                } else {
-                  console.log('ℹ️ No hay pedido pendiente para este proveedor, no se envía orden automática');
-                }
-              } else {
-                console.log('ℹ️ No hay pedido pendiente para este proveedor, no se envía orden automática');
-              }
-            } catch (error) {
-              console.error('❌ Error procesando respuesta de proveedor:', error);
+            // Verificar si el pedido fue creado en los últimos 2 minutos
+            const orderCreatedAt = new Date(checkResult.createdAt);
+            const now = new Date();
+            const timeDiff = now.getTime() - orderCreatedAt.getTime();
+            const twoMinutes = 2 * 60 * 1000; // 2 minutos en milisegundos
+            const shouldSend = timeDiff <= twoMinutes;
+            
+            if (shouldSend) {
+              console.log('📝 Enviando detalles completos del pedido después de confirmación...');
+              await OrderNotificationService.sendOrderDetailsAfterConfirmation(normalizedFrom);
             }
           }
         }

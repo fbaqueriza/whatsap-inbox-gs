@@ -11,21 +11,20 @@ export class OrderNotificationService {
    * Envía notificación automática de nuevo pedido al proveedor
    * NUEVO FLUJO: Solo envía el disparador y espera confirmación
    */
-  static async sendOrderNotification(data: OrderNotificationData): Promise<boolean> {
+  static async sendOrderNotification(data: { order: Order; provider: Provider; items: OrderItem[] }): Promise<boolean> {
     try {
       const { order, provider, items } = data;
       
-      // Normalizar el número de teléfono del proveedor - CONSISTENTE
-      let normalizedPhone = provider.phone.replace(/[\s\-\(\)]/g, '');
-      if (!normalizedPhone.startsWith('+')) {
-        normalizedPhone = `+${normalizedPhone}`;
+      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
+      const phoneRegex = /^\+54\d{9,11}$/;
+      if (!phoneRegex.test(provider.phone)) {
+        console.error('❌ Formato de teléfono inválido:', provider.phone);
+        console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+        return false;
       }
+      const normalizedPhone = provider.phone; // Ya está en formato correcto
 
-      // console.log('📦 Iniciando envío de pedido a:', provider.name);
-      // console.log('📱 Número normalizado:', normalizedPhone);
-
-      // PASO 1: Enviar mensaje personalizado de disparador
-      // console.log('🔗 Enviando mensaje personalizado de disparador...');
+      // PASO 1: Enviar template real de Meta
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
       const triggerResponse = await fetch(`${baseUrl}/api/whatsapp/trigger-conversation`, {
         method: 'POST',
@@ -34,25 +33,19 @@ export class OrderNotificationService {
         },
         body: JSON.stringify({
           to: normalizedPhone,
-          message: 'Buenas! Espero que andes bien!\n¿Puedo hacerte un pedido?'
+          template_name: 'envio_de_orden'
         }),
       });
 
       const triggerResult = await triggerResponse.json();
-      // console.log('📋 Resultado del trigger:', triggerResult);
       
       if (!triggerResponse.ok) {
         console.error('❌ Error disparando conversación de Meta:', triggerResult);
         return false;
       }
 
-      // console.log('✅ Conversación de Meta disparada exitosamente con template');
-      // console.log('⏳ Esperando respuesta del proveedor antes de enviar detalles completos...');
-
       // PASO 2: Guardar el pedido en estado "pendiente de confirmación"
-      console.log('💾 Guardando pedido pendiente para:', normalizedPhone);
       await this.savePendingOrder(order, provider, items);
-      console.log('✅ Pedido pendiente guardado exitosamente');
 
       return true;
 
@@ -67,8 +60,17 @@ export class OrderNotificationService {
    */
   private static async savePendingOrder(order: Order, provider: Provider, items: OrderItem[]): Promise<void> {
     try {
+      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
+      const phoneRegex = /^\+54\d{9,11}$/;
+      if (!phoneRegex.test(provider.phone)) {
+        console.error('❌ Formato de teléfono inválido en savePendingOrder:', provider.phone);
+        console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+        return;
+      }
+      
       // Guardar en Supabase en lugar de localStorage
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+      
       const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
         method: 'POST',
         headers: {
@@ -77,7 +79,7 @@ export class OrderNotificationService {
         body: JSON.stringify({
           orderId: order.id,
           providerId: provider.id,
-          providerPhone: normalizedPhone, // Usar el número normalizado
+          providerPhone: provider.phone, // Usar el número del proveedor
           orderData: {
             order,
             provider,
@@ -87,7 +89,8 @@ export class OrderNotificationService {
       });
 
       if (response.ok) {
-        console.log('💾 Pedido guardado en estado pendiente de confirmación');
+        const result = await response.json();
+        console.log('✅ Pedido guardado en estado pendiente de confirmación:', result);
       } else {
         console.error('❌ Error guardando pedido pendiente en BD');
         const errorData = await response.json();
@@ -105,6 +108,7 @@ export class OrderNotificationService {
     try {
       // Buscar el pedido pendiente para este proveedor usando la API
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+      
       const response = await fetch(`${baseUrl}/api/whatsapp/get-pending-order`, {
         method: 'POST',
         headers: {
@@ -115,6 +119,8 @@ export class OrderNotificationService {
 
       if (!response.ok) {
         console.log('❌ No se encontró pedido pendiente para:', providerPhone);
+        const errorData = await response.json();
+        console.log('❌ Detalles del error:', errorData);
         return false;
       }
 
@@ -122,14 +128,15 @@ export class OrderNotificationService {
       const { order, provider, items } = pendingOrder.orderData;
       const orderMessage = this.createOrderMessage(order, provider, items);
 
-      // Normalizar el número de teléfono - CONSISTENTE
-      let normalizedPhone = providerPhone.replace(/[\s\-\(\)]/g, '');
-      if (!normalizedPhone.startsWith('+')) {
-        normalizedPhone = `+${normalizedPhone}`;
+      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
+      const phoneRegex = /^\+54\d{9,11}$/;
+      if (!phoneRegex.test(providerPhone)) {
+        console.error('❌ Formato de teléfono inválido:', providerPhone);
+        console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+        return false;
       }
+      const normalizedPhone = providerPhone; // Ya está en formato correcto
 
-      console.log('📝 Enviando detalles completos del pedido después de confirmación...');
-      
       const messageResponse = await fetch(`${baseUrl}/api/whatsapp/send`, {
         method: 'POST',
         headers: {
@@ -147,7 +154,7 @@ export class OrderNotificationService {
         console.log('✅ Detalles del pedido enviados exitosamente después de confirmación');
         
         // Remover el pedido de la lista de pendientes
-        await fetch(`${baseUrl}/api/whatsapp/remove-pending-order`, {
+        const removeResponse = await fetch(`${baseUrl}/api/whatsapp/remove-pending-order`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -208,10 +215,14 @@ export class OrderNotificationService {
     status: string
   ): Promise<boolean> {
     try {
-      let normalizedPhone = provider.phone.replace(/[\s\-\(\)]/g, '');
-      if (!normalizedPhone.startsWith('+')) {
-        normalizedPhone = `+${normalizedPhone}`;
+      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
+      const phoneRegex = /^\+54\d{9,11}$/;
+      if (!phoneRegex.test(provider.phone)) {
+        console.error('❌ Formato de teléfono inválido:', provider.phone);
+        console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+        return false;
       }
+      const normalizedPhone = provider.phone; // Ya está en formato correcto
 
       const statusMessages = {
         'enviado': '📤 *PEDIDO ENVIADO*\n\nTu pedido ha sido enviado al proveedor.',

@@ -85,17 +85,58 @@ export default function DataGrid({
           }
 
           if (isEditing) {
-            return (
-              <input
-                type="text"
-                value={editingValue}
-                onChange={(e) => setEditingValue(e.target.value)}
+            // Validación especial para números de teléfono
+            const isPhoneColumn = column.id === 'phone';
+            
+                          return (
+                <input
+                  type="text"
+                  value={editingValue}
+                  placeholder={isPhoneColumn ? "+5491135562673" : ""}
+                  title={isPhoneColumn ? "Formato: +54XXXXXXXXXX (solo números después del +54)" : ""}
+                onChange={(e) => {
+                  const newValue = e.target.value;
+                  setEditingValue(newValue);
+                  
+                  // Validación en tiempo real para teléfonos
+                  if (isPhoneColumn) {
+                    const cleanPhone = newValue.replace(/[\s\-\(\)]/g, '');
+                    const phoneRegex = /^\+54\d{0,11}$/;
+                    
+                    if (!phoneRegex.test(cleanPhone) && cleanPhone !== '') {
+                      // Mostrar indicador visual de error
+                      e.target.style.borderColor = '#ef4444';
+                      e.target.style.backgroundColor = '#fef2f2';
+                    } else {
+                      e.target.style.borderColor = '';
+                      e.target.style.backgroundColor = '';
+                    }
+                  }
+                }}
                 onBlur={() => {
+                  let finalValue = editingValue;
+                  
+                  // Validación estricta para números de teléfono
+                  if (isPhoneColumn) {
+                    // Solo permitir formato: +54XXXXXXXXXX (sin espacios, guiones, paréntesis)
+                    const phoneRegex = /^\+54\d{9,11}$/;
+                    const cleanPhone = editingValue.replace(/[\s\-\(\)]/g, '');
+                    
+                    if (!phoneRegex.test(cleanPhone)) {
+                      alert('❌ Formato de teléfono inválido\n\nDebe ser: +54XXXXXXXXXX\n\nEjemplos:\n• +5491135562673\n• +541123456789\n\nSolo números después del +54, sin espacios ni guiones.');
+                      // Restaurar valor original
+                      setEditingValue(rowData[column.id] || '');
+                      setEditingCell(null);
+                      return;
+                    }
+                    finalValue = cleanPhone;
+                  }
+                  
                   const newData = updateRowData(
                     data,
                     rowData.id,
                     column.id,
-                    editingValue,
+                    finalValue,
                   );
                   onDataChange(newData);
                   setEditingCell(null);
@@ -103,11 +144,32 @@ export default function DataGrid({
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
+                    let finalValue = editingValue;
+                    
+                    // Validación estricta para números de teléfono
+                    if (isPhoneColumn) {
+                      // Solo permitir formato: +54XXXXXXXXXX (sin espacios, guiones, paréntesis)
+                      const phoneRegex = /^\+54\d{9,11}$/;
+                      const cleanPhone = editingValue.replace(/[\s\-\(\)]/g, '');
+                      
+                      console.log('🔍 Validando teléfono en DataGrid:', { editingValue, cleanPhone, isValid: phoneRegex.test(cleanPhone) });
+                      
+                      if (!phoneRegex.test(cleanPhone)) {
+                        alert('❌ Formato de teléfono inválido\n\nDebe ser: +54XXXXXXXXXX\n\nEjemplos:\n• +5491135562673\n• +541123456789\n\nSolo números después del +54, sin espacios ni guiones.');
+                        // Restaurar valor original
+                        setEditingValue(rowData[column.id] || '');
+                        setEditingCell(null);
+                        return;
+                      }
+                      finalValue = cleanPhone;
+                    }
+                    
+                    console.log('💾 Guardando valor en DataGrid:', { columnId: column.id, finalValue });
                     const newData = updateRowData(
                       data,
                       rowData.id,
                       column.id,
-                      editingValue,
+                      finalValue,
                     );
                     onDataChange(newData);
                     setEditingCell(null);

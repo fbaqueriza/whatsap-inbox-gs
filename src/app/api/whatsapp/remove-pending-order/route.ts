@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
       .eq('status', 'pending_confirmation');
 
     if (error) {
-      console.error('Error removiendo pedido pendiente:', error);
+      console.error('❌ Error removiendo pedido pendiente:', error);
       return NextResponse.json(
         { success: false, error: 'Error removiendo de base de datos' },
         { status: 500 }
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error en remove-pending-order:', error);
+    console.error('❌ Error en remove-pending-order:', error);
     return NextResponse.json(
       { success: false, error: 'Error interno del servidor' },
       { status: 500 }

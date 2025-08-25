@@ -17,7 +17,17 @@ export async function POST(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    console.log('💾 Guardando pedido pendiente con número:', providerPhone);
+    // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
+    const phoneRegex = /^\+54\d{9,11}$/;
+    if (!phoneRegex.test(providerPhone)) {
+      console.error('❌ Formato de teléfono inválido:', providerPhone);
+      console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+      return NextResponse.json(
+        { success: false, error: 'Formato de teléfono inválido. Debe ser: +54XXXXXXXXXX' },
+        { status: 400 }
+      );
+    }
+    
     const { error } = await supabase
       .from('pending_orders')
       .insert({
@@ -30,7 +40,7 @@ export async function POST(request: NextRequest) {
       });
 
     if (error) {
-      console.error('Error guardando pedido pendiente:', error);
+      console.error('❌ Error guardando pedido pendiente:', error);
       return NextResponse.json(
         { success: false, error: 'Error guardando en base de datos' },
         { status: 500 }
@@ -43,7 +53,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error en save-pending-order:', error);
+    console.error('❌ Error en save-pending-order:', error);
     return NextResponse.json(
       { success: false, error: 'Error interno del servidor' },
       { status: 500 }

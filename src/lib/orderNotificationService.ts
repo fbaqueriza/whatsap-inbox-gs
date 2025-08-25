@@ -25,7 +25,7 @@ export class OrderNotificationService {
       const normalizedPhone = provider.phone; // Ya está en formato correcto
 
       // PASO 1: Enviar template real de Meta
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
       const triggerResponse = await fetch(`${baseUrl}/api/whatsapp/trigger-conversation`, {
         method: 'POST',
         headers: {
@@ -69,7 +69,7 @@ export class OrderNotificationService {
       }
       
       // Guardar en Supabase en lugar de localStorage
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
       
       const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
         method: 'POST',
@@ -107,7 +107,7 @@ export class OrderNotificationService {
   static async sendOrderDetailsAfterConfirmation(providerPhone: string): Promise<boolean> {
     try {
       // Buscar el pedido pendiente para este proveedor usando la API
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
       
       const response = await fetch(`${baseUrl}/api/whatsapp/get-pending-order`, {
         method: 'POST',

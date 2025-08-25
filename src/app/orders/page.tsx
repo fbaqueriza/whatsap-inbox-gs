@@ -37,7 +37,7 @@ import { DataProvider, useData } from '../../components/DataProvider';
 import es from '../../locales/es';
 import { Menu } from '@headlessui/react';
 import { useRouter } from 'next/navigation';
-import supabase from '../../lib/supabaseClient';
+import { supabase } from '../../lib/supabase/client';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { OrderNotificationService } from '../../lib/orderNotificationService';
 

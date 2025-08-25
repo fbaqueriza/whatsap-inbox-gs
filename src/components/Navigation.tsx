@@ -140,13 +140,6 @@ export default function Navigation() {
               {isUserMenuOpen && (
                 <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-50">
                   <div className="py-1">
-                    <Link
-                      href="/settings"
-                      className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                    >
-                      <Settings className="h-4 w-4 mr-2" />
-                      {es.settings}
-                    </Link>
                     <button
                       onClick={handleSignOut}
                       className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
@@ -226,13 +219,6 @@ export default function Navigation() {
                    </span>
                  )}
                </button>
-              <Link
-                href="/settings"
-                className="block px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100"
-              >
-                <Settings className="h-4 w-4 mr-2 inline" />
-                {es.settings}
-              </Link>
               <button
                 onClick={handleSignOut}
                 className="block w-full text-left px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100"

@@ -100,6 +100,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       return;
     }
     const fetchUserId = async () => {
+      if (!userEmail) return;
       try {
         const { data: userData, error: userError, status } = await supabase
           .from('users')
@@ -107,7 +108,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
           .eq('email', userEmail)
           .single();
         if (!userError && userData) {
-          setCurrentUserId(userData.id);
+          setCurrentUserId(userData.id as string);
         } else if (status === 406 || (userError && userError.code === 'PGRST116')) {
           // 406 Not Acceptable or not found: create user row
           const { data: newUser, error: createError } = await supabase
@@ -116,7 +117,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
             .select('id')
             .single();
           if (!createError && newUser) {
-            setCurrentUserId(newUser.id);
+            setCurrentUserId(newUser.id as string);
           } else {
             setCurrentUserId(null);
             setLoading(false);

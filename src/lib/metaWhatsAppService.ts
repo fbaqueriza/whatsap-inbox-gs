@@ -116,7 +116,8 @@ export class MetaWhatsAppService {
           timestamp: new Date(),
           status: 'sent',
           isAutomated: false,
-          isSimulated: true
+          isSimulated: true,
+          messageType: 'sent' // Agregar explícitamente el tipo
         });
 
         console.log('✅ [SIMULACIÓN] Mensaje enviado exitosamente:', messageId);
@@ -173,7 +174,8 @@ export class MetaWhatsAppService {
           timestamp: new Date(),
           status: 'sent',
           isAutomated: false,
-          isSimulated: false
+          isSimulated: false,
+          messageType: 'sent' // Agregar explícitamente el tipo
         });
 
         return result;
@@ -552,11 +554,15 @@ export class MetaWhatsAppService {
         contactId = '+5491112345678'; // Número de prueba para mensajes del sistema
       }
       
-      // Determinar el tipo de mensaje basado en la dirección
-      let messageType = 'received'; // Por defecto, mensajes recibidos
-      if (message.from === this.config?.phoneNumberId || (message.to && !message.from)) {
-        // Si el mensaje viene de nuestro número de teléfono o solo tiene 'to', es enviado
-        messageType = 'sent';
+      // Determinar el tipo de mensaje
+      let messageType = message.messageType || 'received'; // Usar el tipo explícito si está disponible
+      
+      // Si no hay tipo explícito, determinar basado en la dirección
+      if (!message.messageType) {
+        if (message.from === this.config?.phoneNumberId || (message.to && !message.from)) {
+          // Si el mensaje viene de nuestro número de teléfono o solo tiene 'to', es enviado
+          messageType = 'sent';
+        }
       }
       
 

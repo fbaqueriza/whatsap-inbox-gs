@@ -102,32 +102,66 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
       
       const userProviderPhones = userProviders?.map(p => {
-        let phone = p.phone;
+        let phone = p.phone as string;
         if (phone && !phone.startsWith('+')) {
           phone = `+${phone}`;
         }
         return phone;
       }) || [];
       
-      // console.log('📱 Proveedores del usuario actual:', userProviderPhones);
+      console.log('📱 Proveedores del usuario actual:', userProviderPhones);
       
       const response = await fetch('/api/whatsapp/messages');
       const data = await response.json();
       
       if (data.messages && Array.isArray(data.messages)) {
         const transformedMessages = data.messages
-          .map((msg: any) => ({
-            id: msg.message_sid || msg.id, // Usar message_sid (ID de Meta) como prioridad
-            content: msg.content,
-            timestamp: new Date(msg.timestamp || msg.created_at),
-            type: msg.message_type === 'sent' ? 'sent' : 'received',
-            contact_id: msg.contact_id || msg.from,
-            status: msg.status || 'delivered'
-          }))
+          .map((msg: any) => {
+            // Determinar el tipo de mensaje correctamente
+            let messageType = 'received';
+            
+            // Si el mensaje tiene message_type explícito, usarlo
+            if (msg.message_type === 'sent') {
+              messageType = 'sent';
+            } else if (msg.message_type === 'received') {
+              messageType = 'received';
+            } else {
+              // Si no hay message_type explícito, intentar determinar por otros campos
+              // Los mensajes enviados desde la plataforma suelen tener un ID que empieza con 'sim_' o 'msg_'
+              if (msg.message_sid && (msg.message_sid.startsWith('sim_') || msg.message_sid.startsWith('msg_'))) {
+                messageType = 'sent';
+              }
+            }
+            
+            return {
+              id: msg.message_sid || msg.id, // Usar message_sid (ID de Meta) como prioridad
+              content: msg.content,
+              timestamp: new Date(msg.timestamp || msg.created_at),
+              type: messageType,
+              contact_id: msg.contact_id || msg.from,
+              status: msg.status || 'delivered'
+            };
+          })
           // Filtrar mensajes que correspondan a los proveedores del usuario actual
+          // O que vengan de nuestro propio número de WhatsApp Business
           .filter((msg: any) => {
             const contactId = normalizeContactIdentifier(msg.contact_id);
-            const isIncluded = userProviderPhones.includes(contactId);
+            const ourWhatsAppNumber = process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER_ID;
+            const normalizedOurNumber = ourWhatsAppNumber ? `+${ourWhatsAppNumber}` : null;
+            
+            const isFromOurProvider = userProviderPhones.includes(contactId);
+            const isFromOurWhatsApp = normalizedOurNumber && contactId === normalizedOurNumber;
+            const isIncluded = isFromOurProvider || isFromOurWhatsApp;
+            
+            console.log('🔍 Filtrando mensaje:', {
+              contactId,
+              userProviderPhones,
+              normalizedOurNumber,
+              isFromOurProvider,
+              isFromOurWhatsApp,
+              isIncluded,
+              content: msg.content?.substring(0, 50)
+            });
             return isIncluded;
           });
         
@@ -150,13 +184,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
                      transformedMessages.forEach((newMsg: ChatWhatsAppMessage) => {
              const contentTimestampKey = `${newMsg.content}-${newMsg.contact_id}-${new Date(newMsg.timestamp).getTime()}`;
              
-             // Verificar si el mensaje ya existe por ID o por contenido+timestamp
-             // También verificar si es un mensaje temporal que ya existe
-             const isDuplicate = existingMessagesMap.has(newMsg.id) || 
-                                contentTimestampMap.has(contentTimestampKey) ||
-                                prev.some(msg => msg.id.startsWith('temp_') && 
-                                              msg.content === newMsg.content && 
-                                              msg.contact_id === newMsg.contact_id);
+                       // Verificar si el mensaje ya existe por ID o por contenido+timestamp
+          // También verificar si es un mensaje temporal que ya existe
+          // Y verificar si es un mensaje enviado que ya existe localmente
+          const isDuplicate = existingMessagesMap.has(newMsg.id) || 
+                             contentTimestampMap.has(contentTimestampKey) ||
+                             prev.some(msg => msg.id.startsWith('temp_') && 
+                                           msg.content === newMsg.content && 
+                                           msg.contact_id === newMsg.contact_id) ||
+                             // No sobrescribir mensajes enviados locales con mensajes recibidos de la BD
+                             (newMsg.type === 'received' && 
+                              prev.some(msg => msg.content === newMsg.content && 
+                                            msg.contact_id === newMsg.contact_id && 
+                                            msg.type === 'sent' &&
+                                            Math.abs(new Date(msg.timestamp).getTime() - new Date(newMsg.timestamp).getTime()) < 60000)); // 1 minuto de tolerancia
              
              if (!isDuplicate) {
                updatedMessages.push(newMsg);

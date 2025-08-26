@@ -38,6 +38,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Error obteniendo mensajes' }, { status: 500 });
     }
     
+    // Log para debug
+    console.log('📥 API messages - Mensajes obtenidos:', messages?.map(m => ({
+      id: m.id,
+      message_sid: m.message_sid,
+      content: m.content,
+      message_type: m.message_type,
+      contact_id: m.contact_id,
+      timestamp: m.timestamp
+    })));
+    
     return NextResponse.json({
       messages: messages || [],
       count: messages?.length || 0,
@@ -64,7 +74,7 @@ export async function POST(request: NextRequest) {
         message_sid: body.message_sid || body.id || `msg_${Date.now()}`,
         contact_id: body.contact_id,
         content: body.content,
-        message_type: body.message_type || 'text',
+        message_type: body.message_type || 'received',
         status: body.status || 'received',
         user_id: body.user_id || 'default_user',
         timestamp: body.timestamp || new Date().toISOString()

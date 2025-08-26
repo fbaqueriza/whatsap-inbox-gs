@@ -1,20 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
-// Esta es una solución temporal para obtener providers del contexto
-// En una implementación real, esto debería acceder al contexto de datos
+// Verificar variables de entorno
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ API providers - Variables de entorno faltantes');
+}
+
+const supabase = createClient(supabaseUrl!, supabaseKey!);
+
 export async function GET(request: NextRequest) {
   try {
-    console.log('📥 API /api/context/providers - Obteniendo providers del contexto...');
+    console.log('📥 API /api/context/providers - Obteniendo providers...');
     
-    // Por ahora, devolver un array vacío ya que no podemos acceder al contexto desde una API route
-    // En el futuro, esto podría implementarse con un store global como Zustand o similar
+    // Obtener el usuario actual de la sesión
+    const { data: { user } } = await supabase.auth.getUser();
+    const currentUserId = user?.id;
     
-    console.log('⚠️ API /api/context/providers - No implementado aún, devolviendo array vacío');
+    if (!currentUserId) {
+      console.log('⚠️ No hay usuario autenticado');
+      return NextResponse.json({
+        success: true,
+        providers: [],
+        message: 'No authenticated user'
+      });
+    }
+    
+    console.log('👤 Usuario actual:', currentUserId);
+    
+    // Obtener los proveedores del usuario actual
+    const { data: providers, error } = await supabase
+      .from('providers')
+      .select('*')
+      .eq('user_id', currentUserId);
+    
+    if (error) {
+      console.error('❌ Error obteniendo providers:', error);
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Error obteniendo providers' 
+      }, { status: 500 });
+    }
+    
+    console.log('✅ Providers obtenidos:', providers?.length || 0);
     
     return NextResponse.json({
       success: true,
-      providers: [],
-      message: 'Context providers not implemented yet'
+      providers: providers || [],
+      message: 'Providers obtenidos correctamente'
     });
     
   } catch (error) {

@@ -23,7 +23,11 @@ export async function POST(request: NextRequest) {
       console.error('❌ Formato de teléfono inválido:', providerPhone);
       console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
       return NextResponse.json(
-        { success: false, error: 'Formato de teléfono inválido. Debe ser: +54XXXXXXXXXX' },
+        { 
+          success: false, 
+          error: 'Formato de teléfono inválido. Debe ser: +54XXXXXXXXXX',
+          receivedPhone: providerPhone
+        },
         { status: 400 }
       );
     }
@@ -38,9 +42,26 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .single();
 
-    if (error || !data) {
+    if (error) {
+      console.error('❌ Error en consulta de pedidos pendientes:', error);
       return NextResponse.json(
-        { success: false, error: 'No se encontró pedido pendiente' },
+        { 
+          success: false, 
+          error: 'Error al consultar pedidos pendientes',
+          details: error.message
+        },
+        { status: 500 }
+      );
+    }
+    
+    if (!data) {
+      console.log('ℹ️ No se encontró pedido pendiente para:', providerPhone);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'No se encontró pedido pendiente',
+          providerPhone: providerPhone
+        },
         { status: 404 }
       );
     }

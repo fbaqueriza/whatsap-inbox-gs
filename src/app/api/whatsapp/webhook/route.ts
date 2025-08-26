@@ -102,27 +102,45 @@ export async function POST(request: NextRequest) {
           // Verificar si es respuesta de proveedor y enviar detalles del pedido
           console.log('🔍 Verificando si es respuesta de proveedor:', normalizedFrom);
           
-          // En producción, usar la URL de la aplicación actual
-          const baseUrl = process.env.VERCEL_URL 
-            ? `https://${process.env.VERCEL_URL}` 
-            : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
-          
-          const checkResponse = await fetch(`${baseUrl}/api/whatsapp/get-pending-order`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ providerPhone: normalizedFrom }),
-          });
-
-          if (checkResponse.ok) {
-            const checkResult = await checkResponse.json();
+          try {
+            // En producción, usar la URL de la aplicación actual
+            const baseUrl = process.env.VERCEL_URL 
+              ? `https://${process.env.VERCEL_URL}` 
+              : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
             
-            // Si hay un pedido pendiente para este proveedor, enviar automáticamente los detalles
-            if (checkResult && checkResult.orderData) {
-              console.log('📝 Enviando detalles completos del pedido después de confirmación...');
-              await OrderNotificationService.sendOrderDetailsAfterConfirmation(normalizedFrom);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
+            
+            const checkResponse = await fetch(`${baseUrl}/api/whatsapp/get-pending-order`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ providerPhone: normalizedFrom }),
+              signal: controller.signal,
+            });
+            
+            clearTimeout(timeoutId);
+
+            if (checkResponse.ok) {
+              const checkResult = await checkResponse.json();
+              
+              if (checkResult?.orderData) {
+                console.log('📝 Enviando detalles del pedido para:', normalizedFrom);
+                await OrderNotificationService.sendOrderDetailsAfterConfirmation(normalizedFrom);
+              } else {
+                console.log('ℹ️ No hay pedidos pendientes para:', normalizedFrom);
+              }
+            } else {
+              const errorText = await checkResponse.text();
+              console.error('❌ Error en get-pending-order:', {
+                status: checkResponse.status,
+                error: errorText,
+                providerPhone: normalizedFrom
+              });
             }
+          } catch (error) {
+            console.error('💥 Error al verificar pedidos pendientes:', error);
           }
         }
         

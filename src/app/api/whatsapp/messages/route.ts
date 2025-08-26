@@ -22,15 +22,18 @@ export async function GET(request: NextRequest) {
     
     let query = supabase
       .from('whatsapp_messages')
-      .select('*')
-      .order('timestamp', { ascending: false }) // Ordenar descendente para obtener los más recientes primero
-      .limit(20); // Limitar a 20 mensajes
+      .select('*');
     
     // Si se proporciona timestamp, filtrar mensajes más recientes
     if (since) {
       const sinceDate = new Date(parseInt(since));
       query = query.gt('timestamp', sinceDate.toISOString());
     }
+    
+    // Siempre ordenar por timestamp descendente y limitar
+    query = query
+      .order('timestamp', { ascending: false })
+      .limit(20);
     
     const { data: messages, error } = await query;
     

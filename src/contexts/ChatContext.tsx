@@ -281,8 +281,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     // Agregar mensaje localmente inmediatamente al final (más reciente)
     setMessages(prev => {
       const updatedMessages = [...prev, newMessage];
-      // Ordenar por timestamp para mantener el orden cronológico
-      return updatedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      // Los mensajes ya vienen ordenados del API, no reordenar
+      return updatedMessages;
     });
 
     try {
@@ -310,8 +310,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               ? { ...msg, id: realMessageId, status: 'delivered' as const }
               : msg
           );
-          // Ordenar por timestamp para mantener el orden cronológico
-          return updatedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          // Los mensajes ya vienen ordenados del API, no reordenar
+          return updatedMessages;
         });
       } else {
         // Marcar como fallido si hay error
@@ -321,8 +321,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               ? { ...msg, status: 'failed' as const }
               : msg
           );
-          // Ordenar por timestamp para mantener el orden cronológico
-          return updatedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          // Los mensajes ya vienen ordenados del API, no reordenar
+          return updatedMessages;
         });
       }
     } catch (error) {
@@ -334,8 +334,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             ? { ...msg, status: 'failed' as const }
             : msg
         );
-        // Ordenar por timestamp para mantener el orden cronológico
-        return updatedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        // Los mensajes ya vienen ordenados del API, no reordenar
+        return updatedMessages;
       });
     }
   }, []);
@@ -432,10 +432,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       grouped[contactId].push(message);
     });
     
-    // Ordenar mensajes por timestamp dentro de cada contacto (más antiguos primero para mostrar cronológicamente)
-    Object.keys(grouped).forEach(contactId => {
-      grouped[contactId].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    });
+    // Los mensajes ya vienen ordenados del API, no reordenar
+    // Object.keys(grouped).forEach(contactId => {
+    //   grouped[contactId].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    // });
     
     return grouped;
   }, [messages]);

@@ -581,6 +581,13 @@ export class MetaWhatsAppService {
         status: message.status || 'delivered'
       };
 
+      console.log('💾 Guardando mensaje con datos:', {
+        id: messageData.id,
+        timestamp: messageData.timestamp,
+        content: messageData.content?.substring(0, 50),
+        contact_id: messageData.contact_id
+      });
+
       // Crear cliente de Supabase con service role key
       const { createClient } = await import('@supabase/supabase-js');
       const supabase = createClient(supabaseUrl, supabaseServiceKey);

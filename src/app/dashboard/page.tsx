@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import { DataProvider, useData } from '../../components/DataProvider';
 import { useRouter } from 'next/navigation';
-import { Order, Provider, StockItem } from '../../types';
+import { Order, Provider, StockItem, OrderItem } from '../../types';
 import { useChat } from '../../contexts/ChatContext';
 import { useGlobalChat } from '../../contexts/GlobalChatContext';
 import { OrderNotificationService } from '../../lib/orderNotificationService';

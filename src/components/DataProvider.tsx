@@ -19,6 +19,7 @@ interface DataContextType {
   updateStockItem: (item: StockItem) => Promise<void>;
   deleteStockItem: (id: string | string[], user_id: string, batch?: boolean) => Promise<void>;
   setStockItems: React.Dispatch<React.SetStateAction<StockItem[]>>;
+  setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -695,6 +696,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       updateStockItem,
       deleteStockItem,
       setStockItems,
+      setOrders,
     }}>
       {loading ? (
         <div className="min-h-screen flex items-center justify-center">

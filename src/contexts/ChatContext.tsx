@@ -193,7 +193,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
                              (newMsg.type === 'sent' && 
                               prev.some(msg => msg.id.startsWith('temp_') && 
                                             msg.content === newMsg.content && 
-                                            msg.contact_id === newMsg.contact_id)) ||
+                                            msg.contact_id === newMsg.contact_id));
                              // Para mensajes recibidos, solo verificar duplicados exactos por ID o contenido+timestamp
                              // No aplicar la lógica de sobrescritura que estaba filtrando mensajes legítimos
              

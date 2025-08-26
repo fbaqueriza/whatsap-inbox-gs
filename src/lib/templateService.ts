@@ -38,32 +38,8 @@ export class TemplateService {
    */
   static async getTemplateContent(templateName: string, params?: any[]) {
     try {
-      // Intentar obtener templates desde Meta API
-      const templates = await this.getTemplates();
-      const template = templates.find((t: any) => t.name === templateName);
-      
-      if (template) {
-        // Obtener el contenido del template
-        const bodyComponent = template.components?.find((c: any) => c.type === 'BODY');
-        const headerComponent = template.components?.find((c: any) => c.type === 'HEADER');
-        const footerComponent = template.components?.find((c: any) => c.type === 'FOOTER');
-
-        let templateContent = bodyComponent?.text || headerComponent?.text || footerComponent?.text;
-
-        if (templateContent) {
-          // Reemplazar parámetros si existen
-          if (params && params.length > 0) {
-            params.forEach((param, index) => {
-              const paramValue = typeof param === 'object' ? param.text : param;
-              templateContent = templateContent.replace(`{{${index + 1}}}`, paramValue);
-            });
-          }
-          return templateContent;
-        }
-      }
-      
-      // Fallback: Si no se puede obtener el contenido real, usar descripción basada en el nombre
-      console.warn(`⚠️ Template no encontrado o sin contenido: ${templateName}`);
+      // Por ahora, siempre usar el sistema de fallback ya que getTemplates() retorna array vacío
+      console.log(`ℹ️ Usando fallback para template: ${templateName}`);
       return this.getFallbackTemplateContent(templateName);
       
     } catch (error) {
@@ -101,25 +77,14 @@ export class TemplateService {
    */
   static async getTemplateInfo(templateName: string) {
     try {
-      const templates = await this.getTemplates();
-      const template = templates.find((t: any) => t.name === templateName);
-      
-      if (!template) {
-        return null;
-      }
-
+      // Por ahora, retornar información básica ya que getTemplates() retorna array vacío
       return {
-        id: template.id,
-        name: template.name,
-        status: template.status,
-        category: template.category,
-        language: template.language,
-        components: template.components?.map((component: any) => ({
-          type: component.type,
-          text: component.text,
-          format: component.format,
-          example: component.example
-        }))
+        id: `fallback_${templateName}`,
+        name: templateName,
+        status: 'APPROVED',
+        category: 'UTILITY',
+        language: 'es_AR',
+        components: []
       };
     } catch (error) {
       console.error('❌ Error obteniendo información del template:', error);

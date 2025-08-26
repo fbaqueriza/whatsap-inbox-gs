@@ -1,33 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { metaWhatsAppService } from '../../../../lib/metaWhatsAppService';
+import { TemplateService } from '../../../lib/templateService';
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('📋 API templates - Obteniendo plantillas disponibles');
+    const templates = await TemplateService.getTemplates();
+    
+    // Procesar y formatear los templates
+    const formattedTemplates = templates.map((template: any) => ({
+      id: template.id,
+      name: template.name,
+      status: template.status,
+      category: template.category,
+      language: template.language,
+      components: template.components?.map((component: any) => ({
+        type: component.type,
+        text: component.text,
+        format: component.format,
+        example: component.example
+      }))
+    }));
 
-    const templates = await metaWhatsAppService.getTemplates();
-    
-    console.log('📋 API templates - Plantillas obtenidas:', templates);
-    
-    if (templates) {
-      return NextResponse.json({
-        success: true,
-        templates,
-        count: templates.length,
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      console.log('❌ API templates - No se pudieron obtener plantillas');
-      return NextResponse.json(
-        { error: 'Failed to get templates - Service not available' },
-        { status: 500 }
-      );
-    }
+    return NextResponse.json({
+      success: true,
+      templates: formattedTemplates,
+      count: formattedTemplates.length
+    });
+
   } catch (error) {
-    console.error('💥 API templates - Error:', error);
-    return NextResponse.json(
-      { error: 'Error getting templates' },
-      { status: 500 }
-    );
+    console.error('❌ Error en endpoint templates:', error);
+    return NextResponse.json({
+      success: false,
+      error: 'Error obteniendo templates',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    }, { status: 500 });
   }
 }

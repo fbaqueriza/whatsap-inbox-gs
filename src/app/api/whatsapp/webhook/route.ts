@@ -118,14 +118,8 @@ export async function POST(request: NextRequest) {
           if (checkResponse.ok) {
             const checkResult = await checkResponse.json();
             
-            // Verificar si el pedido fue creado en los últimos 2 minutos
-            const orderCreatedAt = new Date(checkResult.createdAt);
-            const now = new Date();
-            const timeDiff = now.getTime() - orderCreatedAt.getTime();
-            const twoMinutes = 2 * 60 * 1000; // 2 minutos en milisegundos
-            const shouldSend = timeDiff <= twoMinutes;
-            
-            if (shouldSend) {
+            // Si hay un pedido pendiente para este proveedor, enviar automáticamente los detalles
+            if (checkResult && checkResult.orderData) {
               console.log('📝 Enviando detalles completos del pedido después de confirmación...');
               await OrderNotificationService.sendOrderDetailsAfterConfirmation(normalizedFrom);
             }

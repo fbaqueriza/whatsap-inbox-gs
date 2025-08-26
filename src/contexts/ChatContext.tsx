@@ -278,8 +278,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       status: 'sent'
     };
 
-    // Agregar mensaje localmente inmediatamente
-    setMessages(prev => [...prev, newMessage]);
+    // Agregar mensaje localmente inmediatamente al final (más reciente)
+    setMessages(prev => {
+      const updatedMessages = [...prev, newMessage];
+      // Ordenar por timestamp para mantener el orden cronológico
+      return updatedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    });
 
     try {
       // Enviar mensaje al servidor
@@ -300,33 +304,39 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         // Actualizar el mensaje local con el ID real de la base de datos
         const realMessageId = result.messageId || `msg_${Date.now()}`;
         
-        setMessages(prev => 
-          prev.map(msg => 
+        setMessages(prev => {
+          const updatedMessages = prev.map(msg => 
             msg.id === tempId 
               ? { ...msg, id: realMessageId, status: 'delivered' as const }
               : msg
-          )
-        );
+          );
+          // Ordenar por timestamp para mantener el orden cronológico
+          return updatedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        });
       } else {
         // Marcar como fallido si hay error
-        setMessages(prev => 
-          prev.map(msg => 
+        setMessages(prev => {
+          const updatedMessages = prev.map(msg => 
             msg.id === tempId 
               ? { ...msg, status: 'failed' as const }
               : msg
-          )
-        );
+          );
+          // Ordenar por timestamp para mantener el orden cronológico
+          return updatedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        });
       }
     } catch (error) {
       console.error('Error sending message:', error);
       // Marcar como fallido si hay error
-      setMessages(prev => 
-        prev.map(msg => 
+      setMessages(prev => {
+        const updatedMessages = prev.map(msg => 
           msg.id === newMessage.id 
             ? { ...msg, status: 'failed' as const }
             : msg
-        )
-      );
+        );
+        // Ordenar por timestamp para mantener el orden cronológico
+        return updatedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      });
     }
   }, []);
 

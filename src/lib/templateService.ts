@@ -8,10 +8,17 @@ export class TemplateService {
    */
   static async getTemplates() {
     try {
+      console.log('🔍 Verificando variables de entorno...');
+      console.log('WHATSAPP_API_URL:', WHATSAPP_API_URL);
+      console.log('WHATSAPP_API_KEY:', WHATSAPP_API_KEY ? 'Configurado' : 'No configurado');
+      console.log('PHONE_NUMBER_ID:', PHONE_NUMBER_ID ? 'Configurado' : 'No configurado');
+
       if (!WHATSAPP_API_KEY || !PHONE_NUMBER_ID) {
-        throw new Error('Variables de entorno de WhatsApp no configuradas');
+        console.error('❌ Variables de entorno faltantes');
+        return []; // Retornar array vacío en lugar de throw error
       }
 
+      console.log('📡 Consultando Meta API...');
       const response = await fetch(`${WHATSAPP_API_URL}/${PHONE_NUMBER_ID}/message_templates`, {
         method: 'GET',
         headers: {
@@ -20,16 +27,20 @@ export class TemplateService {
         }
       });
 
+      console.log('📊 Respuesta de Meta API:', response.status, response.statusText);
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Error obteniendo templates: ${errorData.error?.message || 'Error desconocido'}`);
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        console.error('❌ Error de Meta API:', errorData);
+        return []; // Retornar array vacío en lugar de throw error
       }
 
       const data = await response.json();
+      console.log('✅ Templates obtenidos:', data.data?.length || 0);
       return data.data || [];
     } catch (error) {
       console.error('❌ Error obteniendo templates:', error);
-      throw error;
+      return []; // Retornar array vacío en lugar de throw error
     }
   }
 

@@ -19,7 +19,8 @@ export class TemplateService {
       }
 
       console.log('📡 Consultando Meta API...');
-      const response = await fetch(`${WHATSAPP_API_URL}/${PHONE_NUMBER_ID}/message_templates`, {
+      // Usar el endpoint correcto para obtener templates
+      const response = await fetch(`${WHATSAPP_API_URL}/message_templates`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
@@ -49,39 +50,53 @@ export class TemplateService {
    */
   static async getTemplateContent(templateName: string, params?: any[]) {
     try {
+      // Intentar obtener templates desde Meta API
       const templates = await this.getTemplates();
       const template = templates.find((t: any) => t.name === templateName);
       
-      if (!template) {
-        console.warn(`⚠️ Template no encontrado: ${templateName}`);
-        return `📋 Template: ${templateName} enviado`;
+      if (template) {
+        // Obtener el contenido del template
+        const bodyComponent = template.components?.find((c: any) => c.type === 'BODY');
+        const headerComponent = template.components?.find((c: any) => c.type === 'HEADER');
+        const footerComponent = template.components?.find((c: any) => c.type === 'FOOTER');
+
+        let templateContent = bodyComponent?.text || headerComponent?.text || footerComponent?.text;
+
+        if (templateContent) {
+          // Reemplazar parámetros si existen
+          if (params && params.length > 0) {
+            params.forEach((param, index) => {
+              const paramValue = typeof param === 'object' ? param.text : param;
+              templateContent = templateContent.replace(`{{${index + 1}}}`, paramValue);
+            });
+          }
+          return templateContent;
+        }
       }
-
-      // Obtener el contenido del template
-      const bodyComponent = template.components?.find((c: any) => c.type === 'BODY');
-      const headerComponent = template.components?.find((c: any) => c.type === 'HEADER');
-      const footerComponent = template.components?.find((c: any) => c.type === 'FOOTER');
-
-      let templateContent = bodyComponent?.text || headerComponent?.text || footerComponent?.text;
-
-      if (!templateContent) {
-        console.warn(`⚠️ No se encontró contenido en el template: ${templateName}`);
-        return `📋 Template: ${templateName} enviado`;
-      }
-
-      // Reemplazar parámetros si existen
-      if (params && params.length > 0) {
-        params.forEach((param, index) => {
-          const paramValue = typeof param === 'object' ? param.text : param;
-          templateContent = templateContent.replace(`{{${index + 1}}}`, paramValue);
-        });
-      }
-
-      return templateContent;
+      
+      // Fallback: Si no se puede obtener el contenido real, usar descripción basada en el nombre
+      console.warn(`⚠️ Template no encontrado o sin contenido: ${templateName}`);
+      return this.getFallbackTemplateContent(templateName);
+      
     } catch (error) {
       console.error('❌ Error obteniendo contenido del template:', error);
-      return `📋 Template: ${templateName} enviado`;
+      return this.getFallbackTemplateContent(templateName);
     }
+  }
+
+  /**
+   * Obtiene contenido de fallback para templates
+   */
+  static getFallbackTemplateContent(templateName: string): string {
+    const fallbackTemplates: { [key: string]: string } = {
+      'envio_de_orden': '🛒 *NUEVO PEDIDO*\n\nSe ha recibido un nuevo pedido. Por favor revisa los detalles y confirma la recepción.',
+      'inicializador_de_conv': '👋 ¡Hola! Iniciando conversación para coordinar pedidos.',
+      'notificacion_pedido': '📋 Notificación de nuevo pedido recibido.',
+      'confirmacion_pedido': '✅ Pedido confirmado y en proceso.',
+      'recordatorio_pedido': '⏰ Recordatorio: Pedido pendiente de confirmación.'
+    };
+    
+    return fallbackTemplates[templateName] || `📋 Template: ${templateName} enviado`;
   }
 
   /**

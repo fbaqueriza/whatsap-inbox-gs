@@ -190,10 +190,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           });
           
           if (hasNewMessages) {
-            // Ordenar por timestamp para mantener el orden correcto
-            return updatedMessages.sort((a, b) => 
-              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-            );
+            // Los mensajes ya vienen ordenados del API, no reordenar
+            return updatedMessages;
           }
           return prev;
         });

@@ -87,11 +87,23 @@ export async function POST(request: NextRequest) {
       try {
         const { metaWhatsAppService } = await import('../../../../lib/metaWhatsAppService');
         
+        // Obtener el contenido real del template basado en el nombre
+        const getTemplateContent = (templateName: string, params?: any[]) => {
+          switch (templateName) {
+            case 'envio_de_orden':
+              return '📋 Nuevo pedido recibido. Por favor, confirma la disponibilidad y envía cotización.';
+            case 'inicializador_de_conv':
+              return '👋 ¡Hola! Somos [Nombre del Restaurante]. ¿Podrías confirmar que recibiste este mensaje?';
+            default:
+              return `📋 Template: ${templateName} enviado`;
+          }
+        };
+
         await metaWhatsAppService.saveMessage({
           id: result.messages?.[0]?.id || `template_${Date.now()}`,
           from: PHONE_NUMBER_ID,
           to: to,
-          content: `📋 Template enviado: ${template_name === 'envio_de_orden' ? 'Notificación de nuevo pedido' : template_name === 'inicializador_de_conv' ? 'Inicializador de conversación' : template_name}`,
+          content: getTemplateContent(template_name, template_params),
           timestamp: new Date(),
           status: 'sent',
           messageType: 'sent'

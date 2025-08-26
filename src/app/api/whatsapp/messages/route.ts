@@ -30,9 +30,10 @@ export async function GET(request: NextRequest) {
       query = query.gt('timestamp', sinceDate.toISOString());
     }
     
-    // Ordenar por timestamp ascendente (más antiguo primero) para mostrar cronológicamente
+    // Obtener los últimos 20 mensajes ordenados cronológicamente
+    // Primero ordenar descendente para obtener los más recientes, luego invertir para mostrar cronológicamente
     query = query
-      .order('timestamp', { ascending: true })
+      .order('timestamp', { ascending: false })
       .limit(20);
     
     const { data: messages, error } = await query;
@@ -52,9 +53,12 @@ export async function GET(request: NextRequest) {
       timestamp: m.timestamp
     })));
     
+    // Invertir el array para mostrar cronológicamente (más antiguos primero)
+    const chronologicalMessages = messages ? [...messages].reverse() : [];
+    
     return NextResponse.json({
-      messages: messages || [],
-      count: messages?.length || 0,
+      messages: chronologicalMessages,
+      count: chronologicalMessages.length,
       timestamp: Date.now()
     });
     

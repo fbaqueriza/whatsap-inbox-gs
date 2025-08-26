@@ -112,7 +112,7 @@ export default function IntegratedChatPanel({
     selectContact
   } = useChat();
 
-  // Función para verificar si han pasado 24 horas desde el último mensaje
+  // Función para verificar si han pasado 24 horas desde el último mensaje (enviado O recibido)
   const hanPasado24Horas = (): boolean => {
     if (!currentContact) return false;
     
@@ -120,19 +120,18 @@ export default function IntegratedChatPanel({
     const contactMessages = messagesByContact[normalizedPhone];
     
     if (!contactMessages || contactMessages.length === 0) {
-      return true; // Si no hay mensajes, considerar que han pasado 24h
+      return false; // Si no hay mensajes, permitir envío (no bloquear)
     }
     
-    // Obtener el último mensaje enviado
-    const lastSentMessage = contactMessages
-      .filter(msg => msg.type === 'sent')
+    // Obtener el último mensaje (enviado O recibido)
+    const lastMessage = contactMessages
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
     
-    if (!lastSentMessage) {
-      return true; // Si no hay mensajes enviados, considerar que han pasado 24h
+    if (!lastMessage) {
+      return false; // Si no hay mensajes, permitir envío
     }
     
-    const lastMessageTime = new Date(lastSentMessage.timestamp);
+    const lastMessageTime = new Date(lastMessage.timestamp);
     const now = new Date();
     const hoursDiff = (now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60);
     

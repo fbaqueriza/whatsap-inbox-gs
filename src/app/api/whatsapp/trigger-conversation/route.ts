@@ -83,9 +83,27 @@ export async function POST(request: NextRequest) {
 
       console.log('✅ Template disparado exitosamente:', result);
       
-      // NO guardar el mensaje del template en la base de datos
-      // Los templates se manejan a través del webhook de Meta cuando se confirman
-      console.log('ℹ️ Template enviado, esperando confirmación vía webhook');
+      // GUARDAR el mensaje del template en la base de datos para que aparezca en el chat
+      try {
+        const { metaWhatsAppService } = await import('../../../../lib/metaWhatsAppService');
+        
+        await metaWhatsAppService.saveMessage({
+          id: result.messages?.[0]?.id || `template_${Date.now()}`,
+          from: PHONE_NUMBER_ID,
+          to: to,
+          content: `[TEMPLATE: ${template_name}]`,
+          timestamp: new Date(),
+          status: 'sent',
+          messageType: 'sent'
+        });
+        
+        console.log('✅ Template guardado en base de datos');
+      } catch (error) {
+        console.error('⚠️ Error guardando template en base de datos:', error);
+        // No fallar si no se puede guardar, el webhook lo hará
+      }
+      
+      console.log('ℹ️ Template enviado y guardado en base de datos');
       
       return NextResponse.json({
         success: true,

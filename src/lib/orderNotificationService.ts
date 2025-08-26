@@ -60,6 +60,54 @@ export class OrderNotificationService {
   }
 
   /**
+   * Verifica si hay un pedido pendiente para un proveedor específico
+   */
+  static async checkPendingOrder(providerPhone: string): Promise<any> {
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+
+      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
+      const phoneRegex = /^\+54\d{9,11}$/;
+      if (!phoneRegex.test(providerPhone)) {
+        console.error('❌ Formato de teléfono inválido:', providerPhone);
+        return null;
+      }
+      
+      // Buscar directamente con el número validado
+      const { data, error } = await supabase
+        .from('pending_orders')
+        .select('*')
+        .eq('provider_phone', providerPhone)
+        .eq('status', 'pending_confirmation')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error || !data) {
+        return null;
+      }
+
+      return {
+        orderId: data.order_id,
+        providerId: data.provider_id,
+        providerPhone: data.provider_phone,
+        orderData: data.order_data,
+        status: data.status,
+        createdAt: data.created_at
+      };
+
+    } catch (error) {
+      console.error('❌ Error en checkPendingOrder:', error);
+      return null;
+    }
+  }
+
+  /**
    * Guarda el pedido en estado pendiente de confirmación
    */
   private static async savePendingOrder(order: Order, provider: Provider, items: OrderItem[]): Promise<void> {

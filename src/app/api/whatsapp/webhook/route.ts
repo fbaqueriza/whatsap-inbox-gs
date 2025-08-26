@@ -103,41 +103,14 @@ export async function POST(request: NextRequest) {
           console.log('🔍 Verificando si es respuesta de proveedor:', normalizedFrom);
           
           try {
-            // En producción, usar la URL de la aplicación actual
-            const baseUrl = process.env.VERCEL_URL 
-              ? `https://${process.env.VERCEL_URL}` 
-              : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+            // Usar método directo en lugar de fetch para evitar error 401
+            const pendingOrder = await OrderNotificationService.checkPendingOrder(normalizedFrom);
             
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
-            
-            const checkResponse = await fetch(`${baseUrl}/api/whatsapp/get-pending-order`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ providerPhone: normalizedFrom }),
-              signal: controller.signal,
-            });
-            
-            clearTimeout(timeoutId);
-
-            if (checkResponse.ok) {
-              const checkResult = await checkResponse.json();
-              
-              if (checkResult?.orderData) {
-                console.log('📝 Enviando detalles del pedido para:', normalizedFrom);
-                await OrderNotificationService.sendOrderDetailsAfterConfirmation(normalizedFrom);
-              } else {
-                console.log('ℹ️ No hay pedidos pendientes para:', normalizedFrom);
-              }
+            if (pendingOrder?.orderData) {
+              console.log('📝 Enviando detalles del pedido para:', normalizedFrom);
+              await OrderNotificationService.sendOrderDetailsAfterConfirmation(normalizedFrom);
             } else {
-              const errorText = await checkResponse.text();
-              console.error('❌ Error en get-pending-order:', {
-                status: checkResponse.status,
-                error: errorText,
-                providerPhone: normalizedFrom
-              });
+              console.log('ℹ️ No hay pedidos pendientes para:', normalizedFrom);
             }
           } catch (error) {
             console.error('💥 Error al verificar pedidos pendientes:', error);

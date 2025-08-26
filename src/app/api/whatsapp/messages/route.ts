@@ -31,17 +31,10 @@ export async function GET(request: NextRequest) {
     }
     
     // Obtener los últimos 20 mensajes ordenados cronológicamente
-    // Usar offset para obtener los últimos 20 mensajes
-    const totalCount = await supabase
-      .from('whatsapp_messages')
-      .select('*', { count: 'exact', head: true });
-    
-    const totalMessages = totalCount.count || 0;
-    const offset = Math.max(0, totalMessages - 20);
-    
+    // Usar limit simple con orden descendente, luego invertir
     query = query
-      .order('timestamp', { ascending: true })
-      .range(offset, totalMessages - 1);
+      .order('timestamp', { ascending: false })
+      .limit(20);
     
     const { data: messages, error } = await query;
     
@@ -60,9 +53,12 @@ export async function GET(request: NextRequest) {
       timestamp: m.timestamp
     })));
     
+    // Invertir el array para mostrar cronológicamente (más antiguos primero)
+    const chronologicalMessages = messages ? [...messages].reverse() : [];
+    
     return NextResponse.json({
-      messages: messages || [],
-      count: messages?.length || 0,
+      messages: chronologicalMessages,
+      count: chronologicalMessages.length,
       timestamp: Date.now()
     });
     

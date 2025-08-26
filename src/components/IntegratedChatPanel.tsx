@@ -124,8 +124,8 @@ export default function IntegratedChatPanel({
     }
     
     // Obtener el último mensaje (enviado O recibido)
-    const lastMessage = contactMessages
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+    // Los mensajes ya vienen ordenados del API, tomar el último directamente
+    const lastMessage = contactMessages[contactMessages.length - 1];
     
     if (!lastMessage) {
       return false; // Si no hay mensajes, permitir envío

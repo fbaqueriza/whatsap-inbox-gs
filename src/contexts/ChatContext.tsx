@@ -486,8 +486,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       
-      // Solo incluir contactos argentinos válidos
-      if (!contactId.includes('+549')) {
+      // Solo incluir contactos argentinos válidos O nuestro número de WhatsApp Business
+      if (!contactId.includes('+549') && contactId !== process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER_ID) {
         return;
       }
       
@@ -534,8 +534,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       // Filtrar el contacto de prueba
       if (contactId === '+5491112345678' || contactId === '5491112345678') return;
       
-      // Solo incluir contactos argentinos válidos
-      if (!contactId.includes('+549')) {
+      // Solo incluir contactos argentinos válidos O nuestro número de WhatsApp Business
+      if (!contactId.includes('+549') && contactId !== process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER_ID) {
         return;
       }
       

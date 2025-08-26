@@ -15,30 +15,18 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Error obteniendo pedidos pendientes:', error);
+      console.error('❌ Error obteniendo pedidos pendientes:', error);
       return NextResponse.json(
-        { success: false, error: 'Error obteniendo de base de datos' },
+        { success: false, error: 'Error obteniendo pedidos pendientes' },
         { status: 500 }
       );
     }
 
-    // Transformar los datos para que coincidan con el formato esperado
-    const pendingOrders = data.map(row => ({
-      orderId: row.order_id,
-      providerId: row.provider_id,
-      providerPhone: row.provider_phone,
-      orderData: row.order_data,
-      status: row.status,
-      createdAt: row.created_at
-    }));
-
-    return NextResponse.json({
-      success: true,
-      pendingOrders
-    });
+    console.log('✅ Pedidos pendientes obtenidos:', data?.length || 0);
+    return NextResponse.json({ success: true, pendingOrders: data || [] });
 
   } catch (error) {
-    console.error('Error en get-all-pending-orders:', error);
+    console.error('❌ Error en get-all-pending-orders:', error);
     return NextResponse.json(
       { success: false, error: 'Error interno del servidor' },
       { status: 500 }

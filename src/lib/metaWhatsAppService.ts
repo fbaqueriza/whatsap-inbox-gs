@@ -565,16 +565,15 @@ export class MetaWhatsAppService {
         }
       }
       
-
-
-      // Usar el user_id del mensaje si está disponible, sino usar default_user
-      const userId = message.user_id || 'default_user';
+      // Usar el user_id del mensaje si está disponible, sino usar null
+      // El user_id debe ser un UUID válido o null, no un string
+      const userId = message.user_id || null;
 
       const messageData = {
         id: generateUUID(), // Siempre generar UUID válido para el id
         content: message.content || message.text?.body || '',
         timestamp: message.timestamp || new Date().toISOString(),
-        message_sid: message.id || generateUUID(), // Usar el ID original de Meta como message_sid
+        message_sid: message.id || `msg_${Date.now()}`, // Usar el ID original de Meta como message_sid (string)
         contact_id: contactId,
         message_type: messageType, // Usar el tipo correcto basado en la dirección
         user_id: userId,
@@ -593,14 +592,35 @@ export class MetaWhatsAppService {
       const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
       // Verificar si el mensaje ya existe para evitar duplicados usando message_sid
-      const { data: existingMessage } = await supabase
-        .from('whatsapp_messages')
-        .select('id')
-        .eq('message_sid', messageData.message_sid)
-        .single();
+      // Solo verificar si message_sid no es null y es un string válido
+      if (messageData.message_sid && typeof messageData.message_sid === 'string') {
+        const { data: existingMessage } = await supabase
+          .from('whatsapp_messages')
+          .select('id')
+          .eq('message_sid', messageData.message_sid)
+          .single();
 
-      if (existingMessage) {
-        console.log('⚠️ Mensaje ya existe, evitando duplicado:', messageData.message_sid);
+        if (existingMessage) {
+          console.log('⚠️ Mensaje ya existe, evitando duplicado:', messageData.message_sid);
+          return;
+        }
+      }
+
+      // Verificación adicional: evitar duplicados basados en content + contact_id + timestamp (ventana de 10 segundos)
+      const { data: recentMessages } = await supabase
+        .from('whatsapp_messages')
+        .select('id, content, contact_id, timestamp')
+        .eq('content', messageData.content)
+        .eq('contact_id', messageData.contact_id)
+        .eq('message_type', messageData.message_type)
+        .gte('timestamp', new Date(Date.now() - 10000).toISOString()) // Últimos 10 segundos
+        .limit(1);
+
+      if (recentMessages && recentMessages.length > 0) {
+        console.log('⚠️ Mensaje similar reciente detectado, evitando duplicado:', {
+          content: messageData.content?.substring(0, 30),
+          contact_id: messageData.contact_id
+        });
         return;
       }
 

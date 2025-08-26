@@ -61,6 +61,8 @@ export async function POST(request: NextRequest) {
         }
       };
 
+      console.log('📤 Enviando template a Meta API:', templatePayload);
+
       const response = await fetch(`${WHATSAPP_API_URL}/${PHONE_NUMBER_ID}/messages`, {
         method: 'POST',
         headers: {
@@ -74,11 +76,79 @@ export async function POST(request: NextRequest) {
 
       if (!response.ok) {
         console.error('❌ Error disparando template:', result);
-        return NextResponse.json({
-          success: false,
-          error: 'Error disparando template de conversación',
-          details: result
-        }, { status: response.status });
+        
+        // FALLBACK: Si el template falla, enviar mensaje normal con contenido del template
+        console.log('🔄 Intentando fallback con mensaje normal...');
+        
+        try {
+          const { TemplateService } = await import('../../../../lib/templateService');
+          const fallbackMessage = await TemplateService.getTemplateContent(template_name, template_params);
+          
+          const fallbackPayload = {
+            messaging_product: 'whatsapp',
+            to: to,
+            type: 'text',
+            text: {
+              body: fallbackMessage
+            }
+          };
+
+          const fallbackResponse = await fetch(`${WHATSAPP_API_URL}/${PHONE_NUMBER_ID}/messages`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(fallbackPayload)
+          });
+
+          const fallbackResult = await fallbackResponse.json();
+
+          if (!fallbackResponse.ok) {
+            console.error('❌ Error en fallback también:', fallbackResult);
+            return NextResponse.json({
+              success: false,
+              error: 'Error disparando template y fallback',
+              details: { template: result, fallback: fallbackResult }
+            }, { status: response.status });
+          }
+
+          console.log('✅ Fallback exitoso con mensaje normal:', fallbackResult);
+          
+          // Guardar el mensaje de fallback en la base de datos
+          try {
+            const { metaWhatsAppService } = await import('../../../../lib/metaWhatsAppService');
+            
+            await metaWhatsAppService.saveMessage({
+              id: fallbackResult.messages?.[0]?.id || `fallback_${Date.now()}`,
+              from: PHONE_NUMBER_ID,
+              to: to,
+              content: fallbackMessage,
+              timestamp: new Date(),
+              status: 'sent',
+              messageType: 'sent'
+            });
+            
+            console.log('✅ Mensaje de fallback guardado en base de datos');
+          } catch (error) {
+            console.error('⚠️ Error guardando mensaje de fallback en base de datos:', error);
+          }
+          
+          return NextResponse.json({
+            success: true,
+            message: 'Template enviado como fallback (mensaje normal)',
+            data: fallbackResult,
+            fallback: true
+          });
+          
+        } catch (fallbackError) {
+          console.error('❌ Error en fallback:', fallbackError);
+          return NextResponse.json({
+            success: false,
+            error: 'Error disparando template y fallback',
+            details: { template: result, fallback: fallbackError }
+          }, { status: response.status });
+        }
       }
 
       console.log('✅ Template disparado exitosamente:', result);

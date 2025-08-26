@@ -12,9 +12,8 @@ import { useChat } from '../../contexts/ChatContext';
 import { useGlobalChat } from '../../contexts/GlobalChatContext';
 import { ChatProvider } from '../../contexts/ChatContext';
 import { GlobalChatProvider } from '../../contexts/GlobalChatContext';
-import WhatsAppSync from '../../components/WhatsAppSync';
 import GlobalChatWrapper from '../../components/GlobalChatWrapper';
-import { Order, OrderItem, Provider, StockItem, OrderFile } from '../../types';
+import { Order, Provider, StockItem, OrderFile } from '../../types';
 import {
   Plus,
   ShoppingCart,
@@ -31,16 +30,13 @@ import {
   Download,
   ChevronDown,
   Edit,
-
 } from 'lucide-react';
 import { DataProvider, useData } from '../../components/DataProvider';
-import es from '../../locales/es';
-import { Menu } from '@headlessui/react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '../../lib/supabase/client';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { OrderNotificationService } from '../../lib/orderNotificationService';
-
+import { Menu } from '@headlessui/react';
+import es from '../../locales/es';
+import { useOrdersRealtime } from '../../hooks/useSupabaseRealtime';
 
 
 export default function OrdersPageWrapper() {
@@ -56,7 +52,6 @@ export default function OrdersPageWrapper() {
   return (
     <ChatProvider>
       <GlobalChatProvider>
-        <WhatsAppSync />
         <DataProvider userEmail={user?.email ?? undefined} userId={user?.id}>
             {user && <OrdersPage user={user} />}
           </DataProvider>
@@ -75,6 +70,7 @@ function OrdersPage({ user }: OrdersPageProps) {
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
 
   
@@ -86,27 +82,52 @@ function OrdersPage({ user }: OrdersPageProps) {
   
   // Remove all other local state for orders/providers/stockItems
   // All handlers now use Supabase CRUD only
+  // MANEJADORES REALTIME PARA ÓRDENES
+  const handleNewOrder = useCallback((payload: any) => {
+    console.log('🔄 Nueva orden recibida via Realtime:', payload);
+    // Recargar datos para obtener la orden actualizada
+    fetchAll();
+  }, [fetchAll]);
+
+  const handleOrderUpdate = useCallback((payload: any) => {
+    console.log('🔄 Orden actualizada via Realtime:', payload);
+    // Recargar datos para obtener la orden actualizada
+    fetchAll();
+  }, [fetchAll]);
+
+  const handleOrderDelete = useCallback((payload: any) => {
+    console.log('🔄 Orden eliminada via Realtime:', payload);
+    // Recargar datos para obtener la orden actualizada
+    fetchAll();
+  }, [fetchAll]);
+
+  // SUSCRIPCIÓN REALTIME PARA ÓRDENES - REMOVIDA, AHORA MANEJADA POR SERVICIO GLOBAL
+  // useOrdersRealtime(
+  //   handleNewOrder,
+  //   handleOrderUpdate,
+  //   handleOrderDelete
+  // );
+
   const handleCreateOrder = async (orderData: any) => {
-    const newOrder = await addOrder(orderData, user.id);
-    setIsCreateModalOpen(false);
-    setSuggestedOrder(null);
-
-    // Enviar notificación automática al proveedor
     try {
-      const provider = providers.find(p => p.id === orderData.providerId);
-      if (provider) {
-        const notificationData = {
-          order: newOrder as Order,
-          provider: provider,
+      setIsLoading(true);
+      
+      const newOrder = await addOrder(orderData, user.id);
+      
+      if (newOrder) {
+        console.log('✅ Pedido creado exitosamente:', newOrder);
+        
+        // Enviar notificación al proveedor
+        const notificationSent = await OrderNotificationService.sendOrderNotification({
+          order: newOrder,
+          provider: providers.find(p => p.id === orderData.providerId)!,
           items: orderData.items
-        };
-
-        const notificationSent = await OrderNotificationService.sendOrderNotification(notificationData);
+        });
         
         if (notificationSent) {
           console.log('✅ Notificación de pedido enviada exitosamente');
           
-          // Forzar recarga de mensajes después de enviar la orden
+          // La actualización se manejará automáticamente via Realtime
           setTimeout(() => {
             // Disparar un evento personalizado para actualizar el chat
             if (newOrder) {
@@ -121,6 +142,8 @@ function OrdersPage({ user }: OrdersPageProps) {
       }
     } catch (error) {
       console.error('Error enviando notificación de pedido:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 

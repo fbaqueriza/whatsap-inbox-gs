@@ -4,13 +4,12 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { supabase } from '../lib/supabase/client';
 import { WhatsAppMessage, Contact } from '../types/whatsapp';
+import { useRealtimeService } from '../services/realtimeService';
 
 // Tipos
 interface ChatWhatsAppMessage extends WhatsAppMessage {
   contact_id: string;
 }
-
-
 
 interface ChatContextType {
   messages: ChatWhatsAppMessage[];
@@ -61,9 +60,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [userProviderPhones, setUserProviderPhones] = useState<string[]>([]);
 
   // Hook de notificaciones push
   const { sendNotification } = usePushNotifications();
+  
+  // Hook del servicio global de Realtime
+  const { addMessageListener, isConnected: realtimeConnected } = useRealtimeService();
 
   // Funciones de notificación push
   const sendWhatsAppNotification = useCallback((contactName: string, message: string) => {
@@ -86,7 +89,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const currentUserId = user?.id;
       
       if (!currentUserId) {
-        // console.log('No hay usuario autenticado, no se pueden cargar mensajes');
         return;
       }
       
@@ -108,6 +110,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         }
         return phone;
       }) || [];
+      
+      // Actualizar el estado de proveedores del usuario
+      setUserProviderPhones(userProviderPhones);
       
       const response = await fetch('/api/whatsapp/messages');
       const data = await response.json();
@@ -132,24 +137,27 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             }
             
             return {
-              id: msg.message_sid || msg.id, // Usar message_sid (ID de Meta) como prioridad
-              content: msg.content,
-              timestamp: new Date(msg.timestamp || msg.created_at),
+            id: msg.message_sid || msg.id, // Usar message_sid (ID de Meta) como prioridad
+            content: msg.content,
+            timestamp: new Date(msg.timestamp || msg.created_at),
               type: messageType,
-              contact_id: msg.contact_id || msg.from,
-              status: msg.status || 'delivered'
+            contact_id: msg.contact_id || msg.from,
+            status: msg.status || 'delivered'
             };
           })
           // Filtrar mensajes que correspondan a los proveedores del usuario actual
           // O que vengan de nuestro propio número de WhatsApp Business
+          // O que sean de cualquier número argentino (+549)
           .filter((msg: any) => {
             const contactId = normalizeContactIdentifier(msg.contact_id);
             const ourWhatsAppNumber = process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER_ID;
             const normalizedOurNumber = ourWhatsAppNumber ? `+${ourWhatsAppNumber}` : null;
             
+            // Incluir mensajes de cualquier número argentino (+549)
+            const isArgentineNumber = contactId.includes('+549');
             const isFromOurProvider = userProviderPhones.includes(contactId);
             const isFromOurWhatsApp = normalizedOurNumber && contactId === normalizedOurNumber;
-            const isIncluded = isFromOurProvider || isFromOurWhatsApp;
+            const isIncluded = isArgentineNumber || isFromOurProvider || isFromOurWhatsApp;
             
             return isIncluded;
           });
@@ -163,7 +171,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           let hasNewMessages = false;
           const updatedMessages = [...prev];
           
-          transformedMessages.forEach((newMsg: ChatWhatsAppMessage) => {
+                     transformedMessages.forEach((newMsg: ChatWhatsAppMessage) => {
             // Verificar si el mensaje ya existe por ID exacto
             const isDuplicate = existingMessagesMap.has(newMsg.id);
             
@@ -171,7 +179,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             if (newMsg.type === 'sent') {
               const tempMessageIndex = updatedMessages.findIndex(msg => 
                 msg.id.startsWith('temp_') && 
-                msg.content === newMsg.content && 
+                                              msg.content === newMsg.content && 
                 msg.contact_id === newMsg.contact_id
               );
               
@@ -182,12 +190,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
                 return;
               }
             }
-            
-            if (!isDuplicate) {
-              updatedMessages.push(newMsg);
-              hasNewMessages = true;
-            }
-          });
+             
+             if (!isDuplicate) {
+               updatedMessages.push(newMsg);
+               hasNewMessages = true;
+             }
+           });
           
           if (hasNewMessages) {
             // Los mensajes ya vienen ordenados del API, no reordenar
@@ -205,7 +213,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     window.location.reload();
   }, []);
 
-    // CARGAR MENSAJES INICIALES Y POLLING OPTIMIZADO
+  // CARGAR MENSAJES INICIALES Y CONFIGURAR LISTENER REALTIME
   useEffect(() => {
     let isMounted = true;
     
@@ -230,46 +238,100 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
     window.addEventListener('orderSent', handleOrderSent);
 
-    // Recargar cada 3 segundos para reducir carga y logs
-    const interval = setInterval(() => {
-      if (isMounted) {
-        loadMessages();
-      }
-    }, 3000);
-
     return () => {
       isMounted = false;
-      clearInterval(interval);
       window.removeEventListener('orderSent', handleOrderSent);
     };
   }, []); // Remover loadMessages de las dependencias para evitar múltiples inicializaciones
 
-  // SIMULAR CONEXIÓN EXITOSA - POLLING FUNCIONA
+  // CONFIGURAR LISTENER DE MENSAJES REALTIME
+  useEffect(() => {
+    const removeListener = addMessageListener((realtimeMessage) => {
+      // Convertir mensaje del servicio global al formato del chat
+      const chatMessage: ChatWhatsAppMessage = {
+        id: realtimeMessage.id,
+        content: realtimeMessage.content,
+        timestamp: realtimeMessage.timestamp,
+        type: realtimeMessage.type,
+        contact_id: realtimeMessage.contact_id,
+        status: realtimeMessage.status as 'sent' | 'delivered' | 'read' | 'failed' | undefined
+      };
+
+      setMessages(prev => {
+        // Verificar duplicados por ID exacto
+        const messageExists = prev.some(msg => msg.id === chatMessage.id);
+        
+        if (messageExists) {
+          return prev;
+        }
+        
+        // Para mensajes enviados, buscar si hay un mensaje temporal que debe ser reemplazado
+        if (chatMessage.type === 'sent') {
+          // Buscar mensaje temporal con criterios más flexibles
+          const tempMessageIndex = prev.findIndex(msg => {
+            // Debe ser un mensaje temporal
+            if (!msg.id.startsWith('temp_')) return false;
+            
+            // Debe tener el mismo contenido
+            if (msg.content !== chatMessage.content) return false;
+            
+            // Debe ser del mismo contacto
+            if (msg.contact_id !== chatMessage.contact_id) return false;
+            
+            // Debe estar dentro de una ventana de tiempo más amplia (30 segundos)
+            const tempTime = new Date(msg.timestamp).getTime();
+            const realTime = new Date(chatMessage.timestamp).getTime();
+            const timeDiff = Math.abs(tempTime - realTime);
+            
+            return timeDiff < 30000; // 30 segundos
+          });
+          
+          if (tempMessageIndex !== -1) {
+            // Reemplazar mensaje temporal con el real
+            const updatedMessages = [...prev];
+            updatedMessages[tempMessageIndex] = {
+              ...chatMessage,
+              id: chatMessage.id,
+              status: 'delivered' as const
+            };
+            return updatedMessages;
+          }
+        }
+        
+        // Agregar el nuevo mensaje
+        const updatedMessages = [...prev, chatMessage];
+        return updatedMessages;
+      });
+    });
+
+    return removeListener;
+  }, [addMessageListener]);
+
+  // SIMULAR CONEXIÓN EXITOSA - REALTIME FUNCIONA
   useEffect(() => {
     if (typeof window === 'undefined') return;
     
     // Verificar si ya se inicializó para evitar múltiples instancias
     if (connectionStatus !== 'disconnected' || isConnected) return;
     
-         // console.log('🔄 Iniciando sistema de mensajes con polling...');
-     setConnectionStatus('connecting');
+    setConnectionStatus('connecting');
      
-     // Simular conexión exitosa más rápido
-     setTimeout(() => {
-       setIsConnected(true);
-       setConnectionStatus('connected');
-       // console.log('✅ Sistema de mensajes conectado exitosamente');
-     }, 500);
+    // Simular conexión exitosa más rápido
+    setTimeout(() => {
+      setIsConnected(true);
+      setConnectionStatus('connected');
+    }, 500);
   }, []); // Solo ejecutar una vez al montar el componente
 
   // Función para enviar mensaje
   const sendMessage = useCallback(async (contactId: string, content: string) => {
     if (!content.trim()) return;
 
-    // Generar un ID temporal que será reemplazado por el ID real de la base de datos
-    const tempId = `temp_${Date.now()}`;
+    // Generar un ID temporal único para inserción local inmediata
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    const newMessage: ChatWhatsAppMessage = {
+    // Crear mensaje temporal para inserción local
+    const tempMessage: ChatWhatsAppMessage = {
       id: tempId,
       content: content.trim(),
       timestamp: new Date(),
@@ -278,10 +340,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       status: 'sent'
     };
 
-    // Agregar mensaje localmente inmediatamente al final (más reciente)
+    // Agregar mensaje localmente inmediatamente para feedback visual
     setMessages(prev => {
-      const updatedMessages = [...prev, newMessage];
-      // Los mensajes ya vienen ordenados del API, no reordenar
+      const updatedMessages = [...prev, tempMessage];
       return updatedMessages;
     });
 
@@ -301,19 +362,24 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const result = await response.json();
       
       if (result.success) {
-        // Actualizar el mensaje local con el ID real de la base de datos
-        const realMessageId = result.messageId || `msg_${Date.now()}`;
-        
-        setMessages(prev => {
-          const updatedMessages = prev.map(msg => 
-            msg.id === tempId 
-              ? { ...msg, id: realMessageId, status: 'delivered' as const }
-              : msg
-          );
-          // Los mensajes ya vienen ordenados del API, no reordenar
-          return updatedMessages;
-        });
+        // El mensaje real llegará via Realtime, no necesitamos actualizar aquí
+        // Solo marcar como enviado si hay error en Realtime
+        setTimeout(() => {
+          setMessages(prev => {
+            // Si después de 5 segundos el mensaje temporal sigue ahí, marcarlo como enviado
+            const tempMessageStillExists = prev.some(msg => msg.id === tempId);
+            if (tempMessageStillExists) {
+              return prev.map(msg => 
+                msg.id === tempId 
+                  ? { ...msg, status: 'delivered' as const }
+                  : msg
+              );
+            }
+            return prev;
+          });
+        }, 5000);
       } else {
+        console.error('❌ Error enviando mensaje:', result.error);
         // Marcar como fallido si hay error
         setMessages(prev => {
           const updatedMessages = prev.map(msg => 
@@ -321,20 +387,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               ? { ...msg, status: 'failed' as const }
               : msg
           );
-          // Los mensajes ya vienen ordenados del API, no reordenar
           return updatedMessages;
         });
       }
     } catch (error) {
-      console.error('Error sending message:', error);
+      console.error('❌ Error enviando mensaje:', error);
       // Marcar como fallido si hay error
       setMessages(prev => {
         const updatedMessages = prev.map(msg => 
-          msg.id === newMessage.id 
+          msg.id === tempId 
             ? { ...msg, status: 'failed' as const }
             : msg
         );
-        // Los mensajes ya vienen ordenados del API, no reordenar
         return updatedMessages;
       });
     }
@@ -379,9 +443,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       });
 
              if (response.ok) {
-         const result = await response.json();
-         // console.log('✅ Mensajes marcados como leídos para:', normalizedContactId);
-       }
+        const result = await response.json();
+        // console.log('✅ Mensajes marcados como leídos para:', normalizedContactId);
+      }
     } catch (error) {
       console.error('Error marking as read:', error);
     }
@@ -458,8 +522,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       
-      // Solo incluir contactos argentinos válidos O nuestro número de WhatsApp Business
-      if (!contactId.includes('+549') && contactId !== process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER_ID) {
+      // Solo incluir contactos que sean proveedores registrados O nuestro número de WhatsApp Business
+      const ourWhatsAppNumber = process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER_ID;
+      const normalizedOurNumber = ourWhatsAppNumber ? `+${ourWhatsAppNumber}` : null;
+      
+      // Verificar si es nuestro número de WhatsApp Business
+      const isFromOurWhatsApp = normalizedOurNumber && contactId === normalizedOurNumber;
+      
+      // Verificar si es un proveedor registrado (esto se obtiene de loadMessages)
+      const isFromOurProvider = userProviderPhones.includes(contactId);
+      
+      // Solo incluir si es proveedor registrado o nuestro número de WhatsApp
+      if (!isFromOurProvider && !isFromOurWhatsApp) {
         return;
       }
       
@@ -494,7 +568,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       
       return new Date(bLastMessage.timestamp).getTime() - new Date(aLastMessage.timestamp).getTime();
     });
-  }, [messagesByContact, messages]);
+  }, [messagesByContact, messages, userProviderPhones]);
 
   // Calcular contadores de mensajes no leídos - VERSIÓN CORREGIDA
   const unreadCounts = useMemo(() => {
@@ -522,9 +596,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     });
     
          // Log temporal para debug (solo si hay cambios)
-     // if (Object.keys(counts).length > 0) {
-     //   console.log('🔢 Contadores no leídos calculados:', counts);
-     // }
+    // if (Object.keys(counts).length > 0) {
+    //   console.log('🔢 Contadores no leídos calculados:', counts);
+    // }
     
     return counts;
   }, [messagesByContact, messages]);

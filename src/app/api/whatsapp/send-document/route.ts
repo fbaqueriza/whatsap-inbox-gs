@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
     const messageId = `doc-${timestamp}`;
 
     // Guardar en base de datos
-    const userId = 'default-user'; // En una implementación real, obtendrías el userId del contexto
+    const userId = null; // En una implementación real, obtendrías el userId del contexto
     try {
       const supabase = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,

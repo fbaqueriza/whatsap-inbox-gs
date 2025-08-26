@@ -5,6 +5,8 @@ const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 export class TemplateService {
   /**
    * Obtiene la lista de templates disponibles desde Meta API
+   * NOTA: El endpoint /message_templates no existe en WhatsApp Business API
+   * Por ahora, retornamos un array vacío y usamos fallback
    */
   static async getTemplates() {
     try {
@@ -18,27 +20,13 @@ export class TemplateService {
         return []; // Retornar array vacío en lugar de throw error
       }
 
-      console.log('📡 Consultando Meta API...');
-      // Usar el endpoint correcto para obtener templates
-      const response = await fetch(`${WHATSAPP_API_URL}/message_templates`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      console.log('📊 Respuesta de Meta API:', response.status, response.statusText);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
-        console.error('❌ Error de Meta API:', errorData);
-        return []; // Retornar array vacío en lugar de throw error
-      }
-
-      const data = await response.json();
-      console.log('✅ Templates obtenidos:', data.data?.length || 0);
-      return data.data || [];
+      // NOTA: El endpoint /message_templates no existe en WhatsApp Business API
+      // Los templates se configuran en el panel de Meta Business y se usan directamente
+      // Por ahora, retornamos un array vacío y usamos el sistema de fallback
+      console.log('ℹ️ Endpoint /message_templates no disponible en WhatsApp Business API');
+      console.log('ℹ️ Usando sistema de fallback para contenido de templates');
+      
+      return []; // Retornar array vacío para usar fallback
     } catch (error) {
       console.error('❌ Error obteniendo templates:', error);
       return []; // Retornar array vacío en lugar de throw error
@@ -93,7 +81,16 @@ export class TemplateService {
       'inicializador_de_conv': '👋 ¡Hola! Iniciando conversación para coordinar pedidos.',
       'notificacion_pedido': '📋 Notificación de nuevo pedido recibido.',
       'confirmacion_pedido': '✅ Pedido confirmado y en proceso.',
-      'recordatorio_pedido': '⏰ Recordatorio: Pedido pendiente de confirmación.'
+      'recordatorio_pedido': '⏰ Recordatorio: Pedido pendiente de confirmación.',
+      'pedido_enviado': '📤 Pedido enviado al proveedor.',
+      'pedido_confirmado': '✅ Pedido confirmado por el proveedor.',
+      'pedido_rechazado': '❌ Pedido rechazado por el proveedor.',
+      'pedido_modificado': '🔄 Pedido modificado.',
+      'pedido_cancelado': '🚫 Pedido cancelado.',
+      'pedido_entregado': '🎉 Pedido entregado exitosamente.',
+      'recordatorio_pago': '💰 Recordatorio de pago pendiente.',
+      'confirmacion_pago': '💳 Pago confirmado.',
+      'error_pago': '⚠️ Error en el procesamiento del pago.'
     };
     
     return fallbackTemplates[templateName] || `📋 Template: ${templateName} enviado`;

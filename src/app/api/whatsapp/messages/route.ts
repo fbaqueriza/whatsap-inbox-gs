@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
         content: body.content,
         message_type: body.message_type || 'received',
         status: body.status || 'received',
-        user_id: body.user_id || 'default_user',
+        user_id: body.user_id || null,
         timestamp: body.timestamp || new Date().toISOString()
       })
       .select()

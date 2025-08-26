@@ -23,12 +23,29 @@ export async function POST(request: NextRequest) {
       console.error('❌ Formato de teléfono inválido:', providerPhone);
       console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
       return NextResponse.json(
-        { success: false, error: 'Formato de teléfono inválido. Debe ser: +54XXXXXXXXXX' },
+        { success: false, error: 'Formato de teléfono inválido' },
         { status: 400 }
       );
     }
-    
-    const { error } = await supabase
+
+    // Verificar si ya existe un pedido pendiente para este proveedor
+    const { data: existingOrder } = await supabase
+      .from('pending_orders')
+      .select('*')
+      .eq('provider_phone', providerPhone)
+      .eq('status', 'pending_confirmation')
+      .single();
+
+    if (existingOrder) {
+      console.log('⚠️ Ya existe un pedido pendiente para este proveedor:', providerPhone);
+      return NextResponse.json(
+        { success: false, error: 'Ya existe un pedido pendiente para este proveedor' },
+        { status: 409 }
+      );
+    }
+
+    // Insertar nuevo pedido pendiente
+    const { data, error } = await supabase
       .from('pending_orders')
       .insert({
         order_id: orderId,
@@ -37,20 +54,20 @@ export async function POST(request: NextRequest) {
         order_data: orderData,
         status: 'pending_confirmation',
         created_at: new Date().toISOString()
-      });
+      })
+      .select()
+      .single();
 
     if (error) {
       console.error('❌ Error guardando pedido pendiente:', error);
       return NextResponse.json(
-        { success: false, error: 'Error guardando en base de datos' },
+        { success: false, error: 'Error guardando pedido pendiente' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      message: 'Pedido pendiente guardado exitosamente'
-    });
+    console.log('✅ Pedido guardado en estado pendiente de confirmación:', data);
+    return NextResponse.json({ success: true, data });
 
   } catch (error) {
     console.error('❌ Error en save-pending-order:', error);

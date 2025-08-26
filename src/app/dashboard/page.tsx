@@ -1,14 +1,14 @@
 "use client";
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
-import SuggestedOrders from '../../components/SuggestedOrders';
-import CreateOrderModal from '../../components/CreateOrderModal';
-import ComprobanteButton from '../../components/ComprobanteButton';
-
+import { DataProvider, useData } from '../../components/DataProvider';
+import { useRouter } from 'next/navigation';
+import { Order, Provider, StockItem } from '../../types';
 import { useChat } from '../../contexts/ChatContext';
 import { useGlobalChat } from '../../contexts/GlobalChatContext';
-import { Order, OrderItem, Provider, StockItem } from '../../types';
+import { OrderNotificationService } from '../../lib/orderNotificationService';
+import { supabase } from '../../lib/supabase/client';
 import {
   Plus,
   ShoppingCart,
@@ -24,25 +24,33 @@ import {
   Check,
   Download,
   ChevronDown,
+  Edit,
   BarChart3,
 } from 'lucide-react';
-import { DataProvider, useData } from '../../components/DataProvider';
-import es from '../../locales/es';
 import { Menu } from '@headlessui/react';
-import { useRouter } from 'next/navigation';
-import { supabase } from '../../lib/supabase/client';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { OrderNotificationService } from '../../lib/orderNotificationService';
+import SuggestedOrders from '../../components/SuggestedOrders';
+import CreateOrderModal from '../../components/CreateOrderModal';
+import ComprobanteButton from '../../components/ComprobanteButton';
+import { useOrdersRealtime } from '../../hooks/useSupabaseRealtime';
+
 export default function DashboardPageWrapper() {
   const { user, loading: authLoading } = useSupabaseAuth();
   const router = useRouter();
-  if (!authLoading && !user) {
-    if (typeof window !== 'undefined') router.push('/auth/login');
-    return null;
-  }
+  
+  useEffect(() => {
+    if (!authLoading && !user && typeof window !== 'undefined') {
+      router.push('/auth/login');
+    }
+  }, [authLoading, user, router]);
+  
   if (authLoading) {
     return <div className="min-h-screen flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div><p className="mt-4 text-gray-600">Cargando...</p></div></div>;
   }
+  
+  if (!user) {
+    return null;
+  }
+  
   return (
     <DataProvider userEmail={user?.email ?? undefined} userId={user?.id}>
       <DashboardPage />
@@ -52,7 +60,7 @@ export default function DashboardPageWrapper() {
 
 function DashboardPage() {
   const { user, loading: authLoading } = useSupabaseAuth();
-  const { orders, providers, stockItems } = useData();
+  const { orders, providers, stockItems, setOrders, updateOrder, fetchAll } = useData();
   // Remove isSeedUser and mockConversations logic
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [suggestedOrder, setSuggestedOrder] = useState<any>(null);
@@ -261,6 +269,56 @@ function DashboardPageContent({
     setIsCreateModalOpen(true);
   };
 
+  // MANEJADORES REALTIME PARA ÓRDENES
+  const handleNewOrder = useCallback((payload: any) => {
+    console.log('🔄 Nueva orden recibida via Realtime:', payload);
+    const newOrder = payload.new;
+    
+    if (newOrder) {
+      setOrders(prev => {
+        // Verificar si la orden ya existe
+        const orderExists = prev.some(order => order.id === newOrder.id);
+        if (orderExists) {
+          return prev;
+        }
+        
+        // Agregar la nueva orden
+        return [...prev, newOrder];
+      });
+    }
+  }, []);
+
+  const handleOrderUpdate = useCallback((payload: any) => {
+    console.log('🔄 Orden actualizada via Realtime:', payload);
+    const updatedOrder = payload.new;
+    
+    if (updatedOrder) {
+      setOrders(prev => 
+        prev.map(order => 
+          order.id === updatedOrder.id ? updatedOrder : order
+        )
+      );
+    }
+  }, []);
+
+  const handleOrderDelete = useCallback((payload: any) => {
+    console.log('🔄 Orden eliminada via Realtime:', payload);
+    const deletedOrder = payload.old;
+    
+    if (deletedOrder) {
+      setOrders(prev => 
+        prev.filter(order => order.id !== deletedOrder.id)
+      );
+    }
+  }, []);
+
+  // SUSCRIPCIÓN REALTIME PARA ÓRDENES - REMOVIDA, AHORA MANEJADA POR SERVICIO GLOBAL
+  // useOrdersRealtime(
+  //   handleNewOrder,
+  //   handleOrderUpdate,
+  //   handleOrderDelete
+  // );
+
   const handleSendOrder = async (orderId: string) => {
     const order = orders.find(o => o.id === orderId);
     if (order) {
@@ -268,10 +326,9 @@ function DashboardPageContent({
       await updateOrder({ ...order, status: 'enviado' });
       console.log('DEBUG: Pedido enviado, esperando factura...');
       
+      // La actualización se manejará automáticamente via Realtime
       setTimeout(async () => {
         console.log('DEBUG: Simulando recepción de factura...');
-        // Refetch orders para obtener el estado actualizado
-        await fetchAll();
         // Buscar el pedido actualizado después del fetchAll
         const updatedOrders = await supabase.from('orders').select('*').eq('id', orderId).single();
         if (updatedOrders.data && updatedOrders.data.status === 'enviado') {
@@ -292,6 +349,7 @@ function DashboardPageContent({
           } as Order;
           console.log('DEBUG: Actualizando pedido con factura y orden de pago:', orderWithInvoice);
           await updateOrder(orderWithInvoice);
+          // La actualización se manejará automáticamente via Realtime
         } else {
           console.log('DEBUG: Pedido no encontrado o estado incorrecto:', updatedOrders.data?.status);
         }

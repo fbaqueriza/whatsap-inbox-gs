@@ -1,19 +1,21 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Clock, Send, CheckCircle, XCircle } from 'lucide-react';
+import { usePendingOrdersRealtime } from '../hooks/useSupabaseRealtime';
 
 interface PendingOrder {
-  orderId: string;
-  providerId: string;
-  providerPhone: string;
-  orderData: {
+  order_id: string;
+  provider_id: string;
+  provider_phone: string;
+  order_data: {
     order: any;
     provider: any;
     items: any[];
   };
   status: string;
-  createdAt: string;
+  created_at: string;
+  user_id?: string;
 }
 
 export default function PendingOrderList() {
@@ -44,36 +46,55 @@ export default function PendingOrderList() {
     }
   };
 
-  const sendOrderDetails = async (providerPhone: string) => {
-    setLoading(true);
-    try {
-      const response = await fetch('/api/whatsapp/send-order-details', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ providerPhone }),
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        // Remover el pedido de la lista local
-        const updatedOrders = pendingOrders.filter(po => po.providerPhone !== providerPhone);
-        setPendingOrders(updatedOrders);
-        localStorage.setItem('pendingOrders', JSON.stringify(updatedOrders));
+  // MANEJADORES REALTIME
+  const handleNewPendingOrder = useCallback((payload: any) => {
+    console.log('🔄 Nueva orden pendiente recibida via Realtime:', payload);
+    const newOrder = payload.new;
+    
+    if (newOrder) {
+      setPendingOrders(prev => {
+        // Verificar si la orden ya existe
+        const orderExists = prev.some(order => order.order_id === newOrder.order_id);
+        if (orderExists) {
+          return prev;
+        }
         
-        alert('✅ Detalles del pedido enviados exitosamente');
-      } else {
-        alert('❌ Error: ' + result.error);
-      }
-    } catch (error) {
-      console.error('Error enviando detalles:', error);
-      alert('❌ Error enviando detalles del pedido');
-    } finally {
-      setLoading(false);
+        // Agregar la nueva orden al inicio
+        return [newOrder, ...prev];
+      });
     }
-  };
+  }, []);
+
+  const handlePendingOrderUpdate = useCallback((payload: any) => {
+    console.log('🔄 Orden pendiente actualizada via Realtime:', payload);
+    const updatedOrder = payload.new;
+    
+    if (updatedOrder) {
+      setPendingOrders(prev => 
+        prev.map(order => 
+          order.order_id === updatedOrder.order_id ? updatedOrder : order
+        )
+      );
+    }
+  }, []);
+
+  const handlePendingOrderDelete = useCallback((payload: any) => {
+    console.log('🔄 Orden pendiente eliminada via Realtime:', payload);
+    const deletedOrder = payload.old;
+    
+    if (deletedOrder) {
+      setPendingOrders(prev => 
+        prev.filter(order => order.order_id !== deletedOrder.order_id)
+      );
+    }
+  }, []);
+
+  // SUSCRIPCIÓN REALTIME
+  usePendingOrdersRealtime(
+    handleNewPendingOrder,
+    handlePendingOrderUpdate,
+    handlePendingOrderDelete
+  );
 
   const removePendingOrder = async (providerPhone: string) => {
     try {
@@ -86,8 +107,8 @@ export default function PendingOrderList() {
       });
 
       if (response.ok) {
-        const updatedOrders = pendingOrders.filter(po => po.providerPhone !== providerPhone);
-        setPendingOrders(updatedOrders);
+        // La actualización se manejará automáticamente via Realtime
+        console.log('✅ Orden pendiente removida, actualización automática via Realtime');
       } else {
         console.error('Error removiendo pedido pendiente:', response.statusText);
       }
@@ -121,28 +142,19 @@ export default function PendingOrderList() {
             <div className="flex items-center justify-between">
               <div className="flex-1">
                 <h4 className="font-medium text-gray-900">
-                  {pendingOrder.orderData.provider.name}
+                  {pendingOrder.order_data.provider.name}
                 </h4>
                 <p className="text-sm text-gray-600">
-                  Pedido: {pendingOrder.orderData.order.orderNumber || 'N/A'}
+                  Pedido: {pendingOrder.order_data.order.orderNumber || 'N/A'}
                 </p>
                 <p className="text-xs text-gray-500">
-                  Creado: {new Date(pendingOrder.createdAt).toLocaleString('es-AR')}
+                  Creado: {new Date(pendingOrder.created_at).toLocaleString('es-AR')}
                 </p>
               </div>
               
               <div className="flex items-center space-x-2">
                 <button
-                  onClick={() => sendOrderDetails(pendingOrder.providerPhone)}
-                  disabled={loading}
-                  className="inline-flex items-center px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-                >
-                  <Send className="h-4 w-4 mr-1" />
-                  Enviar Detalles
-                </button>
-                
-                <button
-                  onClick={() => removePendingOrder(pendingOrder.providerPhone)}
+                  onClick={() => removePendingOrder(pendingOrder.provider_phone)}
                   className="inline-flex items-center px-3 py-1 text-sm bg-red-600 text-white rounded-md hover:bg-red-700"
                 >
                   <XCircle className="h-4 w-4 mr-1" />
@@ -156,7 +168,6 @@ export default function PendingOrderList() {
 
       <div className="mt-3 text-xs text-yellow-700">
         💡 Los detalles del pedido se enviarán automáticamente cuando el proveedor responda al mensaje inicial.
-        También puedes enviarlos manualmente usando el botón "Enviar Detalles".
       </div>
     </div>
   );

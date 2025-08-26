@@ -189,23 +189,33 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           // Y verificar si es un mensaje enviado que ya existe localmente
           const isDuplicate = existingMessagesMap.has(newMsg.id) || 
                              contentTimestampMap.has(contentTimestampKey) ||
-                             prev.some(msg => msg.id.startsWith('temp_') && 
-                                           msg.content === newMsg.content && 
-                                           msg.contact_id === newMsg.contact_id) ||
-                             // No sobrescribir mensajes enviados locales con mensajes recibidos de la BD
-                             (newMsg.type === 'received' && 
-                              prev.some(msg => msg.content === newMsg.content && 
-                                            msg.contact_id === newMsg.contact_id && 
-                                            msg.type === 'sent' &&
-                                            Math.abs(new Date(msg.timestamp).getTime() - new Date(newMsg.timestamp).getTime()) < 60000)); // 1 minuto de tolerancia
+                             // Solo verificar duplicados de mensajes temporales para mensajes enviados
+                             (newMsg.type === 'sent' && 
+                              prev.some(msg => msg.id.startsWith('temp_') && 
+                                            msg.content === newMsg.content && 
+                                            msg.contact_id === newMsg.contact_id)) ||
+                             // Para mensajes recibidos, solo verificar duplicados exactos por ID o contenido+timestamp
+                             // No aplicar la lógica de sobrescritura que estaba filtrando mensajes legítimos
              
              if (!isDuplicate) {
                updatedMessages.push(newMsg);
                hasNewMessages = true;
                // Agregar al mapa para evitar futuros duplicados
                contentTimestampMap.set(contentTimestampKey, true);
+               console.log('✅ Mensaje agregado al chat:', {
+                 id: newMsg.id,
+                 type: newMsg.type,
+                 contactId: newMsg.contact_id,
+                 content: newMsg.content?.substring(0, 50)
+               });
+             } else {
+               console.log('🚫 Mensaje duplicado filtrado:', {
+                 id: newMsg.id,
+                 type: newMsg.type,
+                 contactId: newMsg.contact_id,
+                 content: newMsg.content?.substring(0, 50)
+               });
              }
-             // Duplicados detectados y filtrados silenciosamente
            });
           
           if (hasNewMessages) {

@@ -189,34 +189,36 @@ export class OrderNotificationService {
             ? `https://${process.env.VERCEL_URL}` 
             : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
 
-      const messageResponse = await fetch(`${baseUrl}/api/whatsapp/send`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          to: normalizedPhone,
-          message: orderMessage
-        }),
-      });
-
-      const messageResult = await messageResponse.json();
+      // Usar el servicio directo en lugar de fetch para evitar errores de API
+      const { metaWhatsAppService } = await import('../lib/metaWhatsAppService');
       
-      if (messageResponse.ok) {
+      const sendResult = await metaWhatsAppService.sendMessage(normalizedPhone, orderMessage);
+      
+      if (sendResult && (sendResult.id || sendResult.simulated || sendResult.messages)) {
         console.log('✅ Detalles del pedido enviados exitosamente después de confirmación');
         
-        // Remover el pedido de la lista de pendientes
-        const removeResponse = await fetch(`${baseUrl}/api/whatsapp/remove-pending-order`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ providerPhone }),
-        });
+        // Remover el pedido de la lista de pendientes usando método directo
+        try {
+          const { createClient } = await import('@supabase/supabase-js');
+          const supabase = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+          );
+          
+          await supabase
+            .from('pending_orders')
+            .delete()
+            .eq('provider_phone', providerPhone)
+            .eq('status', 'pending_confirmation');
+            
+          console.log('✅ Pedido pendiente removido de la base de datos');
+        } catch (removeError) {
+          console.error('⚠️ Error removiendo pedido pendiente:', removeError);
+        }
         
         return true;
       } else {
-        console.error('❌ Error enviando detalles del pedido:', messageResult);
+        console.error('❌ Error enviando detalles del pedido:', sendResult);
         return false;
       }
 

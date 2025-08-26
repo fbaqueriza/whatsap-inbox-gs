@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
           id: result.messages?.[0]?.id || `template_${Date.now()}`,
           from: PHONE_NUMBER_ID,
           to: to,
-          content: `[TEMPLATE: ${template_name}]`,
+          content: `📋 Template enviado: ${template_name === 'envio_de_orden' ? 'Notificación de nuevo pedido' : template_name === 'inicializador_de_conv' ? 'Inicializador de conversación' : template_name}`,
           timestamp: new Date(),
           status: 'sent',
           messageType: 'sent'

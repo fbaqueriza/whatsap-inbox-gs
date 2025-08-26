@@ -424,7 +424,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       grouped[contactId].push(message);
     });
     
-    // Ordenar mensajes por timestamp dentro de cada contacto
+    // Ordenar mensajes por timestamp dentro de cada contacto (más antiguos primero para mostrar cronológicamente)
     Object.keys(grouped).forEach(contactId => {
       grouped[contactId].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     });

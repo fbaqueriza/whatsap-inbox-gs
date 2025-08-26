@@ -84,6 +84,7 @@ function DashboardPage() {
       orders={orders}
       providers={providers}
       stockItems={stockItems}
+      setOrders={setOrders}
       isCreateModalOpen={isCreateModalOpen}
       setIsCreateModalOpen={setIsCreateModalOpen}
       suggestedOrder={suggestedOrder}
@@ -103,6 +104,7 @@ function DashboardPageContent({
   orders,
   providers,
   stockItems,
+  setOrders,
   isCreateModalOpen,
   setIsCreateModalOpen,
   suggestedOrder,
@@ -118,6 +120,7 @@ function DashboardPageContent({
   orders: Order[];
   providers: Provider[];
   stockItems: StockItem[];
+  setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
   isCreateModalOpen: boolean;
   setIsCreateModalOpen: (open: boolean) => void;
   suggestedOrder: any;

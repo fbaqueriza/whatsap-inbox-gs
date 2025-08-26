@@ -94,7 +94,8 @@ export async function POST(request: NextRequest) {
             content: messageContent,
             timestamp: new Date(parseInt(message.timestamp) * 1000),
             id: message.id,
-            type: message.type
+            type: message.type,
+            messageType: 'received' // Los mensajes del webhook son siempre recibidos
           });
           console.log('✅ Mensaje procesado en base de datos');
 

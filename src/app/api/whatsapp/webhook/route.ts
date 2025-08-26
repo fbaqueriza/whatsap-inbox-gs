@@ -100,7 +100,11 @@ export async function POST(request: NextRequest) {
 
           // Verificar si es respuesta de proveedor y enviar detalles del pedido
           console.log('🔍 Verificando si es respuesta de proveedor:', normalizedFrom);
-          const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+          
+          // En producción, usar la URL de la aplicación actual
+          const baseUrl = process.env.VERCEL_URL 
+            ? `https://${process.env.VERCEL_URL}` 
+            : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
           
           const checkResponse = await fetch(`${baseUrl}/api/whatsapp/get-pending-order`, {
             method: 'POST',

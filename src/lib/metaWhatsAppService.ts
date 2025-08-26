@@ -533,19 +533,12 @@ export class MetaWhatsAppService {
       
       // Para mensajes recibidos (del proveedor), usar el número de origen (from)
       // Para mensajes enviados (desde la plataforma), usar el número de destino (to)
-      if (message.from && message.to) {
-        // Si tenemos ambos, determinar por el tipo de mensaje
-        if (message.messageType === 'sent' || message.to === this.config?.phoneNumberId) {
-          contactId = message.to; // Mensaje enviado desde la plataforma
-        } else {
-          contactId = message.from; // Mensaje recibido del proveedor
-        }
-      } else if (message.from) {
-        contactId = message.from; // Mensaje recibido
-      } else if (message.to) {
-        contactId = message.to; // Mensaje enviado
-      } else if (message.contact_id) {
-        contactId = message.contact_id;
+      if (message.messageType === 'sent') {
+        // Mensaje enviado desde la plataforma - usar el número de destino
+        contactId = message.to || message.contact_id;
+      } else {
+        // Mensaje recibido del proveedor - usar el número de origen
+        contactId = message.from || message.contact_id;
       }
       
       // Normalizar el contact_id

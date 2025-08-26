@@ -170,53 +170,54 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           // Crear un mapa de mensajes existentes por ID para evitar duplicados
           const existingMessagesMap = new Map(prev.map(msg => [msg.id, msg]));
           
-          // Crear un mapa adicional para detectar duplicados por contenido y timestamp
-          const contentTimestampMap = new Map();
-          prev.forEach(msg => {
-            const key = `${msg.content}-${msg.contact_id}-${new Date(msg.timestamp).getTime()}`;
-            contentTimestampMap.set(key, true);
-          });
-          
           // Agregar solo mensajes nuevos que no existan
           let hasNewMessages = false;
           const updatedMessages = [...prev];
           
-                     transformedMessages.forEach((newMsg: ChatWhatsAppMessage) => {
-             const contentTimestampKey = `${newMsg.content}-${newMsg.contact_id}-${new Date(newMsg.timestamp).getTime()}`;
-             
-                       // Verificar si el mensaje ya existe por ID o por contenido+timestamp
-          // También verificar si es un mensaje temporal que ya existe
-          // Y verificar si es un mensaje enviado que ya existe localmente
-          const isDuplicate = existingMessagesMap.has(newMsg.id) || 
-                             contentTimestampMap.has(contentTimestampKey) ||
-                             // Solo verificar duplicados de mensajes temporales para mensajes enviados
-                             (newMsg.type === 'sent' && 
-                              prev.some(msg => msg.id.startsWith('temp_') && 
-                                            msg.content === newMsg.content && 
-                                            msg.contact_id === newMsg.contact_id));
-                             // Para mensajes recibidos, solo verificar duplicados exactos por ID o contenido+timestamp
-                             // No aplicar la lógica de sobrescritura que estaba filtrando mensajes legítimos
-             
-             if (!isDuplicate) {
-               updatedMessages.push(newMsg);
-               hasNewMessages = true;
-               // Agregar al mapa para evitar futuros duplicados
-               contentTimestampMap.set(contentTimestampKey, true);
-               console.log('✅ Mensaje agregado al chat:', {
-                 id: newMsg.id,
-                 type: newMsg.type,
-                 contactId: newMsg.contact_id,
-                 content: newMsg.content?.substring(0, 50)
-               });
-             } else {
-               console.log('🚫 Mensaje duplicado filtrado:', {
-                 id: newMsg.id,
-                 type: newMsg.type,
-                 contactId: newMsg.contact_id,
-                 content: newMsg.content?.substring(0, 50)
-               });
-             }
-           });
+          transformedMessages.forEach((newMsg: ChatWhatsAppMessage) => {
+            // Verificar si el mensaje ya existe por ID exacto
+            const isDuplicate = existingMessagesMap.has(newMsg.id);
+            
+            // Para mensajes enviados, también verificar si hay un mensaje temporal que debe ser reemplazado
+            if (newMsg.type === 'sent') {
+              const tempMessageIndex = updatedMessages.findIndex(msg => 
+                msg.id.startsWith('temp_') && 
+                msg.content === newMsg.content && 
+                msg.contact_id === newMsg.contact_id
+              );
+              
+              if (tempMessageIndex !== -1) {
+                // Reemplazar mensaje temporal con el real
+                updatedMessages[tempMessageIndex] = newMsg;
+                hasNewMessages = true;
+                console.log('🔄 Mensaje temporal reemplazado:', {
+                  id: newMsg.id,
+                  type: newMsg.type,
+                  contactId: newMsg.contact_id,
+                  content: newMsg.content?.substring(0, 50)
+                });
+                return;
+              }
+            }
+            
+            if (!isDuplicate) {
+              updatedMessages.push(newMsg);
+              hasNewMessages = true;
+              console.log('✅ Mensaje agregado al chat:', {
+                id: newMsg.id,
+                type: newMsg.type,
+                contactId: newMsg.contact_id,
+                content: newMsg.content?.substring(0, 50)
+              });
+            } else {
+              console.log('🚫 Mensaje duplicado filtrado (ID existente):', {
+                id: newMsg.id,
+                type: newMsg.type,
+                contactId: newMsg.contact_id,
+                content: newMsg.content?.substring(0, 50)
+              });
+            }
+          });
           
           if (hasNewMessages) {
             // Ordenar por timestamp para mantener el orden correcto

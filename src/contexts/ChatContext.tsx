@@ -109,8 +109,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         return phone;
       }) || [];
       
-      console.log('📱 Proveedores del usuario actual:', userProviderPhones);
-      
       const response = await fetch('/api/whatsapp/messages');
       const data = await response.json();
       
@@ -153,15 +151,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             const isFromOurWhatsApp = normalizedOurNumber && contactId === normalizedOurNumber;
             const isIncluded = isFromOurProvider || isFromOurWhatsApp;
             
-            console.log('🔍 Filtrando mensaje:', {
-              contactId,
-              userProviderPhones,
-              normalizedOurNumber,
-              isFromOurProvider,
-              isFromOurWhatsApp,
-              isIncluded,
-              content: msg.content?.substring(0, 50)
-            });
             return isIncluded;
           });
         
@@ -190,12 +179,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
                 // Reemplazar mensaje temporal con el real
                 updatedMessages[tempMessageIndex] = newMsg;
                 hasNewMessages = true;
-                console.log('🔄 Mensaje temporal reemplazado:', {
-                  id: newMsg.id,
-                  type: newMsg.type,
-                  contactId: newMsg.contact_id,
-                  content: newMsg.content?.substring(0, 50)
-                });
                 return;
               }
             }
@@ -203,19 +186,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             if (!isDuplicate) {
               updatedMessages.push(newMsg);
               hasNewMessages = true;
-              console.log('✅ Mensaje agregado al chat:', {
-                id: newMsg.id,
-                type: newMsg.type,
-                contactId: newMsg.contact_id,
-                content: newMsg.content?.substring(0, 50)
-              });
-            } else {
-              console.log('🚫 Mensaje duplicado filtrado (ID existente):', {
-                id: newMsg.id,
-                type: newMsg.type,
-                contactId: newMsg.contact_id,
-                content: newMsg.content?.substring(0, 50)
-              });
             }
           });
           
@@ -234,7 +204,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const forceReconnectSSE = useCallback(() => {
-    console.log('🔄 Recargando página para reconectar...');
     window.location.reload();
   }, []);
 
@@ -299,8 +268,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const sendMessage = useCallback(async (contactId: string, content: string) => {
     if (!content.trim()) return;
 
-    console.log('📤 ChatContext - Enviando mensaje:', { contactId, content });
-
     // Generar un ID temporal que será reemplazado por el ID real de la base de datos
     const tempId = `temp_${Date.now()}`;
     
@@ -317,7 +284,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setMessages(prev => [...prev, newMessage]);
 
     try {
-      console.log('📤 ChatContext - Llamando a API sendMessage');
       // Enviar mensaje al servidor
       const response = await fetch('/api/whatsapp/send', {
         method: 'POST',
@@ -331,7 +297,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       });
 
       const result = await response.json();
-      console.log('📤 ChatContext - Respuesta de API:', result);
       
       if (result.success) {
         // Actualizar el mensaje local con el ID real de la base de datos
@@ -344,8 +309,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               : msg
           )
         );
-        
-        console.log('✅ Mensaje local actualizado con ID real:', realMessageId);
       } else {
         // Marcar como fallido si hay error
         setMessages(prev => 

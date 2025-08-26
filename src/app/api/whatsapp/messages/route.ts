@@ -30,9 +30,9 @@ export async function GET(request: NextRequest) {
       query = query.gt('timestamp', sinceDate.toISOString());
     }
     
-    // Ordenar por timestamp descendente (más reciente primero)
+    // Ordenar por timestamp ascendente (más antiguo primero) para mostrar en orden cronológico
     query = query
-      .order('timestamp', { ascending: false })
+      .order('timestamp', { ascending: true })
       .limit(20);
     
     const { data: messages, error } = await query;

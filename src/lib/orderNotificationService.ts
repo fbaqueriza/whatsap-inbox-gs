@@ -162,29 +162,14 @@ export class OrderNotificationService {
    */
   static async sendOrderDetailsAfterConfirmation(providerPhone: string): Promise<boolean> {
     try {
-      // Buscar el pedido pendiente para este proveedor usando la API
-      const baseUrl = typeof window !== 'undefined' 
-        ? window.location.origin 
-        : (process.env.VERCEL_URL 
-            ? `https://${process.env.VERCEL_URL}` 
-            : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
+      // Usar método directo en lugar de fetch para evitar errores de API
+      const pendingOrder = await this.checkPendingOrder(providerPhone);
       
-      const response = await fetch(`${baseUrl}/api/whatsapp/get-pending-order`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ providerPhone }),
-      });
-
-      if (!response.ok) {
+      if (!pendingOrder?.orderData) {
         console.log('❌ No se encontró pedido pendiente para:', providerPhone);
-        const errorData = await response.json();
-        console.log('❌ Detalles del error:', errorData);
         return false;
       }
 
-      const pendingOrder = await response.json();
       const { order, provider, items } = pendingOrder.orderData;
       const orderMessage = this.createOrderMessage(order, provider, items);
 
@@ -196,6 +181,13 @@ export class OrderNotificationService {
         return false;
       }
       const normalizedPhone = providerPhone; // Ya está en formato correcto
+
+      // Construir URL base para las llamadas a la API
+      const baseUrl = typeof window !== 'undefined' 
+        ? window.location.origin 
+        : (process.env.VERCEL_URL 
+            ? `https://${process.env.VERCEL_URL}` 
+            : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
 
       const messageResponse = await fetch(`${baseUrl}/api/whatsapp/send`, {
         method: 'POST',

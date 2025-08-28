@@ -247,9 +247,22 @@ function OrdersPage({ user }: OrdersPageProps) {
       if (newOrder) {
         console.log('✅ Pedido creado:', newOrder.id);
         
-        // Enviar notificación automática
+        // Enviar notificación automática desde el servidor
         try {
-          await OrderNotificationService.sendOrderNotification(newOrder, user.id);
+          const response = await fetch('/api/orders/send-notification', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              order: newOrder,
+              userId: user.id
+            }),
+          });
+          
+          if (!response.ok) {
+            console.error('Error enviando notificación:', await response.text());
+          }
         } catch (error) {
           console.error('Error enviando notificación:', error);
         }

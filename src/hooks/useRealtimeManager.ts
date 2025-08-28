@@ -31,9 +31,9 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
 // Control de logs basado en entorno
 const isDevelopment = process.env.NODE_ENV === 'development';
 const log = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: any[]) => {
-  // En producción, solo mostrar warn y error
-  // En desarrollo, mostrar solo warn y error para reducir spam
-  if (level === 'debug' || level === 'info') return;
+  // En producción, solo mostrar error
+  // En desarrollo, mostrar solo error para reducir spam
+  if (level === 'debug' || level === 'info' || level === 'warn') return;
 
   const prefix = {
     debug: '🔍',
@@ -103,6 +103,29 @@ export function useRealtimeManager() {
     try {
       isSubscribing.current.add(channelName);
       log('info', `Configurando suscripción Realtime para ${channelName}`);
+
+             // Verificar que Supabase esté conectado con timeout
+       try {
+         const timeoutPromise = new Promise((_, reject) => 
+           setTimeout(() => reject(new Error('Timeout')), 5000)
+         );
+         
+         const connectionPromise = supabase.from(config.table).select('count').limit(1);
+         
+         const { data, error } = await Promise.race([connectionPromise, timeoutPromise]) as any;
+         
+         if (error) {
+           log('error', `Error de conexión con Supabase para ${config.table}:`, error);
+           throw new Error(`No se puede conectar a la tabla ${config.table}`);
+         }
+       } catch (error) {
+         if (error instanceof Error && error.message === 'Timeout') {
+           log('error', `Timeout conectando a Supabase para ${config.table}`);
+         } else {
+           log('error', `Error verificando conexión con Supabase para ${config.table}:`, error);
+         }
+         throw error;
+       }
 
       const channel = supabase.channel(channelName, {
         config: {

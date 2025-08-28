@@ -57,32 +57,31 @@ async function processWhatsAppMessage(message: any) {
   try {
     const { from, text, timestamp } = message;
     
-    // Log solo en desarrollo
-    if (process.env.NODE_ENV === 'development') {
-      console.log('📱 Procesando mensaje de WhatsApp:', {
-        from,
-        text: text?.body,
-        timestamp
-      });
-    }
+    // Log siempre para debugging crítico
+    console.log('📱 Procesando mensaje de WhatsApp:', {
+      from,
+      text: text?.body,
+      timestamp
+    });
 
     // Procesar respuesta del proveedor
     if (text?.body) {
+      console.log('🔄 Iniciando processProviderResponse para:', from);
       const success = await OrderNotificationService.processProviderResponse(from, text.body);
       
       if (success) {
-        // Log solo en desarrollo
-        if (process.env.NODE_ENV === 'development') {
-          console.log('✅ Respuesta del proveedor procesada exitosamente');
-        }
+        console.log('✅ Respuesta del proveedor procesada exitosamente');
       } else {
-        // Log solo en desarrollo
-        if (process.env.NODE_ENV === 'development') {
-          console.log('ℹ️ No se encontró pedido pendiente para este número');
-        }
+        console.log('ℹ️ No se encontró pedido pendiente para este número:', from);
       }
+    } else {
+      console.log('⚠️ Mensaje sin texto recibido de:', from);
     }
   } catch (error) {
     console.error('❌ Error procesando mensaje de WhatsApp:', error);
+    // Log detallado del error para debugging
+    if (error instanceof Error) {
+      console.error('❌ Stack trace:', error.stack);
+    }
   }
 }

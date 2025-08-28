@@ -247,7 +247,16 @@ function DashboardPageContent({
       
       if (provider) {
         // Ejecutar en segundo plano sin bloquear la UI
-        OrderNotificationService.sendOrderNotification(createdOrder as Order, user.id).catch(error => {
+        fetch('/api/orders/send-notification', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            order: createdOrder,
+            userId: user.id
+          }),
+        }).catch(error => {
           console.error('❌ Error enviando notificación de pedido:', error);
         });
       } else {

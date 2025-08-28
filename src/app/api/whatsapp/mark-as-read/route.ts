@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
       .from('whatsapp_messages')
       .update({ status: 'read' })
       .eq('contact_id', contactId)
-      .eq('type', 'received');
+      .eq('message_type', 'received');
 
     if (error) {
       console.error('Error marcando mensajes como leídos:', error);

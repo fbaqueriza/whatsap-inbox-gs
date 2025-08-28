@@ -44,14 +44,25 @@ export class OrderNotificationService {
   private static async getSupabaseClient() {
     const { createClient } = await import('@supabase/supabase-js');
     
+    // Determinar si estamos en el servidor o cliente
+    const isServer = typeof window === 'undefined';
+    
     // Usar una instancia singleton para evitar múltiples clientes
-    if (!(global as any).supabaseClient) {
-      (global as any).supabaseClient = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      );
+    const clientKey = isServer ? 'supabaseServiceClient' : 'supabaseClient';
+    
+    if (!(global as any)[clientKey]) {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = isServer 
+        ? process.env.SUPABASE_SERVICE_ROLE_KEY 
+        : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseKey) {
+        throw new Error(`Variables de entorno faltantes: ${!supabaseUrl ? 'NEXT_PUBLIC_SUPABASE_URL' : ''} ${!supabaseKey ? (isServer ? 'SUPABASE_SERVICE_ROLE_KEY' : 'NEXT_PUBLIC_SUPABASE_ANON_KEY') : ''}`);
+      }
+      
+      (global as any)[clientKey] = createClient(supabaseUrl, supabaseKey);
     }
-    return (global as any).supabaseClient;
+    return (global as any)[clientKey];
   }
 
   /**
@@ -253,48 +264,58 @@ export class OrderNotificationService {
     }
   }
 
-  /**
-   * Guarda pedido pendiente de confirmación de forma atómica
-   */
-  private static async savePendingOrderAtomic(
-    order: Order,
-    provider: Provider, 
-    normalizedPhone: string, 
-    userId: string,
-    baseUrl: string
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-             // Log removido - información redundante
-      
-      const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          orderId: order.id,
-          providerId: provider.id,
-          providerPhone: normalizedPhone,
-          userId: userId
-        }),
-      });
+     /**
+    * Guarda pedido pendiente de confirmación de forma atómica
+    */
+   private static async savePendingOrderAtomic(
+     order: Order,
+     provider: Provider, 
+     normalizedPhone: string, 
+     userId: string,
+     baseUrl: string
+   ): Promise<{ success: boolean; error?: string }> {
+     try {
+       // Validar datos antes de enviar
+       if (!order.id || !provider.id || !normalizedPhone || !userId) {
+         const missingData = [];
+         if (!order.id) missingData.push('orderId');
+         if (!provider.id) missingData.push('providerId');
+         if (!normalizedPhone) missingData.push('providerPhone');
+         if (!userId) missingData.push('userId');
+         
+         console.error('❌ Datos faltantes para guardar pedido pendiente:', missingData);
+         return { success: false, error: `Datos faltantes: ${missingData.join(', ')}` };
+       }
+       
+       const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json',
+         },
+         body: JSON.stringify({
+           orderId: order.id,
+           providerId: provider.id,
+           providerPhone: normalizedPhone,
+           userId: userId
+         }),
+       });
 
-      const result = await response.json();
-      
-      if (!response.ok) {
-        console.error('❌ Error guardando pedido pendiente:', result);
-        return { success: false, error: result.error || 'Error guardando pedido' };
-      }
+       const result = await response.json();
+       
+       if (!response.ok) {
+         console.error('❌ Error guardando pedido pendiente:', result);
+         return { success: false, error: result.error || 'Error guardando pedido' };
+       }
 
-      console.log('✅ Pedido pendiente guardado exitosamente');
-      return { success: true };
+       console.log('✅ Pedido pendiente guardado exitosamente');
+       return { success: true };
 
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
-      console.error('❌ Error guardando pedido pendiente:', error);
-      return { success: false, error: errorMsg };
-    }
-  }
+     } catch (error) {
+       const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+       console.error('❌ Error guardando pedido pendiente:', error);
+       return { success: false, error: errorMsg };
+     }
+   }
 
   /**
    * FLUJO CORREGIDO: Procesa la respuesta del proveedor y actualiza el estado
@@ -334,31 +355,38 @@ export class OrderNotificationService {
       // ENVIAR DETALLES DEL PEDIDO AL PROVEEDOR
       console.log('📤 Enviando detalles del pedido al proveedor...');
       
-      // Obtener información completa de la orden
-      const { data: orderData, error: orderError } = await supabase
-        .from('orders')
-        .select(`
-          *,
-          providers!inner(name, phone)
-        `)
-        .eq('id', pendingOrder.order_id)
-        .single();
+             // Obtener información completa de la orden con validación robusta
+       const { data: orderData, error: orderError } = await supabase
+         .from('orders')
+         .select(`
+           *,
+           providers(name, phone)
+         `)
+         .eq('id', pendingOrder.order_id)
+         .single();
 
-      if (orderError || !orderData) {
-        console.error('❌ Error obteniendo detalles de la orden:', orderError);
-      } else {
-        // Generar mensaje con detalles del pedido
-        const orderDetails = this.generateOrderDetailsMessage(orderData);
-        
-        // Enviar mensaje con detalles
-        const sendResult = await this.sendOrderDetails(providerPhone, orderDetails);
-        
-        if (sendResult.success) {
-          console.log('✅ Detalles del pedido enviados exitosamente');
-        } else {
-          console.error('❌ Error enviando detalles del pedido:', sendResult.error);
-        }
-      }
+       if (orderError || !orderData) {
+         console.error('❌ Error obteniendo detalles de la orden:', orderError);
+         return false;
+       }
+
+       // Validar que tenemos todos los datos necesarios
+       if (!orderData.providers || !orderData.providers.name) {
+         console.error('❌ Datos de proveedor incompletos para la orden:', pendingOrder.order_id);
+         return false;
+       }
+
+       // Generar mensaje con detalles del pedido
+       const orderDetails = this.generateOrderDetailsMessage(orderData);
+       
+       // Enviar mensaje con detalles
+       const sendResult = await this.sendOrderDetails(providerPhone, orderDetails);
+       
+       if (sendResult.success) {
+         console.log('✅ Detalles del pedido enviados exitosamente');
+       } else {
+         console.error('❌ Error enviando detalles del pedido:', sendResult.error);
+       }
 
       // Eliminar el pedido pendiente
       const { error: deleteError } = await supabase
@@ -447,40 +475,53 @@ export class OrderNotificationService {
     }
   }
 
-  /**
-   * Genera mensaje con detalles del pedido
-   */
-  static generateOrderDetailsMessage(orderData: any): string {
-    try {
-      const items = orderData.items || [];
-      const totalItems = items.length;
-      const orderNumber = orderData.order_number || orderData.id;
-      const providerName = orderData.providers?.name || 'Proveedor';
-      
-      let message = `📋 *DETALLES DEL PEDIDO*\n\n`;
-      message += `*Orden:* ${orderNumber}\n`;
-      message += `*Proveedor:* ${providerName}\n`;
-      message += `*Total de items:* ${totalItems}\n\n`;
-      
-      if (items.length > 0) {
-        message += `*Items solicitados:*\n`;
-        items.forEach((item: any, index: number) => {
-          const quantity = item.quantity || 1;
-          const name = item.name || item.product_name || 'Producto';
-          message += `${index + 1}. ${name} - Cantidad: ${quantity}\n`;
-        });
-      }
-      
-      message += `\n*Estado:* Confirmado ✅\n`;
-      message += `*Fecha:* ${new Date().toLocaleDateString('es-AR')}\n\n`;
-      message += `Gracias por confirmar. Procesaremos su pedido.`;
-      
-      return message;
-    } catch (error) {
-      console.error('❌ Error generando mensaje de detalles:', error);
-      return '📋 Detalles del pedido confirmado. Gracias.';
-    }
-  }
+     /**
+    * Genera mensaje con detalles del pedido
+    */
+   static generateOrderDetailsMessage(orderData: any): string {
+     try {
+       // Validación robusta de datos
+       if (!orderData) {
+         console.error('❌ orderData es undefined en generateOrderDetailsMessage');
+         return '📋 Detalles del pedido confirmado. Gracias.';
+       }
+
+       const items = Array.isArray(orderData.items) ? orderData.items : [];
+       const totalItems = items.length;
+       const orderNumber = orderData.order_number || orderData.id || 'N/A';
+       
+       // Validación específica del proveedor
+       let providerName = 'Proveedor';
+       if (orderData.providers && typeof orderData.providers === 'object') {
+         providerName = orderData.providers.name || 'Proveedor';
+       }
+       
+       let message = `📋 *DETALLES DEL PEDIDO*\n\n`;
+       message += `*Orden:* ${orderNumber}\n`;
+       message += `*Proveedor:* ${providerName}\n`;
+       message += `*Total de items:* ${totalItems}\n\n`;
+       
+       if (items.length > 0) {
+         message += `*Items solicitados:*\n`;
+         items.forEach((item: any, index: number) => {
+           if (item && typeof item === 'object') {
+             const quantity = item.quantity || 1;
+             const name = item.name || item.product_name || 'Producto';
+             message += `${index + 1}. ${name} - Cantidad: ${quantity}\n`;
+           }
+         });
+       }
+       
+       message += `\n*Estado:* Confirmado ✅\n`;
+       message += `*Fecha:* ${new Date().toLocaleDateString('es-AR')}\n\n`;
+       message += `Gracias por confirmar. Procesaremos su pedido.`;
+       
+       return message;
+     } catch (error) {
+       console.error('❌ Error generando mensaje de detalles:', error);
+       return '📋 Detalles del pedido confirmado. Gracias.';
+     }
+   }
 
   /**
    * Envía los detalles del pedido al proveedor

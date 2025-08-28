@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
         details: templates
       },
       apiConnectivity,
-      recommendations: []
+      recommendations: [] as string[]
     };
 
     // Generar recomendaciones

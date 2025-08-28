@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     const templates = await metaWhatsAppService.getTemplates();
 
          // 4. Verificar conectividad con Meta API
-     let apiConnectivity = { success: false, error: null };
+     let apiConnectivity: { success: boolean; error: string | null } = { success: false, error: null };
      try {
        const response = await fetch(`https://graph.facebook.com/v18.0/${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID}`, {
         method: 'GET',

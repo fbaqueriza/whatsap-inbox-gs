@@ -434,7 +434,7 @@ export class WebhookService {
         });
         
         console.log(`📝 Enviando detalles del pedido para: ${phoneNumber}`);
-        const result = await OrderNotificationService.sendOrderDetailsAfterConfirmation(phoneNumber, messageContent);
+        const result = await OrderNotificationService.sendOrderDetails(phoneNumber, messageContent);
         
         if (result) {
           console.log(`✅ Detalles del pedido enviados exitosamente para: ${phoneNumber}`);

@@ -61,7 +61,7 @@ export interface Order {
   orderNumber: string;
   providerId: string;
   items: OrderItem[];
-  status: 'pending' | 'factura_recibida' | 'pagado' | 'enviado' | 'finalizado' | 'sent' | 'confirmed' | 'delivered' | 'cancelled';
+  status: 'pending' | 'pending_confirmation' | 'factura_recibida' | 'pagado' | 'enviado' | 'finalizado' | 'sent' | 'confirmed' | 'delivered' | 'cancelled';
   totalAmount: number;
   currency: string;
   orderDate: Date;

@@ -658,7 +658,7 @@ function OrdersPage({ user }: OrdersPageProps) {
            setIsEditModalOpen(false);
            setEditingOrder(null);
          }}
-          onSubmit={handleSaveOrderEdit}
+          onSave={handleSaveOrderEdit}
           onCancel={handleCancelOrder}
          order={editingOrder}
          providers={providers}

@@ -21,6 +21,9 @@ interface CreateOrderModalProps {
   suggestedOrder?: {
     providerId?: string;
     providerName?: string;
+    productName?: string;
+    suggestedQuantity?: number;
+    unit?: string;
   };
   isLoading?: boolean;
 }

@@ -247,11 +247,7 @@ function DashboardPageContent({
       
       if (provider) {
         // Ejecutar en segundo plano sin bloquear la UI
-        OrderNotificationService.sendOrderNotification({
-          order: createdOrder as Order,
-          provider: provider,
-          items: orderData.items
-        }).catch(error => {
+        OrderNotificationService.sendOrderNotification(createdOrder as Order, user.id).catch(error => {
           console.error('❌ Error enviando notificación de pedido:', error);
         });
       } else {

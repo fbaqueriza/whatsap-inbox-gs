@@ -803,20 +803,20 @@ function DashboardPageContent({
         </div>
       </main>
 
-      {/* Create Order Modal */}
-      <CreateOrderModal
-        isOpen={isCreateModalOpen}
-        onClose={() => {
-          setIsCreateModalOpen(false);
-          setSuggestedOrder(null);
-          setSelectedProviderId(null);
-        }}
-        onCreateOrder={handleCreateOrder}
-        providers={providers}
-        stockItems={stockItems}
-        suggestedOrder={suggestedOrder}
-        selectedProviderId={typeof selectedProviderId === 'string' ? selectedProviderId : null}
-      />
+             {/* Create Order Modal */}
+       <CreateOrderModal
+         isOpen={isCreateModalOpen}
+         onClose={() => {
+           setIsCreateModalOpen(false);
+           setSuggestedOrder(null);
+           setSelectedProviderId(null);
+         }}
+         onSubmit={handleCreateOrder}
+         providers={providers}
+         stockItems={stockItems}
+         suggestedOrder={suggestedOrder}
+         isLoading={false}
+       />
     </div>
   );
 }

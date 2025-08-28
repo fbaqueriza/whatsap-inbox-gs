@@ -1,65 +1,88 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { webhookService } from '../../../../lib/webhookService';
+import { OrderNotificationService } from '../../../../lib/orderNotificationService';
+
+// Verificar token de webhook (configurado en Meta Developer Console)
+const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'your_verify_token_here';
 
 export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const mode = searchParams.get('hub.mode');
-    const token = searchParams.get('hub.verify_token');
-    const challenge = searchParams.get('hub.challenge');
+  const { searchParams } = new URL(request.url);
+  const mode = searchParams.get('hub.mode');
+  const token = searchParams.get('hub.verify_token');
+  const challenge = searchParams.get('hub.challenge');
 
-    // Debug de variables de entorno
-    console.log('🔍 ENV DEBUG:', {
-      WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN,
-      NODE_ENV: process.env.NODE_ENV,
-      allEnvKeys: Object.keys(process.env).filter(key => key.includes('WHATSAPP'))
-    });
-
-    console.log('🔍 Webhook verification debug:', {
-      mode,
-      token,
-      expectedToken: process.env.WHATSAPP_VERIFY_TOKEN,
-      challenge
-    });
-
-    // Verificación del webhook para WhatsApp
-    const expectedToken = process.env.WHATSAPP_VERIFY_TOKEN || 'mi_token_de_verificacion_2024_cilantro';
-    if (mode === 'subscribe' && token === expectedToken) {
-      console.log('✅ Webhook verified successfully');
-      return new NextResponse(challenge, { status: 200 });
+  // Verificación del webhook
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    // Log solo en desarrollo
+    if (process.env.NODE_ENV === 'development') {
+      console.log('✅ Webhook verificado exitosamente');
     }
-
-    console.log('❌ Webhook verification failed:', { modeMatch: mode === 'subscribe', tokenMatch: token === expectedToken });
-    return new NextResponse('Forbidden', { status: 403 });
-  } catch (error) {
-    console.error('Error in webhook verification:', error);
-    return new NextResponse('Internal Server Error', { status: 500 });
+    return new NextResponse(challenge, { status: 200 });
   }
+
+  // Log solo en desarrollo
+  if (process.env.NODE_ENV === 'development') {
+    console.log('❌ Verificación de webhook fallida');
+  }
+  return new NextResponse('Forbidden', { status: 403 });
 }
 
 export async function POST(request: NextRequest) {
   try {
-    // Verificar si el servicio de WhatsApp está habilitado
-    if (!webhookService.isServiceEnabled()) {
-      console.log('⚠️ Servicio de WhatsApp deshabilitado, ignorando webhook');
-      return new NextResponse('Service Disabled', { status: 200 });
-    }
-
     const body = await request.json();
-    
-    // Procesar webhook usando el servicio centralizado
-    const result = await webhookService.processWebhook(body);
-    
-    if (result.success) {
-      console.log(`✅ Webhook procesado exitosamente. Eventos procesados: ${result.processedEvents}`);
-      return new NextResponse('OK', { status: 200 });
-    } else {
-      console.error('❌ Error procesando webhook');
-      return new NextResponse('Internal Server Error', { status: 500 });
+    // Log solo en desarrollo
+    if (process.env.NODE_ENV === 'development') {
+      console.log('📥 Webhook recibido:', JSON.stringify(body, null, 2));
     }
 
+    // Verificar que es un mensaje de WhatsApp
+    if (body.object === 'whatsapp_business_account') {
+      const entry = body.entry?.[0];
+      if (entry?.changes?.[0]?.value?.messages) {
+        const messages = entry.changes[0].value.messages;
+        
+        for (const message of messages) {
+          await processWhatsAppMessage(message);
+        }
+      }
+    }
+
+    return NextResponse.json({ status: 'ok' });
   } catch (error) {
-    console.error('💥 Error processing webhook:', error);
-    return new NextResponse('Internal Server Error', { status: 500 });
+    console.error('❌ Error procesando webhook:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-} 
+}
+
+async function processWhatsAppMessage(message: any) {
+  try {
+    const { from, text, timestamp } = message;
+    
+    // Log solo en desarrollo
+    if (process.env.NODE_ENV === 'development') {
+      console.log('📱 Procesando mensaje de WhatsApp:', {
+        from,
+        text: text?.body,
+        timestamp
+      });
+    }
+
+    // Procesar respuesta del proveedor
+    if (text?.body) {
+      const success = await OrderNotificationService.processProviderResponse(from, text.body);
+      
+      if (success) {
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ Respuesta del proveedor procesada exitosamente');
+        }
+      } else {
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('ℹ️ No se encontró pedido pendiente para este número');
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error procesando mensaje de WhatsApp:', error);
+  }
+}

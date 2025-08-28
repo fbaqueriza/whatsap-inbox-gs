@@ -55,6 +55,7 @@ function mapOrderFromDb(order: any): Order {
   return {
     ...order,
     providerId: order.provider_id,
+    orderNumber: order.order_number, // Usar el valor real de la base de datos
     totalAmount: order.total_amount,
     orderDate: order.order_date,
     dueDate: order.due_date,
@@ -207,22 +208,47 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
   // CRUD: Orders
   const addOrder = useCallback(async (order: Partial<Order>, user_id: string) => {
     try {
-      // Mapear campos a snake_case
+      // Obtener información del proveedor para el número de orden
+      const providerId = (order as any).providerId;
+      let providerName = 'PROV';
+      
+      if (providerId) {
+        const { data: provider } = await supabase
+          .from('providers')
+          .select('name')
+          .eq('id', providerId)
+          .single();
+        
+        if (provider) {
+          // Tomar las primeras 3 letras del nombre del proveedor
+          providerName = provider.name.substring(0, 3).toUpperCase();
+        }
+      }
+      
+      // Generar número de orden con fecha y proveedor
+      const now = new Date();
+      const dateStr = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
+      const randomStr = Math.random().toString(36).substr(2, 4).toUpperCase();
+      
+      const orderNumber = `ORD-${dateStr}-${providerName}-${randomStr}`;
+      
+      // Mapear campos a snake_case con valores por defecto
       const snakeCaseOrder = {
         provider_id: (order as any).providerId,
         user_id,
-        items: order.items,
-        status: order.status,
-        total_amount: (order as any).totalAmount,
-        currency: order.currency,
-        order_date: (order as any).orderDate,
-        due_date: (order as any).dueDate,
-        invoice_number: (order as any).invoiceNumber,
-        bank_info: (order as any).bankInfo,
-        receipt_url: (order as any).receiptUrl,
-        notes: order.notes,
-        created_at: (order as any).createdAt,
-        updated_at: (order as any).updatedAt,
+        items: order.items || [],
+        status: order.status || 'pending', // Valor por defecto
+        order_number: orderNumber, // Número de orden generado
+        total_amount: (order as any).totalAmount || 0,
+        currency: order.currency || 'ARS',
+        order_date: (order as any).orderDate || new Date().toISOString(),
+        due_date: (order as any).dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 días
+        invoice_number: (order as any).invoiceNumber || null,
+        bank_info: (order as any).bankInfo || null,
+        receipt_url: (order as any).receiptUrl || null,
+        notes: order.notes || '',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       };
       
       // console.log('📝 Insertando orden en Supabase:', snakeCaseOrder);

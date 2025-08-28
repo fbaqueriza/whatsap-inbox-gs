@@ -12,7 +12,7 @@ export class MetaWhatsAppService {
   private isEnabled: boolean = false;
   private isSimulationMode: boolean = false;
   private initialized: boolean = false;
-  private baseUrl = 'https://graph.facebook.com/v18.0';
+  private baseUrl = 'https://graph.facebook.com/v18.0'; // Versión más estable
 
   constructor() {
     // Inicialización síncrona básica
@@ -24,6 +24,12 @@ export class MetaWhatsAppService {
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
     const businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
 
+    console.log('🔍 [DEBUG] Variables de entorno cargadas:');
+    console.log('🔍 [DEBUG] - WHATSAPP_API_KEY:', accessToken ? `${accessToken.substring(0, 10)}...` : 'No configurada');
+    console.log('🔍 [DEBUG] - WHATSAPP_PHONE_NUMBER_ID:', phoneNumberId || 'No configurada');
+    console.log('🔍 [DEBUG] - WHATSAPP_BUSINESS_ACCOUNT_ID:', businessAccountId || 'No configurada');
+
+    // FORZAR MODO PRODUCCIÓN - SIEMPRE
     if (accessToken && phoneNumberId && businessAccountId) {
       this.config = {
         accessToken,
@@ -32,14 +38,19 @@ export class MetaWhatsAppService {
         openaiApiKey: process.env.OPENAI_API_KEY
       };
       
-      // Usar modo producción si las credenciales están configuradas
+      // FORZAR MODO PRODUCCIÓN - SIN EXCEPCIONES
       this.isEnabled = true;
       this.isSimulationMode = false;
-      // console.log('Meta WhatsApp Service: Inicializando en modo PRODUCCIÓN');
+      this.initialized = true;
+      // Log solo en desarrollo
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🚀 Meta WhatsApp Service: MODO PRODUCCIÓN ACTIVADO');
+    }
     } else {
-      console.log('Meta WhatsApp Service: Configuración no encontrada, usando modo simulación');
+      console.log('⚠️ Meta WhatsApp Service: Configuración incompleta, usando modo simulación');
       this.isEnabled = true;
       this.isSimulationMode = true;
+      this.initialized = true;
     }
   }
 
@@ -83,6 +94,17 @@ export class MetaWhatsAppService {
     this.isSimulationMode = enabled;
   }
 
+  public forceProductionMode(): void {
+    // Logs solo en desarrollo
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🚀 FORZANDO MODO PRODUCCIÓN...');
+      console.log('✅ MODO PRODUCCIÓN ACTIVADO');
+    }
+    this.isSimulationMode = false;
+    this.isEnabled = true;
+    this.initialized = true;
+  }
+
   // Enviar mensaje simple
   async sendMessage(to: string, content: string): Promise<any> {
     // Asegurar que el servicio esté inicializado
@@ -96,11 +118,14 @@ export class MetaWhatsAppService {
     try {
       if (this.isSimulationMode) {
         // Modo simulación
-        console.log('📤 [SIMULACIÓN] Enviando mensaje WhatsApp:', {
-          to,
-          content,
-          timestamp: new Date().toISOString()
-        });
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📤 [SIMULACIÓN] Enviando mensaje WhatsApp:', {
+            to,
+            content,
+            timestamp: new Date().toISOString()
+          });
+        }
 
         // Simular delay de envío
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -120,7 +145,10 @@ export class MetaWhatsAppService {
           messageType: 'sent' // Agregar explícitamente el tipo
         });
 
-        console.log('✅ [SIMULACIÓN] Mensaje enviado exitosamente:', messageId);
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ [SIMULACIÓN] Mensaje enviado exitosamente:', messageId);
+        }
         
         return {
           id: messageId,
@@ -142,28 +170,45 @@ export class MetaWhatsAppService {
           normalizedPhone = `+${normalizedPhone}`;
         }
 
+        const requestBody = {
+          messaging_product: 'whatsapp',
+          to: normalizedPhone,
+          type: 'text',
+          text: {
+            body: content
+          }
+        };
+
+        // Logs de debug solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔍 [DEBUG] Request URL:', `${this.baseUrl}/${this.config.phoneNumberId}/messages`);
+          console.log('🔍 [DEBUG] Request Body:', JSON.stringify(requestBody, null, 2));
+          console.log('🔍 [DEBUG] Access Token (first 10 chars):', this.config.accessToken?.substring(0, 10) + '...');
+        }
+
         const response = await fetch(`${this.baseUrl}/${this.config.phoneNumberId}/messages`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.config.accessToken}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: normalizedPhone,
-            type: 'text',
-            text: {
-              body: content
-            }
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          const errorText = await response.text();
+          // Log de error solo en desarrollo
+          if (process.env.NODE_ENV === 'development') {
+            console.error('🔍 [DEBUG] Error Response:', errorText);
+          }
+          throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
         }
 
         const result = await response.json();
-        console.log('✅ [REAL] Mensaje enviado exitosamente:', result);
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ [REAL] Mensaje enviado exitosamente:', result);
+        }
 
         // Guardar mensaje enviado en base de datos
         await this.saveMessage({
@@ -180,36 +225,62 @@ export class MetaWhatsAppService {
 
         return result;
       }
-    } catch (error) {
-      console.error('❌ Error sending Meta WhatsApp message:', error);
-      
-      // Si hay error en modo real, intentar modo simulación como fallback
-      if (!this.isSimulationMode) {
-        console.log('🔄 Intentando modo simulación como fallback...');
-        this.isSimulationMode = true;
-        return await this.sendMessage(to, content);
-      }
-      
-      return null;
-    }
+         } catch (error) {
+       console.error('❌ Error sending Meta WhatsApp message:', error);
+       
+       // NO USAR FALLBACK - Mantener en modo producción
+       console.error('❌ Error en modo producción - NO se usará fallback a simulación');
+       throw error; // Re-lanzar el error para que se maneje en el nivel superior
+     }
   }
 
-  // Enviar mensaje con plantilla
-  async sendTemplateMessage(to: string, templateName: string, language: string = 'es', components?: any[]): Promise<any> {
+     // Enviar mensaje con plantilla
+   async sendTemplateMessage(to: string, templateName: string, language: string = 'es_AR', components?: any[], retryCount: number = 0): Promise<any> {
     await this.initializeIfConfigured();
+
+    // FORZAR MODO PRODUCCIÓN SOLO EN EL PRIMER INTENTO
+    if (retryCount === 0) {
+      this.forceProductionMode();
+    }
 
     if (!this.isServiceEnabled()) {
       console.log('Meta WhatsApp Service: Servicio deshabilitado');
       return null;
     }
 
+    // Validar template antes de enviar
+    if (!this.isSimulationMode && retryCount === 0) {
+      const templates = await this.getTemplates();
+      const templateExists = templates.some(t => t.name === templateName);
+      // Logs solo en desarrollo
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🔍 Validando template '${templateName}': ${templateExists ? 'EXISTE' : 'NO EXISTE'}`);
+        console.log('📋 Templates disponibles:', templates.map(t => t.name));
+      }
+      
+      if (!templateExists) {
+        console.error(`❌ Template '${templateName}' no existe en WhatsApp Business Manager`);
+        // Fallback a modo simulación si el template no existe
+        this.isSimulationMode = true;
+        console.log('🔄 Cambiando a modo simulación por template inexistente');
+      } else {
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`✅ Template '${templateName}' encontrado, continuando en modo producción`);
+        }
+      }
+    }
+
     try {
       if (this.isSimulationMode) {
-        console.log('📤 [SIMULACIÓN] Enviando mensaje con plantilla:', {
-          to,
-          templateName,
-          language
-        });
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📤 [SIMULACIÓN] Enviando mensaje con plantilla:', {
+            to,
+            templateName,
+            language
+          });
+        }
 
         await new Promise(resolve => setTimeout(resolve, 1000));
 
@@ -253,21 +324,37 @@ export class MetaWhatsAppService {
           messageData.template.components = components;
         }
 
-        const response = await fetch(`${this.baseUrl}/${this.config.phoneNumberId}/messages`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.config.accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(messageData),
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+        // Logs de debug solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔍 [DEBUG] Enviando template a Meta API...');
+          console.log('🔍 [DEBUG] URL:', `${this.baseUrl}/${this.config.phoneNumberId}/messages`);
+          console.log('🔍 [DEBUG] Template data:', JSON.stringify(messageData, null, 2));
         }
+         
+         const response = await fetch(`${this.baseUrl}/${this.config.phoneNumberId}/messages`, {
+           method: 'POST',
+           headers: {
+             'Authorization': `Bearer ${this.config.accessToken}`,
+             'Content-Type': 'application/json',
+           },
+           body: JSON.stringify(messageData),
+         });
+
+         if (!response.ok) {
+           const errorText = await response.text();
+           // Logs de error solo en desarrollo
+           if (process.env.NODE_ENV === 'development') {
+             console.error('❌ [DEBUG] Error Response:', errorText);
+             console.error('❌ [DEBUG] Status:', response.status, response.statusText);
+           }
+           throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+         }
 
         const result = await response.json();
-        console.log('✅ [REAL] Mensaje con plantilla enviado exitosamente:', result);
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ [REAL] Mensaje con plantilla enviado exitosamente:', result);
+        }
 
         await this.saveMessage({
           id: result.messages?.[0]?.id || `template_${Date.now()}`,
@@ -282,17 +369,13 @@ export class MetaWhatsAppService {
 
         return result;
       }
-    } catch (error) {
-      console.error('❌ Error sending template message:', error);
-      
-      if (!this.isSimulationMode) {
-        console.log('🔄 Intentando modo simulación como fallback...');
-        this.isSimulationMode = true;
-        return await this.sendTemplateMessage(to, templateName, language, components);
-      }
-      
-      return null;
-    }
+         } catch (error) {
+       console.error('❌ Error sending template message:', error);
+       
+       // NO USAR FALLBACK - Mantener en modo producción
+       console.error('❌ Error en modo producción - NO se usará fallback a simulación');
+       throw error; // Re-lanzar el error para que se maneje en el nivel superior
+     }
   }
 
   // Procesar mensaje entrante con IA automática
@@ -580,12 +663,15 @@ export class MetaWhatsAppService {
         status: message.status || 'delivered'
       };
 
-      console.log('💾 Guardando mensaje con datos:', {
-        id: messageData.id,
-        timestamp: messageData.timestamp,
-        content: messageData.content?.substring(0, 50),
-        contact_id: messageData.contact_id
-      });
+      // Log solo en desarrollo
+      if (process.env.NODE_ENV === 'development') {
+        console.log('💾 Guardando mensaje con datos:', {
+          id: messageData.id,
+          timestamp: messageData.timestamp,
+          content: messageData.content?.substring(0, 50),
+          contact_id: messageData.contact_id
+        });
+      }
 
       // Crear cliente de Supabase con service role key
       const { createClient } = await import('@supabase/supabase-js');
@@ -601,7 +687,10 @@ export class MetaWhatsAppService {
           .single();
 
         if (existingMessage) {
-          console.log('⚠️ Mensaje ya existe, evitando duplicado:', messageData.message_sid);
+          // Log solo en desarrollo
+          if (process.env.NODE_ENV === 'development') {
+            console.log('⚠️ Mensaje ya existe, evitando duplicado:', messageData.message_sid);
+          }
           return;
         }
       }
@@ -617,10 +706,13 @@ export class MetaWhatsAppService {
         .limit(1);
 
       if (recentMessages && recentMessages.length > 0) {
-        console.log('⚠️ Mensaje similar reciente detectado, evitando duplicado:', {
-          content: messageData.content?.substring(0, 30),
-          contact_id: messageData.contact_id
-        });
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('⚠️ Mensaje similar reciente detectado, evitando duplicado:', {
+            content: messageData.content?.substring(0, 30),
+            contact_id: messageData.contact_id
+          });
+        }
         return;
       }
 
@@ -764,7 +856,13 @@ export class MetaWhatsAppService {
       }
 
       // Modo producción - obtener plantillas reales de Meta
-      const response = await fetch(`${this.baseUrl}/${this.config.phoneNumberId}/message_templates`, {
+      // Logs solo en desarrollo
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 Consultando templates en Meta API...');
+        console.log('🔍 URL:', `${this.baseUrl}/${this.config.businessAccountId}/message_templates`);
+      }
+      
+      const response = await fetch(`${this.baseUrl}/${this.config.businessAccountId}/message_templates`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${this.config.accessToken}`,
@@ -773,11 +871,23 @@ export class MetaWhatsAppService {
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
         console.error('❌ Error obteniendo plantillas de Meta:', response.status, response.statusText);
+        console.error('❌ Error details:', errorText);
+        
+        // Si es error 400, puede ser problema de versión de API
+        if (response.status === 400) {
+          console.log('⚠️ Error 400: Posible problema con versión de API o configuración');
+        }
+        
         return [];
       }
 
       const data = await response.json();
+      // Log solo en desarrollo
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Templates obtenidos exitosamente:', data.data?.length || 0, 'templates');
+      }
       return data.data || [];
     } catch (error) {
       console.error('❌ Error en getTemplates:', error);

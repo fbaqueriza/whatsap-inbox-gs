@@ -74,6 +74,8 @@ interface TemplateStatusUpdate {
 // Clase principal para manejo de webhooks
 export class WebhookService {
   private static instance: WebhookService;
+  private lastProcessedTimestamp: number = 0;
+  private readonly MIN_PROCESSING_INTERVAL = 1000; // 1 segundo mínimo entre procesamientos
 
   private constructor() {}
 
@@ -90,9 +92,78 @@ export class WebhookService {
   public async processWebhook(body: WebhookEvent): Promise<{ success: boolean; processedEvents: number }> {
     try {
       console.log('🔄 Procesando webhook de WhatsApp Business API');
+      console.log('📊 Estructura del webhook:', {
+        object: body.object,
+        entryCount: body.entry?.length || 0,
+        hasEntry: !!body.entry,
+        entryTypes: body.entry?.map(e => ({
+          id: e.id,
+          changesCount: e.changes?.length || 0,
+          changeFields: e.changes?.map(c => c.field) || []
+        })) || []
+      });
+      
+      // Rate limiting: evitar procesamiento excesivo
+      const now = Date.now();
+      if (now - this.lastProcessedTimestamp < this.MIN_PROCESSING_INTERVAL) {
+        console.log(`⚠️ Rate limiting activo, saltando webhook. Último procesamiento: ${now - this.lastProcessedTimestamp}ms atrás`);
+        return { success: true, processedEvents: 0 };
+      }
+      this.lastProcessedTimestamp = now;
+      
+      // Validar que el webhook tenga contenido válido
+      if (!body.entry || body.entry.length === 0) {
+        console.log('⚠️ Webhook sin entradas válidas, ignorando');
+        console.log('📊 Contenido completo del webhook:', JSON.stringify(body, null, 2));
+        return { success: true, processedEvents: 0 };
+      }
+      
+             // Verificar si hay mensajes reales para procesar
+       let hasValidMessages = false;
+       let totalMessages = 0;
+       let messageDetails: any[] = [];
+      
+      for (const entry of body.entry) {
+        for (const change of entry.changes) {
+          console.log(`📡 Analizando cambio: ${change.field}`);
+          
+          if (change.field === 'messages') {
+            const messageCount = change.value.messages?.length || 0;
+            totalMessages += messageCount;
+            
+            if (messageCount > 0) {
+              hasValidMessages = true;
+              messageDetails = change.value.messages?.map(m => ({
+                id: m.id,
+                from: m.from,
+                type: m.type,
+                timestamp: m.timestamp
+              })) || [];
+              
+              console.log(`📊 Mensajes encontrados en cambio:`, {
+                count: messageCount,
+                details: messageDetails
+              });
+            } else {
+              console.log('⚠️ Campo messages presente pero sin mensajes');
+            }
+          }
+        }
+      }
+      
+      if (!hasValidMessages) {
+        console.log('⚠️ Webhook sin mensajes válidos para procesar, ignorando');
+        console.log('📊 Resumen del webhook:', {
+          totalMessages,
+          hasValidMessages,
+          messageDetails
+        });
+        return { success: true, processedEvents: 0 };
+      }
       
       if (body.object !== 'whatsapp_business_account') {
         console.log('⚠️ Webhook no es de WhatsApp Business API, ignorando');
+        console.log('📊 Object type:', body.object);
         return { success: true, processedEvents: 0 };
       }
 
@@ -125,6 +196,15 @@ export class WebhookService {
 
     try {
       console.log(`📡 Procesando cambio de campo: ${field}`);
+      
+      // Log detallado del contenido del cambio
+      if (field === 'messages') {
+        console.log(`📊 Contenido del cambio messages:`, {
+          hasMessages: !!value.messages,
+          messageCount: value.messages?.length || 0,
+          messageTypes: value.messages?.map(m => m.type) || []
+        });
+      }
 
       switch (field) {
         case 'messages':
@@ -169,9 +249,17 @@ export class WebhookService {
    */
   private async processMessages(messages: MessageEvent[]): Promise<number> {
     let processedCount = 0;
+    const processedMessageIds = new Set<string>();
 
     for (const message of messages) {
       try {
+        // Verificar si el mensaje ya fue procesado (protección contra bucles)
+        if (processedMessageIds.has(message.id)) {
+          console.log(`⚠️ Mensaje ya procesado, saltando: ${message.id}`);
+          continue;
+        }
+        processedMessageIds.add(message.id);
+
         // Validar y normalizar el número de teléfono
         const normalizedFrom = this.normalizePhoneNumber(message.from);
         if (!this.isValidPhoneNumber(normalizedFrom)) {
@@ -184,19 +272,57 @@ export class WebhookService {
         
         console.log(`💬 Procesando mensaje de ${normalizedFrom}: ${messageContent.substring(0, 50)}...`);
 
-        // Procesar mensaje en base de datos
-        await metaWhatsAppService.processIncomingMessage({
-          from: normalizedFrom,
-          to: message.to || process.env.WHATSAPP_PHONE_NUMBER_ID,
-          content: messageContent,
-          timestamp: new Date(parseInt(message.timestamp) * 1000),
-          id: message.id,
-          type: message.type,
-          messageType: 'received'
-        });
+        // ✅ MEJORA: Filtrado más robusto de mensajes del sistema
+        if (message.type === 'text' && 
+            (messageContent.startsWith('🛒 *NUEVO PEDIDO*') || 
+             messageContent.includes('Se ha recibido un nuevo pedido') ||
+             messageContent.includes('Por favor confirma la recepción') ||
+             messageContent.includes('NUEVO PEDIDO') ||
+             messageContent.includes('nuevo pedido'))) {
+          console.log(`⚠️ Mensaje del sistema detectado, saltando procesamiento: ${message.id}`);
+          continue;
+        }
+        
+        // Verificar si el mensaje viene de nuestro propio número (evitar bucles)
+        if (message.from === process.env.WHATSAPP_PHONE_NUMBER_ID) {
+          console.log(`⚠️ Mensaje de nuestro propio número detectado, saltando procesamiento: ${message.id}`);
+          continue;
+        }
 
-        // Verificar si es respuesta de proveedor y enviar detalles del pedido
-        await this.handleProviderResponse(normalizedFrom);
+        // Log detallado para debugging
+        console.log(`🔍 Analizando mensaje: "${messageContent}" de ${normalizedFrom}`);
+
+        // Validar que el mensaje sea una respuesta válida del proveedor
+        if (this.isValidProviderResponse(messageContent)) {
+          console.log(`✅ Mensaje válido detectado: "${messageContent}" de ${normalizedFrom}`);
+          
+          // Procesar mensaje en base de datos
+          try {
+            await metaWhatsAppService.processIncomingMessage({
+              from: normalizedFrom,
+              to: message.to || process.env.WHATSAPP_PHONE_NUMBER_ID,
+              content: messageContent,
+              timestamp: new Date(parseInt(message.timestamp) * 1000),
+              id: message.id,
+              type: message.type,
+              messageType: 'received'
+            });
+            console.log(`✅ Mensaje procesado en base de datos exitosamente`);
+          } catch (dbError) {
+            console.error('❌ Error procesando mensaje en base de datos:', dbError);
+          }
+
+          // Verificar si es respuesta de proveedor y enviar detalles del pedido
+          console.log(`🔍 Iniciando verificación de pedido pendiente para: ${normalizedFrom}`);
+          try {
+            await this.handleProviderResponse(normalizedFrom, messageContent);
+            console.log(`✅ Respuesta de proveedor procesada exitosamente`);
+          } catch (responseError) {
+            console.error('❌ Error procesando respuesta de proveedor:', responseError);
+          }
+        } else {
+          console.log(`ℹ️ Mensaje no válido para procesamiento: "${messageContent}" de ${normalizedFrom}`);
+        }
 
         processedCount++;
 
@@ -294,15 +420,27 @@ export class WebhookService {
   /**
    * Maneja respuestas de proveedores
    */
-  private async handleProviderResponse(phoneNumber: string): Promise<void> {
+  private async handleProviderResponse(phoneNumber: string, messageContent: string): Promise<void> {
     try {
       console.log(`🔍 Verificando si es respuesta de proveedor: ${phoneNumber}`);
       
       const pendingOrder = await OrderNotificationService.checkPendingOrder(phoneNumber);
       
       if (pendingOrder?.orderData) {
+        console.log(`📝 Encontrado pedido pendiente para ${phoneNumber}:`, {
+          orderId: pendingOrder.orderId,
+          providerId: pendingOrder.providerId,
+          status: pendingOrder.status
+        });
+        
         console.log(`📝 Enviando detalles del pedido para: ${phoneNumber}`);
-        await OrderNotificationService.sendOrderDetailsAfterConfirmation(phoneNumber);
+        const result = await OrderNotificationService.sendOrderDetailsAfterConfirmation(phoneNumber, messageContent);
+        
+        if (result) {
+          console.log(`✅ Detalles del pedido enviados exitosamente para: ${phoneNumber}`);
+        } else {
+          console.error(`❌ Error enviando detalles del pedido para: ${phoneNumber}`);
+        }
       } else {
         console.log(`ℹ️ No hay pedidos pendientes para: ${phoneNumber}`);
       }
@@ -351,6 +489,34 @@ export class WebhookService {
     }
     
     return '[Mensaje no soportado]';
+  }
+
+  /**
+   * Valida si un mensaje es una respuesta válida del proveedor
+   * ✅ MEJORA: Lógica más robusta y logging mejorado
+   */
+  private isValidProviderResponse(messageContent: string): boolean {
+    const normalizedContent = messageContent.toLowerCase().trim();
+    
+    // Filtrar mensajes del sistema
+    if (normalizedContent.includes('🛒 *nuevo pedido*') || 
+        normalizedContent.includes('se ha recibido un nuevo pedido') ||
+        normalizedContent.includes('por favor confirma la recepción') ||
+        normalizedContent.includes('nuevo pedido') ||
+        normalizedContent.includes('pedido recibido')) {
+      console.log(`🔍 Mensaje del sistema detectado: "${messageContent}" -> INVÁLIDO`);
+      return false;
+    }
+    
+    // ✅ MEJORA: Validar que el mensaje tenga contenido significativo
+    if (normalizedContent.length < 1) {
+      console.log(`🔍 Mensaje vacío detectado -> INVÁLIDO`);
+      return false;
+    }
+    
+    // Cualquier otra respuesta del proveedor es válida
+    console.log(`🔍 Respuesta del proveedor detectada: "${messageContent}" -> VÁLIDA`);
+    return true;
   }
 
   /**

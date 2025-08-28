@@ -241,9 +241,9 @@ function DashboardPageContent({
     // Crear la orden en segundo plano
     const createdOrder = await addOrder(newOrder, user.id);
     
-    // Enviar notificación al proveedor en segundo plano
-    if (createdOrder) {
-      const provider = providers.find(p => p.id === orderData.providerId);
+          // Enviar notificación al proveedor en segundo plano
+      if (createdOrder) {
+        const provider = providers.find(p => p.id === orderData.providerId);
       
       if (provider) {
         // Ejecutar en segundo plano sin bloquear la UI
@@ -335,24 +335,24 @@ function DashboardPageContent({
         // Buscar el pedido actualizado después del fetchAll
         const updatedOrders = await supabase.from('orders').select('*').eq('id', orderId).single();
         if (updatedOrders.data && updatedOrders.data.status === 'enviado') {
-          // Obtener datos del proveedor para la orden de pago
+              // Obtener datos del proveedor para la orden de pago
           const provider = providers.find(p => p.id === order.providerId);
-          const bankInfo = {
+              const bankInfo = {
             accountNumber: provider?.cbu || '1234567890'
-          };
-          const totalAmount = 1000; // Monto extraído de la factura PDF
+              };
+              const totalAmount = 1000; // Monto extraído de la factura PDF
 
-          const orderWithInvoice = {
+              const orderWithInvoice = {
             ...updatedOrders.data,
-            status: 'factura_recibida' as 'factura_recibida',
-            invoiceNumber: 'INV-MOCK-001',
-            receiptUrl: '/mock-factura.pdf',
-            bankInfo: bankInfo,
-            totalAmount: totalAmount,
-          } as Order;
-          console.log('DEBUG: Actualizando pedido con factura y orden de pago:', orderWithInvoice);
-          await updateOrder(orderWithInvoice);
-          // La actualización se manejará automáticamente via Realtime
+                status: 'factura_recibida' as 'factura_recibida',
+                invoiceNumber: 'INV-MOCK-001',
+                receiptUrl: '/mock-factura.pdf',
+                bankInfo: bankInfo,
+                totalAmount: totalAmount,
+              } as Order;
+              console.log('DEBUG: Actualizando pedido con factura y orden de pago:', orderWithInvoice);
+              await updateOrder(orderWithInvoice);
+              // La actualización se manejará automáticamente via Realtime
         } else {
           console.log('DEBUG: Pedido no encontrado o estado incorrecto:', updatedOrders.data?.status);
         }
@@ -564,23 +564,23 @@ function DashboardPageContent({
                     </button>
                     <button
                       onClick={() => {
-                        // Abrir chat con el primer proveedor disponible
-                        const firstProvider = providers[0];
-                        if (firstProvider) {
-                          handleOrderClick({
-                            id: 'general-chat',
+                  // Abrir chat con el primer proveedor disponible
+                  const firstProvider = providers[0];
+                  if (firstProvider) {
+                                         handleOrderClick({
+                       id: 'general-chat',
                             providerId: firstProvider.id,
                             status: 'pending'
-                          } as Order);
-                        }
-                      }}
+                     } as Order);
+                  }
+                }}
                       className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                     >
                       <MessageSquare className="h-4 w-4 mr-2" />
                       Chat general
                     </button>
-                  </div>
-                </div>
+            </div>
+                    </div>
               ) : (
                 <div className="space-y-4">
                   {currentOrders.slice(0, 5).map((order) => (
@@ -590,17 +590,17 @@ function DashboardPageContent({
                           {getStatusIcon(order.status)}
                           <div className="flex-1">
                             <div className="flex items-center space-x-2">
-                              <div className="font-medium text-gray-900">
+                                                         <div className="font-medium text-gray-900">
                                 {getProviderName(order.providerId)}
-                              </div>
-                              <div className="text-sm text-gray-500">
+                             </div>
+                             <div className="text-sm text-gray-500">
                                 {formatDate(order.createdAt || order.orderDate)}
-                              </div>
+                             </div>
                             </div>
                             
 
                           </div>
-                        </div>
+                  </div>
                         <div className="flex flex-col items-end gap-2">
                           
                           {/* Botón de chat */}
@@ -645,37 +645,37 @@ function DashboardPageContent({
                           
                           {/* Ver comprobante - cuando hay comprobante disponible */}
                           {['pagado','finalizado'].includes(order.status) && order.receiptUrl && (
-                            <button
+      <button
                               onClick={() => openReceipt(order.receiptUrl)}
                               className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-gray-400"
-                            >
+       >
                               <Upload className="h-4 w-4 mr-1" /> Ver comprobante
-                            </button>
+      </button>
                           )}
                           
                           {/* Confirmar recepción - solo en estado pagado */}
                           {order.status === 'pagado' && (
-                            <button
+         <button
                               className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-green-200 text-white bg-green-600 hover:bg-green-700 focus:ring-2 focus:ring-green-500"
                               onClick={() => handleConfirmReception(order.id)}
-                            >
+         >
                               <CheckCircle className="h-4 w-4 mr-1" /> Confirmar recepción
-                            </button>
+         </button>
+      )}
+    </div>
+                  </div>
+                      {order.items && order.items.length > 0 && (
+                         <div className="text-xs text-gray-600">
+                          {order.items.slice(0, 3).map((item, index) => (
+                            <span key={index} className="mr-2">
+                               {item.productName}: {item.quantity} {item.unit}
+                            </span>
+                          ))}
+                          {order.items.length > 3 && (
+                            <span className="text-gray-400">+{order.items.length - 3} más</span>
                           )}
                         </div>
-                      </div>
-                                             {order.items && order.items.length > 0 && (
-                         <div className="text-xs text-gray-600">
-                           {order.items.slice(0, 3).map((item, index) => (
-                             <span key={index} className="mr-2">
-                               {item.productName}: {item.quantity} {item.unit}
-                             </span>
-                           ))}
-                           {order.items.length > 3 && (
-                             <span className="text-gray-400">+{order.items.length - 3} más</span>
-                           )}
-                         </div>
-                       )}
+                      )}
                        
                        {/* Orden de pago - solo en estado factura_recibida */}
                        {showPaymentOrder(order)}
@@ -694,87 +694,8 @@ function DashboardPageContent({
                 </div>
               )}
             </div>
-            {/* Divider */}
+                        {/* Divider */}
             <div className="my-6 border-t border-gray-200" />
-            {/* Pedidos recientes */}
-            <div className="bg-white rounded-lg p-6 shadow">
-              <h2 className="text-lg font-bold text-gray-800 mb-4">Pedidos recientes</h2>
-              {finishedOrders.length === 0 ? (
-                <div className="text-center py-8">
-                  <div className="text-gray-500">No hay pedidos finalizados recientes</div>
-                    </div>
-              ) : (
-                <div className="space-y-4">
-                  {finishedOrders.slice(0, 5).map((order) => (
-                    <div key={order.id} className="bg-gray-50 rounded-lg p-4">
-                          <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
-                          {getStatusIcon(order.status)}
-                            <div>
-                            <div className="font-medium text-gray-900">
-                              {getProviderName(order.providerId)}
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              {formatDate(order.createdAt || order.orderDate)}
-                            </div>
-                          </div>
-                  </div>
-                            <Menu as="div" className="relative inline-block text-left">
-  <Menu.Button className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium transition border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-gray-400">
-    Ver documentos
-  </Menu.Button>
-                          <Menu.Items className="absolute right-0 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-[9999]" style={{ top: 'auto', bottom: '100%', marginBottom: '0.5rem' }}>
-    <div className="py-1 flex flex-col gap-1">
-      <button
-        className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-100 text-left disabled:opacity-50 disabled:cursor-not-allowed"
-        disabled={!order.invoiceNumber}
-        onClick={() => { if(order.invoiceNumber) window.open('/mock-factura.pdf', '_blank'); }}
-      >
-        {order.invoiceNumber ? 'Descargar factura' : 'Factura no disponible'}
-      </button>
-      {order.receiptUrl ? (
-        <button
-          onClick={() => openReceipt(order.receiptUrl)}
-          className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-100 text-left"
-        >
-          Ver comprobante
-        </button>
-      ) : (
-        <span className="block px-4 py-2 text-xs text-gray-400 text-left cursor-not-allowed">
-          Comprobante no disponible
-        </span>
-      )}
-    </div>
-  </Menu.Items>
-</Menu>
-                  </div>
-                      {order.items && order.items.length > 0 && (
-                        <div className="text-xs text-gray-600 mt-2">
-                          {order.items.slice(0, 3).map((item, index) => (
-                            <span key={index} className="mr-2">
-                              {item.productName}: {item.quantity} {item.unit}
-                            </span>
-                          ))}
-                          {order.items.length > 3 && (
-                            <span className="text-gray-400">+{order.items.length - 3} más</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {finishedOrders.length > 5 && (
-                    <div className="text-center">
-                      <button
-                        onClick={() => window.location.href = '/orders'}
-                        className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                      >
-                        Ver todos los pedidos ({finishedOrders.length})
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
           {/* Right Section: Próximos pedidos + Providers table */}
           <div className="w-full">
@@ -822,12 +743,12 @@ function DashboardPageContent({
                   const weekFromNow = new Date();
                   weekFromNow.setDate(now.getDate() + 7);
                   // Find providers with next order due in 7 days
-                  const providerUpcoming = providers
-                    .map((provider: Provider) => {
-                      const nextOrderDates = stockItems
+                                     const providerUpcoming = providers
+                     .map((provider: Provider) => {
+                                               const nextOrderDates = stockItems
                         .filter((item: StockItem) => Array.isArray(item.associatedProviders) && item.associatedProviders.includes(provider.id) && item.nextOrder)
                         .map((item: StockItem) => item.nextOrder ? new Date(item.nextOrder as string | number | Date) : null)
-                        .filter((d): d is Date => d !== null);
+                         .filter((d): d is Date => d !== null);
                       const nextExpectedOrderDate = nextOrderDates.length > 0 ? new Date(Math.min(...nextOrderDates.map((d: Date) => d.getTime()))) : null;
                       return { provider, nextExpectedOrderDate };
                     })
@@ -854,63 +775,7 @@ function DashboardPageContent({
                 })()
               )}
             </div>
-            {/* Providers Table */}
-            <div className="bg-white rounded-lg p-4 shadow max-h-96 overflow-y-auto">
-              <h2 className="text-md font-bold text-gray-800 mb-2">Proveedores</h2>
-              <table className="min-w-full">
-                <thead>
-                  <tr>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Última orden</th>
-                    <th className="text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Acción</th>
-                    </tr>
-                  </thead>
-                <tbody>
-                  {providers.map((provider: any) => {
-                    // Find most recent order for this provider
-                    const providerOrders = orders.filter((o: any) => o.providerId === provider.id);
-                    const mostRecentOrder = providerOrders.length > 0 ? providerOrders.reduce((a: any, b: any) => new Date(a.orderDate) > new Date(b.orderDate) ? a : b) : null;
-                    const lastOrderDate = mostRecentOrder ? new Date(mostRecentOrder.orderDate) : null;
-                      return (
-                        <tr key={provider.id} className="hover:bg-gray-50">
-                        <td className="py-2 font-medium text-gray-900">{provider.name}</td>
-                        <td className="py-2 text-xs text-gray-500">{lastOrderDate ? lastOrderDate.toLocaleDateString() : '-'}</td>
-                        <td className="py-2 text-center">
-                          <div className="flex justify-center space-x-1">
-                          <button
-                            onClick={() => handleProviderOrder(provider.id)}
-                            className="inline-flex items-center px-2 py-1 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                            title="Nuevo pedido"
-                          >
-                            <Plus className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                const normalizedPhone = provider.phone.startsWith('+') ? provider.phone : `+${provider.phone}`;
-                                const contact = {
-                                  id: provider.id,
-                                  name: provider.name,
-                                  phone: normalizedPhone,
-                                  providerId: provider.id,
-                                  lastMessage: '',
-                                  lastMessageTime: new Date(),
-                                  unreadCount: 0
-                                };
-                                openGlobalChat(contact);
-                              }}
-                              className="inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                              title="Chat con proveedor"
-                            >
-                              <MessageSquare className="h-4 w-4" />
-                            </button>
-                          </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-            </div>
+            
           </div>
         </div>
 

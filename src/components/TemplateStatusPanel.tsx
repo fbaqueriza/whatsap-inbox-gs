@@ -191,7 +191,14 @@ export default function TemplateStatusPanel() {
               )}
               
               <p className="text-xs text-gray-400 mt-2">
-                Última actualización: {new Date(template.last_updated).toLocaleString()}
+                Última actualización: {new Date(template.last_updated).toLocaleString('es-AR', {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: false // Forzar formato 24 horas
+                })}
               </p>
             </div>
           ))

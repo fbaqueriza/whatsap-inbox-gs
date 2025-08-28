@@ -139,16 +139,20 @@ export function useRealtimeManager() {
                     case 'DELETE':
                       handlers.onDelete?.(payload);
                       break;
-                    default:
-                      // Para eventos '*' manejar todos los tipos
-                      if (payload.eventType === 'INSERT') {
-                        handlers.onInsert?.(payload);
-                      } else if (payload.eventType === 'UPDATE') {
-                        handlers.onUpdate?.(payload);
-                      } else if (payload.eventType === 'DELETE') {
-                        handlers.onDelete?.(payload);
+                                      default:
+                    // Para eventos '*' manejar todos los tipos de forma segura
+                    try {
+                      if (payload.eventType === 'INSERT' && typeof handlers.onInsert === 'function') {
+                        handlers.onInsert(payload);
+                      } else if (payload.eventType === 'UPDATE' && typeof handlers.onUpdate === 'function') {
+                        handlers.onUpdate(payload);
+                      } else if (payload.eventType === 'DELETE' && typeof handlers.onDelete === 'function') {
+                        handlers.onDelete(payload);
                       }
-                      break;
+                    } catch (handlerError) {
+                      log('error', `Error en handler de evento ${payload.eventType}:`, handlerError);
+                    }
+                    break;
                   }
                 } catch (error) {
                   log('error', `Error en handler de ${config.event}:`, error);
@@ -167,13 +171,17 @@ export function useRealtimeManager() {
                     handlers.onDelete?.(payload);
                     break;
                   default:
-                    // Para eventos '*' manejar todos los tipos
-                    if (payload.eventType === 'INSERT') {
-                      handlers.onInsert?.(payload);
-                    } else if (payload.eventType === 'UPDATE') {
-                      handlers.onUpdate?.(payload);
-                    } else if (payload.eventType === 'DELETE') {
-                      handlers.onDelete?.(payload);
+                    // Para eventos '*' manejar todos los tipos de forma segura
+                    try {
+                      if (payload.eventType === 'INSERT' && typeof handlers.onInsert === 'function') {
+                        handlers.onInsert(payload);
+                      } else if (payload.eventType === 'UPDATE' && typeof handlers.onUpdate === 'function') {
+                        handlers.onUpdate(payload);
+                      } else if (payload.eventType === 'DELETE' && typeof handlers.onDelete === 'function') {
+                        handlers.onDelete(payload);
+                      }
+                    } catch (handlerError) {
+                      log('error', `Error en handler de evento ${payload.eventType}:`, handlerError);
                     }
                     break;
                 }

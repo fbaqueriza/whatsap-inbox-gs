@@ -8,7 +8,7 @@ import DateSelector from './DateSelector';
 interface CreateOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateOrder: (order: {
+  onSubmit: (order: {
     providerId: string;
     items: OrderItem[];
     notes: string;
@@ -19,22 +19,20 @@ interface CreateOrderModalProps {
   providers: Provider[];
   stockItems: StockItem[];
   suggestedOrder?: {
-    productName: string;
-    suggestedQuantity: number;
-    unit: string;
-    suggestedProviders: Provider[];
+    providerId?: string;
+    providerName?: string;
   };
-  selectedProviderId?: string | null;
+  isLoading?: boolean;
 }
 
 export default function CreateOrderModal({
   isOpen,
   onClose,
-  onCreateOrder,
+  onSubmit,
   providers,
   stockItems,
   suggestedOrder,
-  selectedProviderId,
+  isLoading = false,
 }: CreateOrderModalProps) {
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [orderText, setOrderText] = useState('');
@@ -44,20 +42,10 @@ export default function CreateOrderModal({
   const [additionalFiles, setAdditionalFiles] = useState<OrderFile[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
 
-  // Set selectedProvider from prop if provided
+  // Set selectedProvider from suggestedOrder if present
   useEffect(() => {
-    if (selectedProviderId && selectedProviderId !== selectedProvider) {
-      setSelectedProvider(selectedProviderId);
-    }
-  }, [selectedProviderId]);
-
-  // Set selectedProvider and orderText from suggestedOrder if present
-  useEffect(() => {
-    if (suggestedOrder) {
-      if (suggestedOrder.suggestedProviders && suggestedOrder.suggestedProviders.length > 0) {
-        setSelectedProvider(suggestedOrder.suggestedProviders[0].id);
-      }
-      setOrderText(`${suggestedOrder.productName}: ${suggestedOrder.suggestedQuantity} ${suggestedOrder.unit}`);
+    if (suggestedOrder?.providerId) {
+      setSelectedProvider(suggestedOrder.providerId);
     }
   }, [suggestedOrder]);
 
@@ -218,7 +206,7 @@ export default function CreateOrderModal({
 
     if (!selectedProvider) return;
     
-    onCreateOrder({
+    onSubmit({
       providerId: selectedProvider,
       items: parseOrderText(orderText),
       notes,

@@ -48,9 +48,9 @@ export function useWhatsAppMessagesRealtime(
       onDelete,
       debounceMs: 150,
       retryConfig: {
-        maxRetries: 5,
-        retryDelay: 2000,
-        backoffMultiplier: 1.5
+        maxRetries: 3, // 🔧 OPTIMIZACIÓN: Reducir reintentos
+        retryDelay: 5000, // 🔧 OPTIMIZACIÓN: Aumentar delay inicial
+        backoffMultiplier: 2 // 🔧 OPTIMIZACIÓN: Backoff más agresivo
       }
     }
   );
@@ -81,13 +81,14 @@ export function useOrdersRealtime(
   );
 }
 
-// Hook específico para pedidos pendientes
+// 🔧 OPTIMIZACIÓN: Hook específico para pedidos pendientes con configuración mejorada
 export function usePendingOrdersRealtime(
   onInsert?: (payload: any) => void,
   onUpdate?: (payload: any) => void,
   onDelete?: (payload: any) => void
 ) {
-  return useRealtimeSubscription(
+  // 🔧 MEJORA: Suscripción múltiple para ambas tablas
+  const pendingOrdersSubscription = useRealtimeSubscription(
     {
       table: 'pending_orders',
       event: '*'
@@ -96,14 +97,53 @@ export function usePendingOrdersRealtime(
       onInsert,
       onUpdate,
       onDelete,
-      debounceMs: 150,
+      debounceMs: 100, // Reducido para mejor responsividad
       retryConfig: {
-        maxRetries: 3,
-        retryDelay: 1000,
-        backoffMultiplier: 2
+        maxRetries: 5,
+        retryDelay: 500,
+        backoffMultiplier: 1.2
       }
     }
   );
+
+  // 🔧 MEJORA: Suscripción adicional para órdenes con estado 'pending'
+  const ordersSubscription = useRealtimeSubscription(
+    {
+      table: 'orders',
+      event: '*',
+      filter: 'status=eq.pending' // Filtrar solo órdenes pendientes
+    },
+    {
+      onInsert: (payload) => {
+        // Solo procesar si el estado es 'pending'
+        if (payload.new?.status === 'pending') {
+          onInsert?.(payload);
+        }
+      },
+      onUpdate: (payload) => {
+        // Procesar cambios de estado
+        if (payload.new?.status === 'pending' || payload.old?.status === 'pending') {
+          onUpdate?.(payload);
+        }
+      },
+      onDelete: (payload) => {
+        // Procesar eliminaciones de órdenes pendientes
+        if (payload.old?.status === 'pending') {
+          onDelete?.(payload);
+        }
+      },
+      debounceMs: 100,
+      retryConfig: {
+        maxRetries: 5,
+        retryDelay: 500,
+        backoffMultiplier: 1.2
+      }
+    }
+  );
+
+  return {
+    isSubscribed: pendingOrdersSubscription.isSubscribed && ordersSubscription.isSubscribed
+  };
 }
 
 // Hook específico para templates

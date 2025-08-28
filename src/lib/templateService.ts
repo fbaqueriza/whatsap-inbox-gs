@@ -1,4 +1,4 @@
-const WHATSAPP_API_URL = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v19.0';
+const WHATSAPP_API_URL = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v23.0';
 const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY;
 const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
@@ -50,10 +50,26 @@ export class TemplateService {
 
   /**
    * Obtiene contenido de fallback para templates
+   * VERSIÓN MEJORADA: Contenido más detallado y útil
    */
   static getFallbackTemplateContent(templateName: string): string {
     const fallbackTemplates: { [key: string]: string } = {
-      'envio_de_orden': '🛒 *NUEVO PEDIDO*\n\nSe ha recibido un nuevo pedido. Por favor revisa los detalles y confirma la recepción.',
+      'envio_de_orden': `🛒 *NUEVO PEDIDO*
+
+Se ha recibido un nuevo pedido para procesar. 
+
+*Detalles del pedido:*
+• Fecha: ${new Date().toLocaleDateString('es-AR')}
+• Estado: Pendiente de confirmación
+• Tipo: Pedido automático
+
+*Acciones requeridas:*
+1. Revisar los productos solicitados
+2. Confirmar disponibilidad
+3. Proporcionar precio final
+4. Confirmar fecha de entrega
+
+_Por favor confirma la recepción de este pedido y proporciona los detalles solicitados._`,
       'inicializador_de_conv': '👋 ¡Hola! Iniciando conversación para coordinar pedidos.',
       'notificacion_pedido': '📋 Notificación de nuevo pedido recibido.',
       'confirmacion_pedido': '✅ Pedido confirmado y en proceso.',

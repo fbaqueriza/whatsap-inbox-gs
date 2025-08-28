@@ -115,6 +115,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       setUserProviderPhones(userProviderPhones);
       
       const response = await fetch('/api/whatsapp/messages');
+      
+      if (!response.ok) {
+        console.warn('API de mensajes no disponible:', response.status);
+        return;
+      }
+      
       const data = await response.json();
       
       if (data.messages && Array.isArray(data.messages)) {

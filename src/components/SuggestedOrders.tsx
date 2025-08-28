@@ -114,17 +114,12 @@ export default function SuggestedOrders({
 
   if (suggestedOrders.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          {es.orders.suggestedOrders}
-        </h3>
-        <div className="text-center py-8">
-          <Calendar className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-500">{es.orders.noSuggestedOrders}</p>
-          <p className="text-sm text-gray-400 mt-1">
-            {es.orders.allItemsStocked}
-          </p>
-        </div>
+      <div className="text-center py-4">
+        <Calendar className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+        <p className="text-sm text-gray-500">{es.orders.noSuggestedOrders}</p>
+        <p className="text-xs text-gray-400 mt-1">
+          {es.orders.allItemsStocked}
+        </p>
       </div>
     );
   }

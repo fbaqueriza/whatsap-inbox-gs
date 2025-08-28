@@ -12,6 +12,9 @@ export interface WhatsAppMessage {
   to?: string;
   orderId?: string;
   providerId?: string;
+  // Campos para templates
+  isTemplate?: boolean;
+  templateName?: string;
 }
 
 export interface ChatWhatsAppMessage {

@@ -3,58 +3,48 @@ import { metaWhatsAppService } from '../../../../lib/metaWhatsAppService';
 
 export async function POST(request: NextRequest) {
   try {
-    const { to, message } = await request.json();
-
-    console.log('📤 API sendMessage - Recibido:', { to, message });
+    const body = await request.json();
+    const { to, message } = body;
 
     if (!to || !message) {
-      console.log('❌ API sendMessage - Campos faltantes:', { to, message });
       return NextResponse.json(
-        { error: 'Missing required fields: to and message' },
+        { error: 'to y message son requeridos' },
         { status: 400 }
       );
     }
 
-    // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
-    const phoneRegex = /^\+54\d{9,11}$/;
-    if (!phoneRegex.test(to)) {
-      console.error('❌ Formato de teléfono inválido:', to);
-      console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
-      return NextResponse.json(
-        { error: 'Formato de teléfono inválido. Debe ser: +54XXXXXXXXXX' },
-        { status: 400 }
-      );
-    }
+         // Determinar si es un template o mensaje de texto
+     const isTemplate = ['envio_de_orden', 'hello_world', 'inicializador_de_conv'].includes(message);
+     
+     let result;
+     if (isTemplate) {
+       // Usar el servicio existente que ya funciona para templates
+       result = await metaWhatsAppService.sendTemplateMessage(to, message, 'es_AR');
+     } else {
+       // Enviar como mensaje de texto normal
+       result = await metaWhatsAppService.sendMessage(to, message);
+     }
+     
+     if (!result) {
+       return NextResponse.json(
+         { success: false, error: 'Error enviando mensaje' },
+         { status: 500 }
+       );
+     }
 
-    console.log('🔍 API sendMessage - Estado del servicio:', {
-      enabled: metaWhatsAppService.isServiceEnabled(),
-      simulationMode: metaWhatsAppService.isSimulationModeEnabled()
-    });
+     return NextResponse.json({
+       success: true,
+       message_id: result.id || `msg_${Date.now()}`,
+       recipient: to,
+       content: message,
+       simulated: false // Siempre false porque no usamos fallback
+     });
 
-    const result = await metaWhatsAppService.sendMessage(to, message);
-    
-    console.log('📋 API sendMessage - Resultado del servicio:', result);
-    
-    if (result && (result.id || result.simulated || result.messages)) {
-      return NextResponse.json({
-        success: true,
-        messageId: result.messages?.[0]?.id || result.id, // Priorizar el message_sid de Meta
-        timestamp: new Date().toISOString(),
-        simulated: result.simulated || false,
-        mode: metaWhatsAppService.isSimulationModeEnabled() ? 'simulation' : 'production'
-      });
-    } else {
-      console.log('❌ API sendMessage - Resultado inválido:', result);
-      return NextResponse.json(
-        { error: 'Failed to send message - Service not available' },
-        { status: 500 }
-      );
-    }
   } catch (error) {
-    console.error('💥 API sendMessage - Error:', error);
+    console.error('Error en POST /api/whatsapp/send:', error);
     return NextResponse.json(
-      { error: 'Error sending message' },
+      { error: 'Error interno del servidor' },
       { status: 500 }
     );
   }
-} 
+}

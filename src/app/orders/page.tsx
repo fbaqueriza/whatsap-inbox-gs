@@ -251,7 +251,11 @@ function OrdersPage({ user }: OrdersPageProps) {
       if (newOrder) {
         console.log('✅ Pedido creado:', newOrder.id);
         
-        // Enviar notificación automática desde el servidor
+        // 🔧 OPTIMIZACIÓN: Cerrar modal inmediatamente para mejor UX
+        setIsCreateModalOpen(false);
+        setSuggestedOrder(null);
+        
+        // Enviar notificación automática desde el servidor (en segundo plano)
         try {
           const response = await fetch('/api/orders/send-notification', {
             method: 'POST',
@@ -266,16 +270,17 @@ function OrdersPage({ user }: OrdersPageProps) {
           
           if (!response.ok) {
             console.error('Error enviando notificación:', await response.text());
+          } else {
+            console.log('✅ Notificación enviada exitosamente');
           }
         } catch (error) {
           console.error('Error enviando notificación:', error);
         }
-        
-        setIsCreateModalOpen(false);
-        setSuggestedOrder(null);
       }
     } catch (error) {
       console.error('Error creando pedido:', error);
+      // 🔧 OPTIMIZACIÓN: Mantener modal abierto si hay error
+      setIsCreateModalOpen(true);
     } finally {
       setIsLoading(false);
     }

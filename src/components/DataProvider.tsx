@@ -168,7 +168,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
     }
   }, [currentUserId]);
 
-  // Fetch all data for the user
+  // Fetch all data for the user con optimización para items del proveedor
   const fetchAll = useCallback(async () => {
     if (!currentUserId) {
       return;
@@ -176,10 +176,14 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
     setLoading(true);
     setErrorMsg(null);
     try {
+      // 🔧 OPTIMIZACIÓN: Cargar datos con información completa de items
       const [{ data: provs, error: provError }, { data: ords, error: ordError }, { data: stocks, error: stockError }] = await Promise.all([
         supabase.from('providers').select('*').eq('user_id', currentUserId).order('created_at', { ascending: false }),
         supabase.from('orders').select('*').eq('user_id', currentUserId).order('created_at', { ascending: false }),
-        supabase.from('stock').select('*').eq('user_id', currentUserId).order('preferred_provider', { ascending: true }).order('created_at', { ascending: false }),
+        supabase.from('stock').select(`
+          *,
+          associated_providers
+        `).eq('user_id', currentUserId).order('preferred_provider', { ascending: true }).order('created_at', { ascending: false }),
       ]);
       
       if (provError) console.error('Error fetching providers:', provError);
@@ -188,9 +192,17 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       
       const mappedProviders = (provs || []).map(mapProviderFromDb);
       
+      // 🔧 OPTIMIZACIÓN: Validar y limpiar datos de stock items
+      const validatedStockItems = (stocks || []).map(item => ({
+        ...mapStockItemFromDb(item),
+        associated_providers: Array.isArray(item.associated_providers) 
+          ? item.associated_providers 
+          : []
+      }));
+      
       setProviders(mappedProviders);
       setOrders((ords || []).map(mapOrderFromDb));
-      setStockItems((stocks || []).map(mapStockItemFromDb));
+      setStockItems(validatedStockItems);
     } catch (error) {
       console.error('Error in fetchAll:', error);
       setErrorMsg('Error al cargar los datos. Por favor, recarga la página.');

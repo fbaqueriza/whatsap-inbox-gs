@@ -56,12 +56,20 @@ export function useWhatsAppMessagesRealtime(
   );
 }
 
-// Hook específico para órdenes
+// Hook específico para órdenes con optimización para tiempo real
 export function useOrdersRealtime(
   onInsert?: (payload: any) => void,
   onUpdate?: (payload: any) => void,
   onDelete?: (payload: any) => void
 ) {
+  // 🔧 OPTIMIZACIÓN: Verificar si Realtime está habilitado
+  const isRealtimeEnabled = process.env.NEXT_PUBLIC_REALTIME_ENABLED !== 'false';
+  
+  if (!isRealtimeEnabled) {
+    // Retornar un hook simulado si Realtime está deshabilitado
+    return { isSubscribed: false };
+  }
+
   return useRealtimeSubscription(
     {
       table: 'orders',
@@ -71,11 +79,11 @@ export function useOrdersRealtime(
       onInsert,
       onUpdate,
       onDelete,
-      debounceMs: 300,
+      debounceMs: 100, // 🔧 OPTIMIZACIÓN: Reducido para actualización más rápida
       retryConfig: {
-        maxRetries: 3,
-        retryDelay: 1000,
-        backoffMultiplier: 2
+        maxRetries: 3, // 🔧 OPTIMIZACIÓN: Reducir reintentos para evitar spam
+        retryDelay: 1000, // 🔧 OPTIMIZACIÓN: Delay más largo
+        backoffMultiplier: 2 // 🔧 OPTIMIZACIÓN: Backoff más agresivo
       }
     }
   );

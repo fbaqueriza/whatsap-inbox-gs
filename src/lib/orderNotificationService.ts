@@ -318,8 +318,46 @@ export class OrderNotificationService {
    }
 
   /**
-   * FLUJO CORREGIDO: Procesa la respuesta del proveedor y actualiza el estado
-   * Cuando el proveedor responde al template, esta función se ejecuta automáticamente
+   * Verifica si un mensaje es una confirmación
+   */
+  private static isConfirmationMessage(message: string): boolean {
+    if (!message || typeof message !== 'string') {
+      return false;
+    }
+    
+    const normalizedMessage = message.toLowerCase().trim();
+    
+    // Palabras clave de confirmación
+    const confirmationKeywords = [
+      'confirmo',
+      'confirmado',
+      'ok',
+      'si',
+      'sí',
+      'acepto',
+      'perfecto',
+      'bien',
+      'correcto',
+      'procedo',
+      'adelante',
+      'listo',
+      'ready',
+      'confirm',
+      'yes',
+      'yep',
+      'sure',
+      'fine',
+      'good',
+      'perfect'
+    ];
+    
+    return confirmationKeywords.some(keyword => 
+      normalizedMessage.includes(keyword)
+    );
+  }
+
+  /**
+   * Procesa la respuesta de un proveedor a un pedido
    */
   static async processProviderResponse(providerPhone: string, response: string): Promise<boolean> {
     try {

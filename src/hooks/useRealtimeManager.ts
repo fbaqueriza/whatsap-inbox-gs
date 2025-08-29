@@ -3,6 +3,7 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase/client';
+import { config, log as configLog } from '../lib/config';
 
 export interface RealtimeHandlers {
   onInsert?: (payload: any) => void;
@@ -23,26 +24,14 @@ interface RetryConfig {
 }
 
 const DEFAULT_RETRY_CONFIG: RetryConfig = {
-  maxRetries: 3,
+  maxRetries: 5,
   retryDelay: 1000,
-  backoffMultiplier: 2
+  backoffMultiplier: 1.5
 };
 
-// Control de logs basado en entorno
-const isDevelopment = process.env.NODE_ENV === 'development';
-const log = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: any[]) => {
-  // En producción, solo mostrar error
-  // En desarrollo, mostrar solo error para reducir spam
-  if (level === 'debug' || level === 'info' || level === 'warn') return;
-
-  const prefix = {
-    debug: '🔍',
-    info: 'ℹ️',
-    warn: '⚠️',
-    error: '❌'
-  }[level];
-
-  console[level](`${prefix} ${message}`, ...args);
+// 🔧 OPTIMIZACIÓN: Usar logging centralizado
+const realtimeLog = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: any[]) => {
+  configLog(level, `[Realtime] ${message}`, ...args);
 };
 
 export function useRealtimeManager() {
@@ -69,14 +58,14 @@ export function useRealtimeManager() {
     const currentRetries = retryCounts.current.get(channelName) || 0;
 
     if (currentRetries >= retryConfig.maxRetries) {
-      log('error', `Máximo de reintentos alcanzado para ${channelName}`);
+      realtimeLog('error', `Máximo de reintentos alcanzado para ${channelName}`);
       retryCounts.current.delete(channelName);
       return;
     }
 
     const delay = retryConfig.retryDelay * Math.pow(retryConfig.backoffMultiplier, currentRetries);
     
-    log('warn', `Reintentando conexión ${channelName} en ${delay}ms (intento ${currentRetries + 1}/${retryConfig.maxRetries})`);
+    realtimeLog('warn', `Reintentando conexión ${channelName} en ${delay}ms (intento ${currentRetries + 1}/${retryConfig.maxRetries})`);
     
     const timeout = setTimeout(async () => {
       retryTimeouts.current.delete(channelName);
@@ -96,203 +85,123 @@ export function useRealtimeManager() {
     
     // Evitar suscripciones duplicadas
     if (subscriptions.current.has(channelName) || isSubscribing.current.has(channelName)) {
-      log('debug', `Suscripción ${channelName} ya existe o está en proceso`);
+      configLog('debug', `Suscripción ${channelName} ya existe o está en proceso`);
       return;
     }
 
+    isSubscribing.current.add(channelName);
+    clearRetryTimeout(channelName);
+
     try {
-      isSubscribing.current.add(channelName);
-      log('info', `Configurando suscripción Realtime para ${channelName}`);
+      // 🔧 OPTIMIZACIÓN: Verificar conexión antes de suscribirse
+      const { data: connectionTest, error: connectionError } = await supabase
+        .from(config.table)
+        .select('count')
+        .limit(1);
 
-             // Verificar que Supabase esté conectado con timeout
-       try {
-         const timeoutPromise = new Promise((_, reject) => 
-           setTimeout(() => reject(new Error('Timeout')), 5000)
-         );
-         
-         const connectionPromise = supabase.from(config.table).select('count').limit(1);
-         
-         const { data, error } = await Promise.race([connectionPromise, timeoutPromise]) as any;
-         
-         if (error) {
-           log('error', `Error de conexión con Supabase para ${config.table}:`, error);
-           throw new Error(`No se puede conectar a la tabla ${config.table}`);
-         }
-       } catch (error) {
-         if (error instanceof Error && error.message === 'Timeout') {
-           log('error', `Timeout conectando a Supabase para ${config.table}`);
-         } else {
-           log('error', `Error verificando conexión con Supabase para ${config.table}:`, error);
-         }
-         throw error;
-       }
+      if (connectionError) {
+        realtimeLog('error', `Error de conexión con ${config.table}:`, connectionError);
+        throw new Error(`No se puede conectar a la tabla ${config.table}`);
+      }
 
-      const channel = supabase.channel(channelName, {
-        config: {
-          presence: {
-            key: channelName,
-          },
-          broadcast: {
-            self: false,
-          },
-        },
-      })
+      realtimeLog('info', `Creando suscripción para ${channelName}`);
+
+      // Crear el canal con configuración optimizada
+      const channel = supabase
+        .channel(channelName)
         .on(
-          'postgres_changes',
+          'postgres_changes' as any,
           {
-            event: config.event as any,
+            event: config.event,
             schema: 'public',
             table: config.table,
             filter: config.filter
           },
-          (payload) => {
-            log('debug', `Realtime ${config.event.toUpperCase()} en ${config.table}:`, payload);
+          (payload: any) => {
+            realtimeLog('debug', `Evento recibido en ${channelName}:`, payload);
             
-            // Aplicar debounce si está configurado
+            // 🔧 OPTIMIZACIÓN: Debounce para evitar múltiples actualizaciones
             if (options.debounceMs) {
-              setTimeout(() => {
-                try {
-                  switch (config.event) {
-                    case 'INSERT':
-                      handlers.onInsert?.(payload);
-                      break;
-                    case 'UPDATE':
-                      handlers.onUpdate?.(payload);
-                      break;
-                    case 'DELETE':
-                      handlers.onDelete?.(payload);
-                      break;
-                                      default:
-                    // Para eventos '*' manejar todos los tipos de forma segura
-                    try {
-                      if (payload.eventType === 'INSERT' && typeof handlers.onInsert === 'function') {
-                        handlers.onInsert(payload);
-                      } else if (payload.eventType === 'UPDATE' && typeof handlers.onUpdate === 'function') {
-                        handlers.onUpdate(payload);
-                      } else if (payload.eventType === 'DELETE' && typeof handlers.onDelete === 'function') {
-                        handlers.onDelete(payload);
-                      }
-                    } catch (handlerError) {
-                      log('error', `Error en handler de evento ${payload.eventType}:`, handlerError);
-                    }
-                    break;
-                  }
-                } catch (error) {
-                  log('error', `Error en handler de ${config.event}:`, error);
+              clearTimeout((global as any)[`debounce_${channelName}`]);
+              (global as any)[`debounce_${channelName}`] = setTimeout(() => {
+                if (payload.eventType === 'INSERT' && handlers.onInsert) {
+                  handlers.onInsert(payload);
+                } else if (payload.eventType === 'UPDATE' && handlers.onUpdate) {
+                  handlers.onUpdate(payload);
+                } else if (payload.eventType === 'DELETE' && handlers.onDelete) {
+                  handlers.onDelete(payload);
                 }
               }, options.debounceMs);
             } else {
-              try {
-                switch (config.event) {
-                  case 'INSERT':
-                    handlers.onInsert?.(payload);
-                    break;
-                  case 'UPDATE':
-                    handlers.onUpdate?.(payload);
-                    break;
-                  case 'DELETE':
-                    handlers.onDelete?.(payload);
-                    break;
-                  default:
-                    // Para eventos '*' manejar todos los tipos de forma segura
-                    try {
-                      if (payload.eventType === 'INSERT' && typeof handlers.onInsert === 'function') {
-                        handlers.onInsert(payload);
-                      } else if (payload.eventType === 'UPDATE' && typeof handlers.onUpdate === 'function') {
-                        handlers.onUpdate(payload);
-                      } else if (payload.eventType === 'DELETE' && typeof handlers.onDelete === 'function') {
-                        handlers.onDelete(payload);
-                      }
-                    } catch (handlerError) {
-                      log('error', `Error en handler de evento ${payload.eventType}:`, handlerError);
-                    }
-                    break;
-                }
-              } catch (error) {
-                log('error', `Error en handler de ${config.event}:`, error);
+              // Sin debounce
+              if (payload.eventType === 'INSERT' && handlers.onInsert) {
+                handlers.onInsert(payload);
+              } else if (payload.eventType === 'UPDATE' && handlers.onUpdate) {
+                handlers.onUpdate(payload);
+              } else if (payload.eventType === 'DELETE' && handlers.onDelete) {
+                handlers.onDelete(payload);
               }
             }
           }
         )
-        .on('presence', { event: 'sync' }, () => {
-          log('debug', `Presencia sincronizada para ${channelName}`);
-        })
-        .on('presence', { event: 'join' }, ({ key, newPresences }) => {
-          log('debug', `Presencia join para ${channelName}:`, { key, newPresences });
-        })
-        .on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
-          log('debug', `Presencia leave para ${channelName}:`, { key, leftPresences });
-        })
-        .on('broadcast', { event: 'test' }, (payload) => {
-          log('debug', `Broadcast test para ${channelName}:`, payload);
-        })
         .subscribe((status) => {
-          log('info', `Estado de suscripción ${channelName}:`, status);
+          realtimeLog('info', `Estado de suscripción ${channelName}:`, status);
           
           if (status === 'SUBSCRIBED') {
-            log('info', `Suscripción ${channelName} establecida exitosamente`);
+            subscriptions.current.set(channelName, channel);
             isSubscribing.current.delete(channelName);
             retryCounts.current.delete(channelName);
-            clearRetryTimeout(channelName);
-          } else if (status === 'CLOSED') {
-            log('info', `Suscripción ${channelName} cerrada intencionalmente`);
-            subscriptions.current.delete(channelName);
+            realtimeLog('info', `✅ Suscripción ${channelName} activa`);
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            // 🔧 OPTIMIZACIÓN: Manejar errores de Realtime sin reintentos infinitos
+            realtimeLog('warn', `Conexión Realtime falló para ${channelName}: ${status}`);
             isSubscribing.current.delete(channelName);
-            // No reintentar para cierres intencionales
-          } else if (status === 'CHANNEL_ERROR') {
-            log('warn', `Suscripción ${channelName} falló con error:`, status);
             subscriptions.current.delete(channelName);
-            isSubscribing.current.delete(channelName);
-            // Reintentar solo para errores de canal
-            attemptReconnection(config, handlers, options);
+            
+            // Solo reintentar si no es un error de configuración
+            if (status !== 'CHANNEL_ERROR') {
+              attemptReconnection(config, handlers, options);
+            }
           }
         });
 
-      subscriptions.current.set(channelName, channel);
     } catch (error) {
-      log('error', `Error configurando suscripción ${channelName}:`, error);
+      realtimeLog('error', `Error creando suscripción ${channelName}:`, error);
       isSubscribing.current.delete(channelName);
       attemptReconnection(config, handlers, options);
     }
-  }, [attemptReconnection, clearRetryTimeout]);
+  }, [clearRetryTimeout, attemptReconnection]);
 
   const unsubscribe = useCallback((config: SubscriptionConfig) => {
     const channelName = `${config.table}_${config.event}`;
-    const channel = subscriptions.current.get(channelName);
     
+    clearRetryTimeout(channelName);
+    isSubscribing.current.delete(channelName);
+    retryCounts.current.delete(channelName);
+    
+    const channel = subscriptions.current.get(channelName);
     if (channel) {
-      log('info', `Desconectando suscripción Realtime para ${channelName}`);
-      channel.unsubscribe();
+      realtimeLog('info', `Desuscribiendo ${channelName}`);
+      supabase.removeChannel(channel);
       subscriptions.current.delete(channelName);
-      clearRetryTimeout(channelName);
-      retryCounts.current.delete(channelName);
     }
   }, [clearRetryTimeout]);
 
-  const unsubscribeAll = useCallback(() => {
-    log('info', 'Desconectando todas las suscripciones Realtime');
-    subscriptions.current.forEach((channel, channelName) => {
-      log('debug', `Desconectando ${channelName}`);
-      channel.unsubscribe();
-      clearRetryTimeout(channelName);
-    });
-    subscriptions.current.clear();
-    isSubscribing.current.clear();
-    retryCounts.current.clear();
-  }, [clearRetryTimeout]);
-
-  // Limpiar suscripciones al desmontar
+  // 🔧 OPTIMIZACIÓN: Cleanup al desmontar
   useEffect(() => {
     return () => {
-      unsubscribeAll();
+      realtimeLog('info', 'Limpiando todas las suscripciones Realtime');
+      subscriptions.current.forEach((channel, channelName) => {
+        realtimeLog('debug', `Desuscribiendo ${channelName}`);
+        supabase.removeChannel(channel);
+      });
+      subscriptions.current.clear();
+      isSubscribing.current.clear();
+      retryCounts.current.clear();
+      retryTimeouts.current.forEach(timeout => clearTimeout(timeout));
+      retryTimeouts.current.clear();
     };
-  }, [unsubscribeAll]);
+  }, []);
 
-  return {
-    subscribe,
-    unsubscribe,
-    unsubscribeAll,
-    getSubscriptionCount: () => subscriptions.current.size,
-    getActiveSubscriptions: () => Array.from(subscriptions.current.keys())
-  };
+  return { subscribe, unsubscribe };
 }

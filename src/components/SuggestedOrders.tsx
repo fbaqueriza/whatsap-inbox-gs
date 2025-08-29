@@ -32,43 +32,10 @@ export default function SuggestedOrders({
   
   const [selectedOrder, setSelectedOrder] = useState<SuggestedOrder | null>(null);
 
-  // Generate suggested orders based on stock data
+  // 🔧 OPTIMIZACIÓN: Deshabilitar órdenes sugeridas temporalmente
   const generateSuggestedOrders = (): SuggestedOrder[] => {
-    const suggestions: SuggestedOrder[] = [];
-    const now = new Date();
-    stockItems.forEach((item) => {
-      // Calculate average consumption per period (last 3 completed orders)
-      // This is a mock: in real use, you would fetch real consumption data
-      let avgConsumption = undefined;
-      if (item.consumptionHistory && item.consumptionHistory.length >= 3) {
-        const lastThree = item.consumptionHistory.slice(-3);
-        avgConsumption = lastThree.reduce((a, b) => a + b, 0) / lastThree.length;
-      }
-      // Suggest restock if today is near or past próxima orden
-      if (item.nextOrder && new Date(item.nextOrder) <= now) {
-        const suggestedProviders = providers.filter((p) =>
-          item.associatedProviders.includes(p.id),
-        );
-        if (suggestedProviders.length > 0) {
-          suggestions.push({
-            id: `restock-${item.id}`,
-            productName: item.productName,
-            category: item.category,
-            suggestedQuantity: avgConsumption ? Math.ceil(avgConsumption) : item.quantity,
-            unit: item.unit,
-            reason: 'restock_due',
-            urgency: 'medium',
-            suggestedProviders,
-            estimatedCost: (avgConsumption ? Math.ceil(avgConsumption) : item.quantity) * 2.5, // Mock price
-            currency: 'EUR',
-          });
-        }
-      }
-    });
-    return suggestions.sort((a, b) => {
-      const urgencyOrder = { high: 3, medium: 2, low: 1 };
-      return urgencyOrder[b.urgency] - urgencyOrder[a.urgency];
-    });
+    // Retornar array vacío para deshabilitar sugerencias
+    return [];
   };
 
   const suggestedOrders = generateSuggestedOrders();
@@ -112,96 +79,14 @@ export default function SuggestedOrders({
     }
   };
 
-  if (suggestedOrders.length === 0) {
-    return (
-      <div className="text-center py-4">
-        <Calendar className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-        <p className="text-sm text-gray-500">{es.orders.noSuggestedOrders}</p>
-        <p className="text-xs text-gray-400 mt-1">
-          {es.orders.allItemsStocked}
-        </p>
-      </div>
-    );
-  }
-
+  // 🔧 OPTIMIZACIÓN: Mostrar mensaje de deshabilitado
   return (
-    <div className="bg-white rounded-lg shadow">
-      <div className="px-6 py-4 border-b border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-900">
-          {es.orders.suggestedOrders} ({suggestedOrders.length})
-        </h3>
-        <p className="text-sm text-gray-500 mt-1">
-          {es.orders.basedOnStock}
-        </p>
-      </div>
-
-      <div className="divide-y divide-gray-200">
-        {suggestedOrders.map((order) => (
-          <div key={order.id} className="p-6">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <div className="flex items-center space-x-2 mb-2">
-                  {getReasonIcon(order.reason)}
-                  <h4 className="font-medium text-gray-900">
-                    {order.productName}
-                  </h4>
-                  <span
-                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getUrgencyColor(
-                      order.urgency,
-                    )}`}
-                  >
-                    {order.urgency.toUpperCase()}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 text-sm text-gray-600 mb-3">
-                  <div>
-                    <span className="font-medium">{es.stock.category}:</span> {order.category}
-                  </div>
-                  <div>
-                    <span className="font-medium">{es.stock.quantity}:</span>{' '}
-                    {order.suggestedQuantity} {order.unit}
-                  </div>
-                  <div>
-                    <span className="font-medium">{es.orders.reason}:</span>{' '}
-                    {getReasonText(order.reason)}
-                  </div>
-                  <div>
-                    <span className="font-medium">{es.orders.estimatedCost}:</span>{' '}
-                    {order.estimatedCost} {order.currency}
-                  </div>
-                </div>
-
-                <div className="mb-3">
-                  <span className="text-sm font-medium text-gray-700">
-                    {es.orders.suggestedProviders}:
-                  </span>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {order.suggestedProviders.map((provider) => (
-                      <span
-                        key={provider.id}
-                        className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
-                      >
-                        {provider.name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="ml-4">
-                <button
-                  onClick={() => onCreateOrder(order)}
-                  className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                >
-                  <Plus className="h-4 w-4 mr-1" />
-                  {es.orders.createOrder}
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className="text-center py-8">
+      <Calendar className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+      <p className="text-sm text-gray-500">Órdenes sugeridas deshabilitadas</p>
+      <p className="text-xs text-gray-400 mt-1">
+        Funcionalidad temporalmente desactivada
+      </p>
     </div>
   );
 } 

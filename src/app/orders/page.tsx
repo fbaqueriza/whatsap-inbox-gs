@@ -81,33 +81,37 @@ function OrdersPage({ user }: OrdersPageProps) {
   const { openChat } = useChat();
   const { openGlobalChat } = useGlobalChat();
   
-  // MANEJADORES REALTIME PARA ÓRDENES
+  // 🔧 OPTIMIZACIÓN: MANEJADORES REALTIME SILENCIOSOS
   const handleNewOrder = useCallback((payload: any) => {
-    // Log solo en desarrollo
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔄 Nueva orden:', payload.new?.id);
+    // Solo log en desarrollo y solo si hay cambios reales
+    if (process.env.NODE_ENV === 'development' && payload.new?.id) {
+      console.log('🔄 Nueva orden:', payload.new.id);
     }
     fetchAll();
   }, [fetchAll]);
 
   const handleOrderUpdate = useCallback((payload: any) => {
-    // Log solo en desarrollo
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔄 Orden actualizada:', payload.new?.id);
+    // Solo log si hay cambio de estado
+    if (payload.old?.status !== payload.new?.status) {
+      console.log('🔄 Orden actualizada:', payload.new?.id, payload.old?.status, '→', payload.new?.status);
     }
     fetchAll();
   }, [fetchAll]);
 
   const handleOrderDelete = useCallback((payload: any) => {
-    // Log solo en desarrollo
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔄 Orden eliminada:', payload.new?.id);
-    }
+    console.log('🗑️ Orden eliminada:', payload.old?.id);
     fetchAll();
   }, [fetchAll]);
 
-  // Configurar realtime
-  useOrdersRealtime(handleNewOrder, handleOrderUpdate, handleOrderDelete);
+  // 🔧 OPTIMIZACIÓN: SUSCRIPCIÓN REALTIME SILENCIOSA
+  const { isSubscribed } = useOrdersRealtime(handleNewOrder, handleOrderUpdate, handleOrderDelete);
+  
+  // Solo mostrar estado inicial de suscripción
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('📡 Realtime:', isSubscribed ? '✅ Conectado' : '❌ Desconectado');
+    }
+  }, [isSubscribed]);
 
   // Helper functions
   const getStatusIcon = (status: string) => {

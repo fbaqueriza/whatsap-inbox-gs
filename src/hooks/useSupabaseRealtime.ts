@@ -183,8 +183,7 @@ export function useTemplatesRealtime(
 export function useOrdersFlowRealtime(
   onOrderCreated?: (payload: any) => void,
   onOrderStatusChanged?: (payload: any) => void,
-  onPendingOrderCreated?: (payload: any) => void,
-  onPendingOrderDeleted?: (payload: any) => void
+  onOrderDeleted?: (payload: any) => void
 ) {
   // Suscripción para órdenes con filtros específicos
   const ordersSubscription = useRealtimeSubscription(
@@ -210,6 +209,7 @@ export function useOrdersFlowRealtime(
       },
       onDelete: (payload) => {
         console.log('🗑️ Orden eliminada:', payload.old?.id);
+        onOrderDeleted?.(payload);
       },
       debounceMs: 50, // 🔧 OPTIMIZACIÓN: Mínimo delay para máxima responsividad
       retryConfig: {
@@ -220,36 +220,8 @@ export function useOrdersFlowRealtime(
     }
   );
 
-  // Suscripción para pedidos pendientes
-  const pendingOrdersSubscription = useRealtimeSubscription(
-    {
-      table: 'pending_orders',
-      event: '*'
-    },
-    {
-      onInsert: (payload) => {
-        console.log('⏳ Nuevo pedido pendiente:', payload.new?.orderId);
-        onPendingOrderCreated?.(payload);
-      },
-      onUpdate: (payload) => {
-        console.log('🔄 Pedido pendiente actualizado:', payload.new?.orderId);
-      },
-      onDelete: (payload) => {
-        console.log('✅ Pedido pendiente eliminado:', payload.old?.orderId);
-        onPendingOrderDeleted?.(payload);
-      },
-      debounceMs: 50,
-      retryConfig: {
-        maxRetries: 3,
-        retryDelay: 500,
-        backoffMultiplier: 1.5
-      }
-    }
-  );
-
   return {
-    isSubscribed: ordersSubscription.isSubscribed && pendingOrdersSubscription.isSubscribed,
-    ordersSubscribed: ordersSubscription.isSubscribed,
-    pendingOrdersSubscribed: pendingOrdersSubscription.isSubscribed
+    isSubscribed: ordersSubscription.isSubscribed,
+    ordersSubscribed: ordersSubscription.isSubscribed
   };
 }

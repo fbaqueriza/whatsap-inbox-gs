@@ -90,13 +90,15 @@ function OrdersPage({ user }: OrdersPageProps) {
   const handleNewOrder = useCallback((payload: any) => {
     const newOrder = payload.new;
     if (newOrder) {
-      console.log('🆕 Nueva orden recibida en tiempo real:', newOrder.id);
+      console.log('🆕 Nueva orden recibida en tiempo real:', newOrder.id, 'Estado:', newOrder.status);
       // Actualizar inmediatamente sin esperar fetchAll
       setLocalOrders((prevOrders: Order[]) => {
         const existingOrder = prevOrders.find((o: Order) => o.id === newOrder.id);
         if (existingOrder) {
+          console.log('🔄 Actualizando orden existente:', newOrder.id);
           return prevOrders.map((o: Order) => o.id === newOrder.id ? { ...o, ...newOrder } : o);
         } else {
+          console.log('➕ Agregando nueva orden a la lista:', newOrder.id);
           return [newOrder, ...prevOrders];
         }
       });
@@ -123,15 +125,21 @@ function OrdersPage({ user }: OrdersPageProps) {
     }
   }, []);
 
-  // 🔧 OPTIMIZACIÓN: SUSCRIPCIÓN REALTIME SILENCIOSA
-  const { isSubscribed } = useOrdersFlowRealtime(handleNewOrder, handleOrderUpdate, handleOrderDelete);
+  // 🔧 OPTIMIZACIÓN: SUSCRIPCIÓN REALTIME COMPLETA
+  const { isSubscribed, ordersSubscribed } = useOrdersFlowRealtime(
+    handleNewOrder,
+    handleOrderUpdate,
+    handleOrderDelete
+  );
   
   // Solo mostrar estado inicial de suscripción
   useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('📡 Realtime:', isSubscribed ? '✅ Conectado' : '❌ Desconectado');
-    }
-  }, [isSubscribed]);
+    console.log('📡 Estado de Realtime:', {
+      isSubscribed,
+      ordersSubscribed,
+      totalOrders: localOrders.length
+    });
+  }, [isSubscribed, ordersSubscribed, localOrders.length]);
 
   // Helper functions
   const getStatusIcon = (status: string) => {

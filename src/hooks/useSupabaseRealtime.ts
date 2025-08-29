@@ -178,3 +178,78 @@ export function useTemplatesRealtime(
     }
   );
 }
+
+// 🔧 OPTIMIZACIÓN: Hook específico para el flujo completo de órdenes
+export function useOrdersFlowRealtime(
+  onOrderCreated?: (payload: any) => void,
+  onOrderStatusChanged?: (payload: any) => void,
+  onPendingOrderCreated?: (payload: any) => void,
+  onPendingOrderDeleted?: (payload: any) => void
+) {
+  // Suscripción para órdenes con filtros específicos
+  const ordersSubscription = useRealtimeSubscription(
+    {
+      table: 'orders',
+      event: '*'
+    },
+    {
+      onInsert: (payload) => {
+        console.log('🆕 Nueva orden creada:', payload.new?.id);
+        onOrderCreated?.(payload);
+      },
+      onUpdate: (payload) => {
+        // Solo procesar cambios de estado
+        if (payload.new?.status !== payload.old?.status) {
+          console.log('🔄 Estado de orden cambiado:', {
+            orderId: payload.new?.id,
+            oldStatus: payload.old?.status,
+            newStatus: payload.new?.status
+          });
+          onOrderStatusChanged?.(payload);
+        }
+      },
+      onDelete: (payload) => {
+        console.log('🗑️ Orden eliminada:', payload.old?.id);
+      },
+      debounceMs: 50, // 🔧 OPTIMIZACIÓN: Mínimo delay para máxima responsividad
+      retryConfig: {
+        maxRetries: 3,
+        retryDelay: 500,
+        backoffMultiplier: 1.5
+      }
+    }
+  );
+
+  // Suscripción para pedidos pendientes
+  const pendingOrdersSubscription = useRealtimeSubscription(
+    {
+      table: 'pending_orders',
+      event: '*'
+    },
+    {
+      onInsert: (payload) => {
+        console.log('⏳ Nuevo pedido pendiente:', payload.new?.orderId);
+        onPendingOrderCreated?.(payload);
+      },
+      onUpdate: (payload) => {
+        console.log('🔄 Pedido pendiente actualizado:', payload.new?.orderId);
+      },
+      onDelete: (payload) => {
+        console.log('✅ Pedido pendiente eliminado:', payload.old?.orderId);
+        onPendingOrderDeleted?.(payload);
+      },
+      debounceMs: 50,
+      retryConfig: {
+        maxRetries: 3,
+        retryDelay: 500,
+        backoffMultiplier: 1.5
+      }
+    }
+  );
+
+  return {
+    isSubscribed: ordersSubscription.isSubscribed && pendingOrdersSubscription.isSubscribed,
+    ordersSubscribed: ordersSubscription.isSubscribed,
+    pendingOrdersSubscribed: pendingOrdersSubscription.isSubscribed
+  };
+}

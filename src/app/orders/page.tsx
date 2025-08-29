@@ -38,7 +38,7 @@ import { useRouter } from 'next/navigation';
 import { OrderNotificationService } from '../../lib/orderNotificationService';
 import { Menu } from '@headlessui/react';
 import es from '../../locales/es';
-import { useOrdersRealtime } from '../../hooks/useSupabaseRealtime';
+import { useOrdersFlowRealtime } from '../../hooks/useSupabaseRealtime';
 
 
 export default function OrdersPageWrapper() {
@@ -66,6 +66,7 @@ export default function OrdersPageWrapper() {
 type OrdersPageProps = { user: any };
 function OrdersPage({ user }: OrdersPageProps) {
   const { orders, providers, stockItems, addOrder, updateOrder, deleteOrder, fetchAll } = useData();
+  const [localOrders, setLocalOrders] = useState<Order[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [suggestedOrder, setSuggestedOrder] = useState<any>(null);
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
@@ -73,6 +74,10 @@ function OrdersPage({ user }: OrdersPageProps) {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // 🔧 OPTIMIZACIÓN: SINCRONIZAR ÓRDENES LOCALES CON DATOS GLOBALES
+  useEffect(() => {
+    setLocalOrders(orders);
+  }, [orders]);
 
   // Estados para filtros y búsqueda
   const [providerSearchTerm, setProviderSearchTerm] = useState('');
@@ -81,30 +86,45 @@ function OrdersPage({ user }: OrdersPageProps) {
   const { openChat } = useChat();
   const { openGlobalChat } = useGlobalChat();
   
-  // 🔧 OPTIMIZACIÓN: MANEJADORES REALTIME SILENCIOSOS
+  // 🔧 OPTIMIZACIÓN: HANDLERS REALTIME MEJORADOS
   const handleNewOrder = useCallback((payload: any) => {
-    // Solo log en desarrollo y solo si hay cambios reales
-    if (process.env.NODE_ENV === 'development' && payload.new?.id) {
-      console.log('🔄 Nueva orden:', payload.new.id);
+    const newOrder = payload.new;
+    if (newOrder) {
+      console.log('🆕 Nueva orden recibida en tiempo real:', newOrder.id);
+      // Actualizar inmediatamente sin esperar fetchAll
+      setLocalOrders((prevOrders: Order[]) => {
+        const existingOrder = prevOrders.find((o: Order) => o.id === newOrder.id);
+        if (existingOrder) {
+          return prevOrders.map((o: Order) => o.id === newOrder.id ? { ...o, ...newOrder } : o);
+        } else {
+          return [newOrder, ...prevOrders];
+        }
+      });
     }
-    fetchAll();
-  }, [fetchAll]);
+  }, []);
 
   const handleOrderUpdate = useCallback((payload: any) => {
-    // Solo log si hay cambio de estado
-    if (payload.old?.status !== payload.new?.status) {
-      console.log('🔄 Orden actualizada:', payload.new?.id, payload.old?.status, '→', payload.new?.status);
+    const updatedOrder = payload.new;
+    if (updatedOrder) {
+      console.log('🔄 Orden actualizada en tiempo real:', updatedOrder.id, 'Estado:', updatedOrder.status);
+      // Actualizar inmediatamente
+      setLocalOrders((prevOrders: Order[]) => 
+        prevOrders.map((o: Order) => o.id === updatedOrder.id ? { ...o, ...updatedOrder } : o)
+      );
     }
-    fetchAll();
-  }, [fetchAll]);
+  }, []);
 
   const handleOrderDelete = useCallback((payload: any) => {
-    console.log('🗑️ Orden eliminada:', payload.old?.id);
-    fetchAll();
-  }, [fetchAll]);
+    const deletedOrder = payload.old;
+    if (deletedOrder) {
+      console.log('🗑️ Orden eliminada en tiempo real:', deletedOrder.id);
+      // Remover inmediatamente
+      setLocalOrders((prevOrders: Order[]) => prevOrders.filter((o: Order) => o.id !== deletedOrder.id));
+    }
+  }, []);
 
   // 🔧 OPTIMIZACIÓN: SUSCRIPCIÓN REALTIME SILENCIOSA
-  const { isSubscribed } = useOrdersRealtime(handleNewOrder, handleOrderUpdate, handleOrderDelete);
+  const { isSubscribed } = useOrdersFlowRealtime(handleNewOrder, handleOrderUpdate, handleOrderDelete);
   
   // Solo mostrar estado inicial de suscripción
   useEffect(() => {
@@ -198,7 +218,7 @@ function OrdersPage({ user }: OrdersPageProps) {
   };
 
   // Ordenar y filtrar órdenes
-  const sortedOrders = [...orders].sort((a, b) => {
+  const sortedOrders = [...localOrders].sort((a, b) => {
     const dateA = new Date(a.createdAt || a.orderDate || 0);
     const dateB = new Date(b.createdAt || b.orderDate || 0);
     return dateB.getTime() - dateA.getTime();
@@ -293,7 +313,7 @@ function OrdersPage({ user }: OrdersPageProps) {
 
   const handleSaveOrderEdit = async (orderId: string, updates: any) => {
     try {
-      const order = orders.find(o => o.id === orderId);
+      const order = localOrders.find(o => o.id === orderId);
       if (!order) return;
       
       const updatedOrder = {
@@ -312,7 +332,7 @@ function OrdersPage({ user }: OrdersPageProps) {
 
   const handleCancelOrder = async (orderId: string) => {
     try {
-      const order = orders.find(o => o.id === orderId);
+      const order = localOrders.find(o => o.id === orderId);
       if (order) {
         await updateOrder({ ...order, status: 'cancelled' });
       }
@@ -537,7 +557,7 @@ function OrdersPage({ user }: OrdersPageProps) {
             <div className="mt-8 bg-white shadow rounded-lg">
               <div className="px-6 py-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-900">
-                  Tabla Completa de Órdenes ({orders.length})
+                  Tabla Completa de Órdenes ({localOrders.length})
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
                   Vista detallada de todos los pedidos con sus archivos y documentos

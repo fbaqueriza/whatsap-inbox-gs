@@ -251,16 +251,17 @@ export class OrderNotificationService {
       // 🔧 CORRECCIÓN: Usar template disparador simple como funcionaba antes
       const messageContent = 'envio_de_orden';
       
-      const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          to: phone,
-          message: messageContent
-        }),
-      });
+             const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json',
+         },
+         body: JSON.stringify({
+           to: phone,
+           message: messageContent,
+           userId: userId // 🔧 MEJORA: Pasar userId para guardar el mensaje
+         }),
+       });
 
       const result = await response.json();
 
@@ -426,8 +427,8 @@ export class OrderNotificationService {
       // Generar mensaje con detalles del pedido
       const orderDetails = this.generateOrderDetailsMessage(orderData);
       
-      // Enviar mensaje con detalles
-      const sendResult = await this.sendOrderDetails(providerPhone, orderDetails);
+             // Enviar mensaje con detalles
+       const sendResult = await this.sendOrderDetails(providerPhone, orderDetails, orderData.user_id);
       
       if (sendResult.success) {
         console.log('✅ Detalles del pedido enviados exitosamente');
@@ -572,26 +573,27 @@ export class OrderNotificationService {
      }
    }
 
-  /**
-   * Envía los detalles del pedido al proveedor
-   */
-  static async sendOrderDetails(providerPhone: string, message: string): Promise<{ success: boolean; error?: string }> {
+     /**
+    * Envía los detalles del pedido al proveedor
+    */
+   static async sendOrderDetails(providerPhone: string, message: string, userId?: string): Promise<{ success: boolean; error?: string }> {
     try {
       // 🔧 MEJORA: Reducir logging excesivo
       if (process.env.NODE_ENV === 'development') {
         console.log('📤 Enviando detalles del pedido a:', providerPhone);
       }
       
-      const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_VERCEL_URL || 'https://gastronomy-saas.vercel.app'}/api/whatsapp/send`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          to: providerPhone,
-          message: message
-        }),
-      });
+             const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_VERCEL_URL || 'https://gastronomy-saas.vercel.app'}/api/whatsapp/send`, {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json',
+         },
+         body: JSON.stringify({
+           to: providerPhone,
+           message: message,
+           userId: userId // 🔧 MEJORA: Pasar userId para guardar el mensaje
+         }),
+       });
 
       const result = await response.json();
       

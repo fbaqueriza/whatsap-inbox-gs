@@ -183,7 +183,7 @@ export class OrderNotificationService {
         ? window.location.origin 
         : (process.env.VERCEL_URL 
             ? `https://${process.env.VERCEL_URL}` 
-            : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
+            : process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_VERCEL_URL || 'https://gastronomy-saas.vercel.app');
 
       try {
         const templateResult = await this.sendTemplateToMeta(normalizedPhone, baseUrl, order, provider);
@@ -582,7 +582,7 @@ export class OrderNotificationService {
         console.log('📤 Enviando detalles del pedido a:', providerPhone);
       }
       
-      const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001'}/api/whatsapp/send`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_VERCEL_URL || 'https://gastronomy-saas.vercel.app'}/api/whatsapp/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

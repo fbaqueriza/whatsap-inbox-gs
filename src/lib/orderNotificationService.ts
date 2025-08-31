@@ -356,76 +356,68 @@ export class OrderNotificationService {
   static async processProviderResponse(providerPhone: string, response: string): Promise<boolean> {
     try {
       console.log('🔄 Procesando respuesta del proveedor:', { providerPhone, response });
-      
-             // 🔧 MEJORA: Verificar si es un mensaje válido (cualquier mensaje se considera confirmación)
-       const isValidMessage = this.isConfirmationMessage(response);
-       if (!isValidMessage) {
-         console.log('ℹ️ Mensaje vacío o inválido, ignorando:', response);
-         return false;
-       }
-       
-       console.log('✅ Mensaje recibido del proveedor, procesando como confirmación:', response);
-      
-      // Buscar el pedido pendiente
-      const pendingOrder = await this.checkPendingOrder(providerPhone);
-      if (!pendingOrder) {
-        console.log('ℹ️ No se encontró pedido pendiente para:', providerPhone);
-        return false;
-      }
 
-      console.log('✅ Pedido pendiente encontrado, procesando confirmación...');
-
-      // Actualizar el estado de la orden a 'confirmed'
+      // Buscar pedido pendiente
       const { createClient } = await import('@supabase/supabase-js');
       const supabase = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      const { error: updateError } = await supabase
-        .from('orders')
-        .update({ 
-          status: 'confirmed',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', pendingOrder.order_id);
+      const { data: pendingOrders, error: pendingError } = await supabase
+        .from('pending_orders')
+        .select('*')
+        .eq('provider_phone', providerPhone)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(1);
 
-      if (updateError) {
-        console.error('❌ Error actualizando orden:', updateError);
+      if (pendingError) {
+        console.error('❌ Error buscando pedidos pendientes:', pendingError);
         return false;
       }
 
-      console.log('✅ Orden actualizada a confirmed');
+      if (!pendingOrders || pendingOrders.length === 0) {
+        console.log('⚠️ No se encontraron pedidos pendientes para:', providerPhone);
+        return false;
+      }
 
-      // 🔧 MEJORA: Enviar detalles del pedido automáticamente
-      console.log('📤 Enviando detalles del pedido al proveedor...');
-      
-      // Obtener información completa de la orden con validación robusta
-      const { data: orderData, error: orderError } = await supabase
+      const pendingOrder = pendingOrders[0];
+      console.log('📋 Pedido pendiente encontrado:', pendingOrder);
+
+      // Buscar orden completa
+      const { data: orders, error: orderError } = await supabase
         .from('orders')
-        .select(`
-          *,
-          providers(name, phone)
-        `)
+        .select('*')
         .eq('id', pendingOrder.order_id)
         .single();
 
-      if (orderError || !orderData) {
-        console.error('❌ Error obteniendo detalles de la orden:', orderError);
+      if (orderError || !orders) {
+        console.error('❌ Error buscando orden:', orderError);
         return false;
       }
 
-      // Validar que tenemos todos los datos necesarios
-      if (!orderData.providers || !orderData.providers.name) {
-        console.error('❌ Datos de proveedor incompletos para la orden:', pendingOrder.order_id);
+      const orderData = orders;
+      console.log('📦 Orden encontrada:', orderData);
+
+      // Actualizar estado de la orden
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({ status: 'confirmed' })
+        .eq('id', orderData.id);
+
+      if (updateError) {
+        console.error('❌ Error actualizando estado de orden:', updateError);
         return false;
       }
 
-      // Generar mensaje con detalles del pedido
+      console.log('✅ Estado de orden actualizado a confirmado');
+
+      // Enviar detalles del pedido
       const orderDetails = this.generateOrderDetailsMessage(orderData);
-      
-             // Enviar mensaje con detalles
-       const sendResult = await this.sendOrderDetails(providerPhone, orderDetails, orderData.user_id);
+      console.log('📤 Enviando detalles del pedido:', orderDetails);
+
+      const sendResult = await this.sendOrderDetails(providerPhone, orderDetails, orderData.user_id);
       
       if (sendResult.success) {
         console.log('✅ Detalles del pedido enviados exitosamente');
@@ -433,18 +425,26 @@ export class OrderNotificationService {
         console.error('❌ Error enviando detalles del pedido:', sendResult.error);
       }
 
-      // Eliminar el pedido pendiente
+      // Eliminar pedido pendiente
       const { error: deleteError } = await supabase
         .from('pending_orders')
         .delete()
-        .eq('order_id', pendingOrder.order_id);
+        .eq('id', pendingOrder.id);
 
       if (deleteError) {
         console.error('❌ Error eliminando pedido pendiente:', deleteError);
+      } else {
+        console.log('🗑️ Pedido pendiente eliminado');
       }
 
-      console.log('✅ Orden confirmada, detalles enviados y pedido pendiente eliminado');
-      return true;
+      // Retornar el resultado real del envío de detalles
+      if (sendResult.success) {
+        console.log('✅ Orden confirmada, detalles enviados y pedido pendiente eliminado');
+        return true;
+      } else {
+        console.error('❌ Orden confirmada, pero falló el envío de detalles. Pedido pendiente eliminado.');
+        return false; // Reflejar el fallo del envío de detalles
+      }
 
     } catch (error) {
       console.error('❌ Error procesando respuesta del proveedor:', error);
@@ -683,32 +683,44 @@ export class OrderNotificationService {
    * Maneja todos los casos: desarrollo, producción, Vercel, etc.
    */
   private static buildBaseUrl(): string {
+    let baseUrl = '';
+    
     // Cliente (navegador)
     if (typeof window !== 'undefined') {
-      return window.location.origin;
+      baseUrl = window.location.origin;
+      console.log(`[buildBaseUrl] Client-side URL: ${baseUrl}`);
+      return baseUrl;
     }
     
-    // Servidor - Vercel
+    // Servidor - Vercel (URL única del deployment)
     if (process.env.VERCEL_URL) {
-      return `https://${process.env.VERCEL_URL}`;
+      baseUrl = `https://${process.env.VERCEL_URL}`;
+      console.log(`[buildBaseUrl] VERCEL_URL: ${baseUrl}`);
+      return baseUrl;
     }
     
-    // Servidor - Variables de entorno personalizadas
+    // Servidor - Variables de entorno públicas (para alias o custom domains)
     if (process.env.NEXT_PUBLIC_APP_URL) {
-      return process.env.NEXT_PUBLIC_APP_URL;
+      baseUrl = process.env.NEXT_PUBLIC_APP_URL;
+      console.log(`[buildBaseUrl] NEXT_PUBLIC_APP_URL: ${baseUrl}`);
+      return baseUrl;
     }
     
-    // Servidor - Vercel URL (con validación de protocolo)
     if (process.env.NEXT_PUBLIC_VERCEL_URL) {
       const vercelUrl = process.env.NEXT_PUBLIC_VERCEL_URL;
       // Asegurar que tenga protocolo https://
       if (vercelUrl.startsWith('http://') || vercelUrl.startsWith('https://')) {
-        return vercelUrl;
+        baseUrl = vercelUrl;
+      } else {
+        baseUrl = `https://${vercelUrl}`;
       }
-      return `https://${vercelUrl}`;
+      console.log(`[buildBaseUrl] NEXT_PUBLIC_VERCEL_URL: ${baseUrl}`);
+      return baseUrl;
     }
     
     // Fallback de producción
-    return 'https://gastronomy-saas.vercel.app';
+    baseUrl = 'https://gastronomy-saas.vercel.app';
+    console.warn(`[buildBaseUrl] Fallback URL: ${baseUrl}`);
+    return baseUrl;
   }
 }

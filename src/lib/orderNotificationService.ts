@@ -723,6 +723,7 @@ export class OrderNotificationService {
   /**
    * 🔧 MEJORA: Construye URL base de forma robusta y consistente
    * Maneja todos los casos: desarrollo, producción, Vercel, etc.
+   * PRIORIDAD: NEXT_PUBLIC_APP_URL > NEXT_PUBLIC_VERCEL_URL > VERCEL_URL > fallback
    */
   private static buildBaseUrl(): string {
     let baseUrl = '';
@@ -734,20 +735,14 @@ export class OrderNotificationService {
       return baseUrl;
     }
     
-    // Servidor - Vercel (URL única del deployment)
-    if (process.env.VERCEL_URL) {
-      baseUrl = `https://${process.env.VERCEL_URL}`;
-      console.log(`[buildBaseUrl] VERCEL_URL: ${baseUrl}`);
-      return baseUrl;
-    }
-    
-    // Servidor - Variables de entorno públicas (para alias o custom domains)
+    // 🔧 CORRECCIÓN: Priorizar NEXT_PUBLIC_APP_URL (URL de producción)
     if (process.env.NEXT_PUBLIC_APP_URL) {
       baseUrl = process.env.NEXT_PUBLIC_APP_URL;
       console.log(`[buildBaseUrl] NEXT_PUBLIC_APP_URL: ${baseUrl}`);
       return baseUrl;
     }
     
+    // Servidor - Variables de entorno públicas (para alias o custom domains)
     if (process.env.NEXT_PUBLIC_VERCEL_URL) {
       const vercelUrl = process.env.NEXT_PUBLIC_VERCEL_URL;
       // Asegurar que tenga protocolo https://
@@ -757,6 +752,13 @@ export class OrderNotificationService {
         baseUrl = `https://${vercelUrl}`;
       }
       console.log(`[buildBaseUrl] NEXT_PUBLIC_VERCEL_URL: ${baseUrl}`);
+      return baseUrl;
+    }
+    
+    // Servidor - Vercel (URL única del deployment) - ÚLTIMA OPCIÓN
+    if (process.env.VERCEL_URL) {
+      baseUrl = `https://${process.env.VERCEL_URL}`;
+      console.log(`[buildBaseUrl] VERCEL_URL (fallback): ${baseUrl}`);
       return baseUrl;
     }
     

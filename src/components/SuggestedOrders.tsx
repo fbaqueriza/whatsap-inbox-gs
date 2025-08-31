@@ -79,14 +79,11 @@ export default function SuggestedOrders({
     }
   };
 
-  // 🔧 OPTIMIZACIÓN: Mostrar mensaje de deshabilitado
+  // 🔧 OPTIMIZACIÓN: Mostrar solo título y subtítulo para hacer el módulo más pequeño
   return (
-    <div className="text-center py-8">
-      <Calendar className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-      <p className="text-sm text-gray-500">Órdenes sugeridas deshabilitadas</p>
-      <p className="text-xs text-gray-400 mt-1">
-        Funcionalidad temporalmente desactivada
-      </p>
+    <div className="text-center py-4">
+      <h3 className="text-lg font-medium text-gray-900 mb-2">Órdenes Sugeridas</h3>
+      <p className="text-sm text-gray-500">Sugerencias inteligentes de pedidos</p>
     </div>
   );
 } 

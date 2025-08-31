@@ -62,19 +62,23 @@ export default function UnifiedOrderList({
 }: UnifiedOrderListProps) {
   const [showItems, setShowItems] = useState<Set<string>>(new Set());
 
-  // Filtrar órdenes según el estado
-  const pendingOrders = orders.filter(order => 
-    ['pending', 'enviado', 'factura_recibida'].includes(order.status)
-  );
-
-  const allOrders = useMemo(() => {
-    // Combinar órdenes pendientes y completadas
-    const all = [...pendingOrders];
+  // 🔧 OPTIMIZACIÓN: Filtrar órdenes según el estado con mejor lógica
+  const filteredOrders = useMemo(() => {
+    // Incluir órdenes activas (no finalizadas ni canceladas)
+    const activeOrders = orders.filter(order => 
+      !['finalizado', 'cancelled', 'pagado'].includes(order.status)
+    );
+    
+    // Ordenar por fecha de creación (más recientes primero)
+    const sortedOrders = activeOrders.sort((a, b) => 
+      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    
     if (maxItems) {
-      return all.slice(0, maxItems);
+      return sortedOrders.slice(0, maxItems);
     }
-    return all;
-  }, [pendingOrders, maxItems]);
+    return sortedOrders;
+  }, [orders, maxItems]);
 
   // Helper functions
   const getStatusIcon = (status: string) => {
@@ -178,10 +182,10 @@ export default function UnifiedOrderList({
     });
   };
 
-  if (allOrders.length === 0) {
+  if (filteredOrders.length === 0) {
       return (
           <div className="text-center py-8">
-            <div className="text-gray-500 mb-4">No hay pedidos pendientes</div>
+            <div className="text-gray-500 mb-4">No hay pedidos activos</div>
               {showCreateButton && onCreateOrder && (
                 <button
                   onClick={onCreateOrder}
@@ -200,7 +204,7 @@ export default function UnifiedOrderList({
       {/* Header con botones de acción */}
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-medium text-gray-900">
-          Pedidos ({allOrders.length})
+          Pedidos ({filteredOrders.length})
         </h3>
         <div className="flex space-x-2">
               {onChatGeneral && (
@@ -226,7 +230,7 @@ export default function UnifiedOrderList({
 
       {/* Lista de órdenes */}
       <div className="space-y-3">
-        {allOrders.map((order) => (
+        {filteredOrders.map((order) => (
           <div
             key={order.id}
             className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
@@ -406,7 +410,7 @@ export default function UnifiedOrderList({
       </div>
 
       {/* Botón "Ver todos" */}
-      {showViewAllButton && viewAllUrl && allOrders.length > 0 && (
+      {showViewAllButton && viewAllUrl && filteredOrders.length > 0 && (
         <div className="text-center pt-4">
           <a
             href={viewAllUrl}

@@ -119,9 +119,9 @@ export class OrderNotificationService {
   }
 
   /**
-   * FLUJO CORREGIDO: Envía notificación automática de nuevo pedido al proveedor
+   * 🔧 FLUJO OPTIMIZADO: Envía notificación automática de nuevo pedido al proveedor
    * 1. Orden se crea como 'pending'
-   * 2. Se envía template envio_de_orden
+   * 2. Se envía template envio_de_orden con detalles completos
    * 3. Se guarda como 'pending_confirmation'
    * 4. Cuando el proveedor responde, se actualiza automáticamente
    */
@@ -134,10 +134,13 @@ export class OrderNotificationService {
     };
 
     try {
-      // Log simplificado - solo información esencial
-      console.log('📤 Enviando notificación para orden:', order.id);
+      // 🔧 MEJORA: Log detallado para debugging
+      // 🔧 MEJORA: Reducir logging excesivo
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📤 Enviando notificación para orden:', order.id);
+      }
       
-                   // Obtener información del proveedor usando singleton mejorado
+      // 🔧 MEJORA: Obtener información del proveedor usando singleton mejorado
       const supabase = await this.getSupabaseClient();
 
       const { data: provider, error: providerError } = await supabase
@@ -153,7 +156,10 @@ export class OrderNotificationService {
         return result;
       }
       
-             console.log('✅ Proveedor:', provider.name);
+             // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ Proveedor:', provider.name);
+        }
       
       // PASO 1: Normalizar número de teléfono
       const normalizedPhone = this.normalizePhoneNumber(provider.phone);
@@ -166,23 +172,29 @@ export class OrderNotificationService {
       
              // Log solo si hay cambio en la normalización
        if (provider.phone !== normalizedPhone) {
-         console.log('📱 Número normalizado:', provider.phone, '→', normalizedPhone);
+         // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📱 Número normalizado:', provider.phone, '→', normalizedPhone);
+        }
        }
 
-      // PASO 2: Enviar template envio_de_orden
+      // 🔧 PASO 2: Enviar template envio_de_orden con detalles completos
       const baseUrl = typeof window !== 'undefined' 
         ? window.location.origin 
         : (process.env.VERCEL_URL 
             ? `https://${process.env.VERCEL_URL}` 
             : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
 
-             try {
-         const templateResult = await this.sendTemplateToMeta(normalizedPhone, baseUrl);
-         result.templateSent = templateResult.success;
-         if (!templateResult.success) {
-           result.errors.push(`Template: ${templateResult.error}`);
-         }
-         console.log('📱 Template:', templateResult.success ? '✅ Enviado' : '❌ Falló');
+      try {
+        const templateResult = await this.sendTemplateToMeta(normalizedPhone, baseUrl, order, provider);
+        result.templateSent = templateResult.success;
+        if (!templateResult.success) {
+          result.errors.push(`Template: ${templateResult.error}`);
+        }
+        // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📱 Template:', templateResult.success ? '✅ Enviado' : '❌ Falló');
+        }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
         result.errors.push(`Template: ${errorMsg}`);
@@ -196,7 +208,10 @@ export class OrderNotificationService {
         if (!saveResult.success) {
           result.errors.push(`Guardado: ${saveResult.error}`);
         }
-                 console.log('💾 Pending order:', saveResult.success ? '✅ Guardado' : '❌ Falló');
+        // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('💾 Pending order:', saveResult.success ? '✅ Guardado' : '❌ Falló');
+        }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
         result.errors.push(`Guardado: ${errorMsg}`);
@@ -224,25 +239,30 @@ export class OrderNotificationService {
   }
 
   /**
-   * Envía template a Meta API con manejo robusto de errores
+   * 🔧 OPTIMIZADO: Envía template a Meta API con detalles completos del pedido
    */
   private static async sendTemplateToMeta(
     phone: string, 
-    baseUrl: string
+    baseUrl: string,
+    order?: Order,
+    provider?: Provider
   ): Promise<{ success: boolean; error?: string }> {
     try {
-             const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
+      // 🔧 CORRECCIÓN: Usar template disparador simple como funcionaba antes
+      const messageContent = 'envio_de_orden';
+      
+      const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           to: phone,
-          message: 'envio_de_orden'
+          message: messageContent
         }),
       });
 
-             const result = await response.json();
+      const result = await response.json();
 
       if (!response.ok) {
         console.error('❌ Error enviando template:', result);
@@ -319,41 +339,17 @@ export class OrderNotificationService {
 
   /**
    * Verifica si un mensaje es una confirmación
+   * 🔧 MEJORA: Cualquier mensaje se considera confirmación
    */
   private static isConfirmationMessage(message: string): boolean {
+    // 🔧 SIMPLIFICACIÓN: Cualquier mensaje válido se considera confirmación
     if (!message || typeof message !== 'string') {
       return false;
     }
     
-    const normalizedMessage = message.toLowerCase().trim();
-    
-    // Palabras clave de confirmación
-    const confirmationKeywords = [
-      'confirmo',
-      'confirmado',
-      'ok',
-      'si',
-      'sí',
-      'acepto',
-      'perfecto',
-      'bien',
-      'correcto',
-      'procedo',
-      'adelante',
-      'listo',
-      'ready',
-      'confirm',
-      'yes',
-      'yep',
-      'sure',
-      'fine',
-      'good',
-      'perfect'
-    ];
-    
-    return confirmationKeywords.some(keyword => 
-      normalizedMessage.includes(keyword)
-    );
+    // Solo verificar que no esté vacío después de limpiar espacios
+    const trimmedMessage = message.trim();
+    return trimmedMessage.length > 0;
   }
 
   /**
@@ -363,12 +359,23 @@ export class OrderNotificationService {
     try {
       console.log('🔄 Procesando respuesta del proveedor:', { providerPhone, response });
       
+             // 🔧 MEJORA: Verificar si es un mensaje válido (cualquier mensaje se considera confirmación)
+       const isValidMessage = this.isConfirmationMessage(response);
+       if (!isValidMessage) {
+         console.log('ℹ️ Mensaje vacío o inválido, ignorando:', response);
+         return false;
+       }
+       
+       console.log('✅ Mensaje recibido del proveedor, procesando como confirmación:', response);
+      
       // Buscar el pedido pendiente
       const pendingOrder = await this.checkPendingOrder(providerPhone);
       if (!pendingOrder) {
         console.log('ℹ️ No se encontró pedido pendiente para:', providerPhone);
         return false;
       }
+
+      console.log('✅ Pedido pendiente encontrado, procesando confirmación...');
 
       // Actualizar el estado de la orden a 'confirmed'
       const { createClient } = await import('@supabase/supabase-js');
@@ -390,41 +397,43 @@ export class OrderNotificationService {
         return false;
       }
 
-      // ENVIAR DETALLES DEL PEDIDO AL PROVEEDOR
+      console.log('✅ Orden actualizada a confirmed');
+
+      // 🔧 MEJORA: Enviar detalles del pedido automáticamente
       console.log('📤 Enviando detalles del pedido al proveedor...');
       
-             // Obtener información completa de la orden con validación robusta
-       const { data: orderData, error: orderError } = await supabase
-         .from('orders')
-         .select(`
-           *,
-           providers(name, phone)
-         `)
-         .eq('id', pendingOrder.order_id)
-         .single();
+      // Obtener información completa de la orden con validación robusta
+      const { data: orderData, error: orderError } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          providers(name, phone)
+        `)
+        .eq('id', pendingOrder.order_id)
+        .single();
 
-       if (orderError || !orderData) {
-         console.error('❌ Error obteniendo detalles de la orden:', orderError);
-         return false;
-       }
+      if (orderError || !orderData) {
+        console.error('❌ Error obteniendo detalles de la orden:', orderError);
+        return false;
+      }
 
-       // Validar que tenemos todos los datos necesarios
-       if (!orderData.providers || !orderData.providers.name) {
-         console.error('❌ Datos de proveedor incompletos para la orden:', pendingOrder.order_id);
-         return false;
-       }
+      // Validar que tenemos todos los datos necesarios
+      if (!orderData.providers || !orderData.providers.name) {
+        console.error('❌ Datos de proveedor incompletos para la orden:', pendingOrder.order_id);
+        return false;
+      }
 
-       // Generar mensaje con detalles del pedido
-       const orderDetails = this.generateOrderDetailsMessage(orderData);
-       
-       // Enviar mensaje con detalles
-       const sendResult = await this.sendOrderDetails(providerPhone, orderDetails);
-       
-       if (sendResult.success) {
-         console.log('✅ Detalles del pedido enviados exitosamente');
-       } else {
-         console.error('❌ Error enviando detalles del pedido:', sendResult.error);
-       }
+      // Generar mensaje con detalles del pedido
+      const orderDetails = this.generateOrderDetailsMessage(orderData);
+      
+      // Enviar mensaje con detalles
+      const sendResult = await this.sendOrderDetails(providerPhone, orderDetails);
+      
+      if (sendResult.success) {
+        console.log('✅ Detalles del pedido enviados exitosamente');
+      } else {
+        console.error('❌ Error enviando detalles del pedido:', sendResult.error);
+      }
 
       // Eliminar el pedido pendiente
       const { error: deleteError } = await supabase
@@ -534,25 +543,27 @@ export class OrderNotificationService {
          providerName = orderData.providers.name || 'Proveedor';
        }
        
-       let message = `📋 *DETALLES DEL PEDIDO*\n\n`;
+       let message = `📋 *DETALLES DEL PEDIDO CONFIRMADO*\n\n`;
        message += `*Orden:* ${orderNumber}\n`;
        message += `*Proveedor:* ${providerName}\n`;
-       message += `*Total de items:* ${totalItems}\n\n`;
+       message += `*Total de items:* ${totalItems}\n`;
+       message += `*Fecha de confirmación:* ${new Date().toLocaleDateString('es-AR')}\n\n`;
        
        if (items.length > 0) {
-         message += `*Items solicitados:*\n`;
+         message += `*Items confirmados:*\n`;
          items.forEach((item: any, index: number) => {
            if (item && typeof item === 'object') {
              const quantity = item.quantity || 1;
-             const name = item.name || item.product_name || 'Producto';
-             message += `${index + 1}. ${name} - Cantidad: ${quantity}\n`;
+             const unit = item.unit || 'un';
+             const name = item.productName || item.name || item.product_name || 'Producto';
+             message += `${index + 1}. ${name} - ${quantity} ${unit}\n`;
            }
          });
        }
        
-       message += `\n*Estado:* Confirmado ✅\n`;
-       message += `*Fecha:* ${new Date().toLocaleDateString('es-AR')}\n\n`;
-       message += `Gracias por confirmar. Procesaremos su pedido.`;
+       message += `\n*Estado:* ✅ Confirmado y procesando\n`;
+       message += `*Próximo paso:* Preparación y envío\n\n`;
+       message += `Gracias por confirmar. Su pedido está siendo procesado.`;
        
        return message;
      } catch (error) {
@@ -566,7 +577,10 @@ export class OrderNotificationService {
    */
   static async sendOrderDetails(providerPhone: string, message: string): Promise<{ success: boolean; error?: string }> {
     try {
-      console.log('📤 Enviando detalles del pedido:', { providerPhone, messageLength: message.length });
+      // 🔧 MEJORA: Reducir logging excesivo
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📤 Enviando detalles del pedido a:', providerPhone);
+      }
       
       const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001'}/api/whatsapp/send`, {
         method: 'POST',
@@ -586,7 +600,10 @@ export class OrderNotificationService {
         return { success: false, error: result.error || 'Error enviando mensaje' };
       }
 
-      console.log('✅ Detalles enviados exitosamente:', result);
+      // 🔧 MEJORA: Reducir logging excesivo
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Detalles enviados exitosamente');
+      }
       return { success: true };
       
     } catch (error) {

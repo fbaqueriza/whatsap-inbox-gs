@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import { DataProvider, useData } from '../../components/DataProvider';
 import { useRouter } from 'next/navigation';
@@ -151,7 +151,6 @@ function DashboardPageContent({
     const dateB = new Date(b.createdAt || b.orderDate || 0);
     return dateB.getTime() - dateA.getTime();
   });
-  const currentOrders = sortedOrders.filter(order => !['finalizado', 'cancelled', 'delivered'].includes(order.status));
   const finishedOrders = sortedOrders.filter(order => ['finalizado', 'delivered'].includes(order.status));
   const pendingOrders = orders.filter((order: Order) => order.status !== 'delivered').length;
   // Calculate upcoming orders (stock items with próxima orden within 7 days)
@@ -210,66 +209,98 @@ function DashboardPageContent({
       return `(ID: ${providerId})`;
     }
   };
+  // 🔧 OPTIMIZACIÓN: Creación de órdenes mejorada con manejo de errores
   const handleCreateOrder = async (orderData: {
     providerId: string;
     items: OrderItem[];
     notes: string;
   }) => {
     if (!user) return;
-    const newOrder: Partial<Order> = {
-      orderNumber: `ORD-${String(orders.length + 1).padStart(3, "0")}`,
-      providerId: orderData.providerId,
-      items: orderData.items,
-      status: "pending",
-      totalAmount: orderData.items.reduce((sum, item) => sum + item.total, 0),
-      currency: "ARS",
-      orderDate: new Date(),
-      dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
-      invoiceNumber: "",
-      bankInfo: {},
-      receiptUrl: "",
-      notes: orderData.notes,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      user_id: user.id,
-    };
     
-    // Cerrar modal inmediatamente para mejor UX
-    setIsCreateModalOpen(false);
-    setSuggestedOrder(null);
-    
-    // Crear la orden en segundo plano
-    const createdOrder = await addOrder(newOrder, user.id);
-    
-          // Enviar notificación al proveedor en segundo plano
-      if (createdOrder) {
-        const provider = providers.find(p => p.id === orderData.providerId);
+    try {
+      // 🔧 MEJORA: Generar número de orden único
+      const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+      const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+      const orderNumber = `ORD-${timestamp}-${randomSuffix}`;
       
-      if (provider) {
-        // Ejecutar en segundo plano sin bloquear la UI
-        fetch('/api/orders/send-notification', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            order: createdOrder,
-            userId: user.id
-          }),
-        }).catch(error => {
-          console.error('❌ Error enviando notificación de pedido:', error);
-        });
+      const newOrder: Partial<Order> = {
+        orderNumber: orderNumber,
+        providerId: orderData.providerId,
+        items: orderData.items,
+        status: "pending",
+        totalAmount: orderData.items.reduce((sum, item) => sum + (item.total || 0), 0),
+        currency: "ARS",
+        orderDate: new Date(),
+        dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+        invoiceNumber: "",
+        bankInfo: {},
+        receiptUrl: "",
+        notes: orderData.notes,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user_id: user.id,
+      };
+      
+      // 🔧 MEJORA: Cerrar modal inmediatamente para mejor UX
+      setIsCreateModalOpen(false);
+      setSuggestedOrder(null);
+      
+      // 🔧 MEJORA: Crear la orden con manejo de errores
+      const createdOrder = await addOrder(newOrder, user.id);
+      
+      if (createdOrder) {
+        console.log('✅ Pedido creado:', createdOrder.id);
+        
+        // 🔧 MEJORA: Enviar notificación al proveedor en segundo plano
+        const provider = providers.find(p => p.id === orderData.providerId);
+        
+        if (provider) {
+          // Ejecutar en segundo plano sin bloquear la UI
+          fetch('/api/orders/send-notification', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              order: createdOrder,
+              userId: user.id
+            }),
+          }).then(response => {
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+            return response.json();
+          }).then(data => {
+            console.log('✅ Notificación enviada exitosamente');
+          }).catch(error => {
+            console.error('❌ Error enviando notificación de pedido:', error);
+          });
+        } else {
+          console.error('❌ Proveedor no encontrado para ID:', orderData.providerId);
+        }
       } else {
-        console.error('❌ Proveedor no encontrado para ID:', orderData.providerId);
+        console.error('❌ No se pudo crear la orden');
+        // 🔧 MEJORA: Reabrir modal si hay error
+        setIsCreateModalOpen(true);
       }
-    } else {
-      console.error('❌ No se pudo crear la orden');
+      
+      // 🔧 MEJORA: Actualizar la lista de órdenes inmediatamente y forzar re-render
+      console.log('🔄 Actualizando lista de órdenes después de crear...');
+      await fetchAll();
+      console.log('✅ Lista de órdenes actualizada');
+      
+      // 🔧 MEJORA: Forzar actualización adicional después de un breve delay
+      setTimeout(async () => {
+        console.log('🔄 Actualización adicional para asegurar sincronización...');
+        await fetchAll();
+      }, 500);
+      
+    } catch (error) {
+      console.error('❌ Error creando pedido:', error);
+      // 🔧 MEJORA: Reabrir modal si hay error y mostrar mensaje
+      alert('Error al crear el pedido. Por favor, inténtalo de nuevo.');
+      setIsCreateModalOpen(true);
     }
-    
-    // Actualizar la lista de órdenes en segundo plano
-    fetchAll().catch(error => {
-      console.error('❌ Error actualizando lista de órdenes:', error);
-    });
   };
   const handleSuggestedOrderCreate = (suggestedOrder: any) => {
     setSuggestedOrder(suggestedOrder);
@@ -277,40 +308,50 @@ function DashboardPageContent({
     setIsCreateModalOpen(true);
   };
 
-  // MANEJADORES REALTIME PARA ÓRDENES
+  // 🔧 OPTIMIZACIÓN: MANEJADORES REALTIME MEJORADOS PARA ÓRDENES
   const handleNewOrder = useCallback((payload: any) => {
-    console.log('🔄 Nueva orden recibida via Realtime:', payload);
+    console.log('🆕 Nueva orden recibida via Realtime:', payload.new?.id, 'Estado:', payload.new?.status);
     const newOrder = payload.new;
     
     if (newOrder) {
       setOrders(prev => {
-        // Verificar si la orden ya existe
+        // 🔧 MEJORA: Verificar si la orden ya existe
         const orderExists = prev.some(order => order.id === newOrder.id);
         if (orderExists) {
-          return prev;
+          console.log('🔄 Actualizando orden existente:', newOrder.id);
+          return prev.map(order => order.id === newOrder.id ? { ...order, ...newOrder } : order);
         }
         
-        // Agregar la nueva orden
-        return [...prev, newOrder];
+        // 🔧 MEJORA: Agregar la nueva orden al inicio y forzar re-render
+        console.log('➕ Agregando nueva orden:', newOrder.id);
+        const updatedOrders = [newOrder, ...prev];
+        console.log('📊 Total de órdenes después de agregar:', updatedOrders.length);
+        return updatedOrders;
       });
+      
+      // 🔧 MEJORA: Forzar actualización de la UI
+      setTimeout(() => {
+        console.log('🔄 Forzando actualización de UI...');
+        fetchAll();
+      }, 100);
     }
-  }, []);
+  }, [fetchAll]);
 
   const handleOrderUpdate = useCallback((payload: any) => {
-    console.log('🔄 Orden actualizada via Realtime:', payload);
+    console.log('🔄 Orden actualizada via Realtime:', payload.new?.id, 'Estado:', payload.new?.status);
     const updatedOrder = payload.new;
     
     if (updatedOrder) {
       setOrders(prev => 
         prev.map(order => 
-          order.id === updatedOrder.id ? updatedOrder : order
+          order.id === updatedOrder.id ? { ...order, ...updatedOrder } : order
         )
       );
     }
   }, []);
 
   const handleOrderDelete = useCallback((payload: any) => {
-    console.log('🔄 Orden eliminada via Realtime:', payload);
+    console.log('🗑️ Orden eliminada via Realtime:', payload.old?.id);
     const deletedOrder = payload.old;
     
     if (deletedOrder) {
@@ -320,12 +361,61 @@ function DashboardPageContent({
     }
   }, []);
 
-  // SUSCRIPCIÓN REALTIME PARA ÓRDENES - REMOVIDA, AHORA MANEJADA POR SERVICIO GLOBAL
-  // useOrdersRealtime(
-  //   handleNewOrder,
-  //   handleOrderUpdate,
-  //   handleOrderDelete
-  // );
+    // 🔧 OPTIMIZACIÓN: SUSCRIPCIÓN REALTIME ACTIVA CON MANEJO DE ERRORES
+  const realtimeData = useOrdersRealtime(
+    handleNewOrder,
+    handleOrderUpdate,
+    handleOrderDelete
+  );
+
+  const isSubscribed = realtimeData.isSubscribed;
+  const connectionStatus = 'connectionStatus' in realtimeData ? realtimeData.connectionStatus : 'disconnected';
+
+  // 🔧 MEJORA: SINCRONIZAR CON LÓGICA DE PÁGINA DE ÓRDENES
+  const currentOrders = useMemo(() => {
+    // Incluir órdenes activas (no finalizadas ni canceladas) - MISMOS FILTROS QUE PÁGINA DE ÓRDENES
+    const activeOrders = orders.filter(order => 
+      !['finalizado', 'cancelled', 'pagado'].includes(order.status)
+    );
+    
+    // Ordenar por fecha de creación (más recientes primero) - MISMOS CRITERIOS QUE PÁGINA DE ÓRDENES
+    const sortedOrders = activeOrders.sort((a, b) => 
+      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    
+    // 🔧 MEJORA: Logging para debugging
+    if (sortedOrders.length > 0) {
+      console.log('📊 Órdenes actuales filtradas:', sortedOrders.length, 'Órdenes totales:', orders.length);
+    }
+    
+    return sortedOrders;
+  }, [orders]);
+
+  // 🔧 MEJORA: LISTENER PARA ACTUALIZACIÓN AL CERRAR MODAL
+  useEffect(() => {
+    const handleModalClosed = () => {
+      console.log('🔄 Modal cerrado, actualizando datos...');
+      fetchAll();
+    };
+
+    window.addEventListener('orderModalClosed', handleModalClosed);
+    return () => window.removeEventListener('orderModalClosed', handleModalClosed);
+  }, [fetchAll]);
+
+  // 🔧 MEJORA: Indicador visual de estado de Realtime
+  const getRealtimeStatus = () => {
+    if (connectionStatus === 'connected' && isSubscribed) {
+      return { status: 'connected', text: 'Tiempo Real Activo', color: 'text-green-600' };
+    } else if (connectionStatus === 'connecting') {
+      return { status: 'connecting', text: 'Conectando...', color: 'text-yellow-600' };
+    } else if (connectionStatus === 'error') {
+      return { status: 'error', text: 'Error de Conexión', color: 'text-red-600' };
+    } else {
+      return { status: 'disconnected', text: 'Realtime Desconectado', color: 'text-gray-500' };
+    }
+  };
+
+  const realtimeStatus = getRealtimeStatus();
 
   const handleSendOrder = async (orderId: string) => {
     const order = orders.find(o => o.id === orderId);
@@ -550,15 +640,22 @@ function DashboardPageContent({
       {/* Remove floating chat button */}
       {/* Header */}
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        {/* 🔧 MEJORA: Indicador de estado de Realtime */}
+        <div className="mb-4 px-4 sm:px-0">
+          <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${realtimeStatus.color} bg-gray-100`}>
+            <div className={`w-2 h-2 rounded-full mr-2 ${realtimeStatus.status === 'connected' ? 'bg-green-500' : realtimeStatus.status === 'connecting' ? 'bg-yellow-500' : realtimeStatus.status === 'error' ? 'bg-red-500' : 'bg-gray-400'}`}></div>
+            {realtimeStatus.text}
+          </div>
+        </div>
         <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-x-8 gap-y-8">
           {/* Left Section: Pedidos pendientes + Pedidos recientes */}
           <div className="w-full">
-            {/* Pedidos pendientes */}
-            <div className="bg-yellow-50 border-l-4 border-yellow-400 rounded-lg p-6 mb-6 shadow">
-              <h2 className="text-xl font-bold text-yellow-800 mb-4">Pedidos pendientes</h2>
+            {/* Pedidos actuales */}
+            <div className="bg-blue-50 border-l-4 border-blue-400 rounded-lg p-6 mb-6 shadow">
+              <h2 className="text-xl font-bold text-blue-800 mb-4">Pedidos actuales</h2>
               {currentOrders.length === 0 ? (
                 <div className="text-center py-8">
-                  <div className="text-gray-500 mb-4">No hay pedidos pendientes</div>
+                  <div className="text-gray-500 mb-4">No hay pedidos actuales</div>
                   <div className="flex justify-center space-x-3">
                     <button
                       onClick={() => setIsCreateModalOpen(true)}
@@ -569,43 +666,50 @@ function DashboardPageContent({
                     </button>
                     <button
                       onClick={() => {
-                  // Abrir chat con el primer proveedor disponible
-                  const firstProvider = providers[0];
-                  if (firstProvider) {
-                                         handleOrderClick({
-                       id: 'general-chat',
+                        // Abrir chat con el primer proveedor disponible
+                        const firstProvider = providers[0];
+                        if (firstProvider) {
+                          handleOrderClick({
+                            id: 'general-chat',
                             providerId: firstProvider.id,
                             status: 'pending'
-                     } as Order);
-                  }
-                }}
+                          } as Order);
+                        }
+                      }}
                       className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                     >
                       <MessageSquare className="h-4 w-4 mr-2" />
                       Chat general
                     </button>
-            </div>
-                    </div>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-4">
                   {currentOrders.slice(0, 5).map((order) => (
-                    <div key={order.id} className="bg-white rounded-lg p-4 border border-yellow-200">
+                    <div key={order.id} className="bg-white rounded-lg p-4 border border-blue-200 hover:shadow-md transition-shadow">
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center space-x-3">
                           {getStatusIcon(order.status)}
                           <div className="flex-1">
                             <div className="flex items-center space-x-2">
-                                                         <div className="font-medium text-gray-900">
+                              <div className="font-medium text-gray-900">
                                 {getProviderName(order.providerId)}
-                             </div>
-                             <div className="text-sm text-gray-500">
+                              </div>
+                              <div className="text-sm text-gray-500">
                                 {formatDate(order.createdAt || order.orderDate)}
-                             </div>
+                              </div>
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
+                                {order.status === 'pending' ? 'Pendiente' :
+                                 order.status === 'pending_confirmation' ? 'Pendiente de Confirmación' :
+                                 order.status === 'confirmed' ? 'Confirmado' :
+                                 order.status === 'enviado' ? 'Enviado' :
+                                 order.status === 'factura_recibida' ? 'Factura Recibida' :
+                                 order.status === 'pagado' ? 'Pagado' :
+                                 order.status}
+                              </span>
                             </div>
-                            
-
                           </div>
-                  </div>
+                        </div>
                         <div className="flex flex-col items-end gap-2">
                           
                           {/* Botón de chat */}
@@ -650,30 +754,30 @@ function DashboardPageContent({
                           
                           {/* Ver comprobante - cuando hay comprobante disponible */}
                           {['pagado','finalizado'].includes(order.status) && order.receiptUrl && (
-      <button
+                            <button
                               onClick={() => openReceipt(order.receiptUrl)}
                               className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-gray-400"
-       >
+                            >
                               <Upload className="h-4 w-4 mr-1" /> Ver comprobante
-      </button>
+                            </button>
                           )}
                           
                           {/* Confirmar recepción - solo en estado pagado */}
                           {order.status === 'pagado' && (
-         <button
+                            <button
                               className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-green-200 text-white bg-green-600 hover:bg-green-700 focus:ring-2 focus:ring-green-500"
                               onClick={() => handleConfirmReception(order.id)}
-         >
+                            >
                               <CheckCircle className="h-4 w-4 mr-1" /> Confirmar recepción
-         </button>
-      )}
-    </div>
-                  </div>
+                            </button>
+                          )}
+                        </div>
+                      </div>
                       {order.items && order.items.length > 0 && (
-                         <div className="text-xs text-gray-600">
+                        <div className="text-xs text-gray-600">
                           {order.items.slice(0, 3).map((item, index) => (
                             <span key={index} className="mr-2">
-                               {item.productName}: {item.quantity} {item.unit}
+                              {item.productName}: {item.quantity} {item.unit}
                             </span>
                           ))}
                           {order.items.length > 3 && (
@@ -682,8 +786,8 @@ function DashboardPageContent({
                         </div>
                       )}
                        
-                       {/* Orden de pago - solo en estado factura_recibida */}
-                       {showPaymentOrder(order)}
+                      {/* Orden de pago - solo en estado factura_recibida */}
+                      {showPaymentOrder(order)}
                     </div>
                   ))}
                   {currentOrders.length > 5 && (

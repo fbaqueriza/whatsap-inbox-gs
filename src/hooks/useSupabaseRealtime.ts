@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRealtimeManager, SubscriptionConfig, RealtimeHandlers } from './useRealtimeManager';
+import { supabase } from '../lib/supabase/client';
 
 // Hook genérico para suscripciones de Realtime
 export function useRealtimeSubscription(
@@ -37,7 +38,7 @@ export function useRealtimeSubscription(
         });
         isSubscribed.current = true;
         setConnectionStatus('connected');
-        console.log('✅ Suscripción Realtime establecida para:', config.table);
+        // console.log('✅ Realtime funcionando correctamente');
       } catch (error) {
         console.error('❌ Error estableciendo suscripción Realtime:', error);
         setConnectionStatus('error');
@@ -53,6 +54,59 @@ export function useRealtimeSubscription(
       }
     };
   }, [config.table, config.event, config.filter, subscribe, unsubscribe]);
+
+  // 🔧 OPTIMIZACIÓN: Verificación mejorada de estado de conexión
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        // 🔧 MEJORA: Verificar directamente la conexión de Supabase con timeout
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 5000)
+        );
+        
+        const connectionPromise = supabase
+          .from('orders')
+          .select('count')
+          .limit(1);
+        
+        const { data, error } = await Promise.race([connectionPromise, timeoutPromise]) as any;
+        
+        if (error) {
+          console.log('⚠️ Error de conexión con Supabase:', error.message);
+          setConnectionStatus('error');
+          isSubscribed.current = false;
+          return;
+        }
+        
+        // 🔧 MEJORA: Verificar si Realtime está habilitado
+        const isRealtimeEnabled = process.env.NEXT_PUBLIC_REALTIME_ENABLED !== 'false';
+        
+        if (!isRealtimeEnabled) {
+          console.log('ℹ️ Realtime deshabilitado por configuración');
+          setConnectionStatus('disconnected');
+          isSubscribed.current = false;
+          return;
+        }
+        
+        // 🔧 MEJORA: Verificar estado de la suscripción
+        if (isSubscribed.current && connectionStatus !== 'connected') {
+                  // console.log('✅ Suscripción Realtime establecida para:', config.table);
+        setConnectionStatus('connected');
+        }
+        
+      } catch (error) {
+        console.error('❌ Error verificando estado de Realtime:', error);
+        setConnectionStatus('error');
+        isSubscribed.current = false;
+      }
+    };
+
+    // 🔧 MEJORA: Verificar cada 60 segundos para reducir carga
+    const interval = setInterval(checkConnection, 60000);
+    checkConnection(); // Verificar inmediatamente
+
+    return () => clearInterval(interval);
+  }, [connectionStatus]);
 
   return { 
     isSubscribed: isSubscribed.current && connectionStatus === 'connected',
@@ -105,14 +159,40 @@ export function useOrdersRealtime(
       event: '*'
     },
     {
-      onInsert,
-      onUpdate,
-      onDelete,
-      debounceMs: 100, // 🔧 OPTIMIZACIÓN: Reducido para actualización más rápida
+      onInsert: (payload) => {
+        console.log('🆕 Realtime: Nueva orden detectada:', payload.new?.id);
+        // 🔧 MEJORA: Validar que la orden tenga datos válidos
+        if (payload.new && payload.new.id && payload.new.user_id) {
+          console.log('✅ Orden válida, procesando inserción...');
+          onInsert?.(payload);
+        } else {
+          console.log('⚠️ Orden inválida, ignorando:', payload.new);
+        }
+      },
+      onUpdate: (payload) => {
+        console.log('🔄 Realtime: Orden actualizada:', payload.new?.id, 'Estado:', payload.new?.status);
+        // 🔧 MEJORA: Solo procesar si hay cambios reales
+        if (payload.new && payload.old && 
+            (payload.new.status !== payload.old.status || 
+             payload.new.total_amount !== payload.old.total_amount ||
+             payload.new.updated_at !== payload.old.updated_at)) {
+          console.log('✅ Cambios detectados, procesando actualización...');
+          onUpdate?.(payload);
+        } else {
+          console.log('ℹ️ Sin cambios relevantes, ignorando actualización');
+        }
+      },
+      onDelete: (payload) => {
+        console.log('🗑️ Realtime: Orden eliminada:', payload.old?.id);
+        if (payload.old && payload.old.id) {
+          onDelete?.(payload);
+        }
+      },
+      debounceMs: 50, // 🔧 OPTIMIZACIÓN: Reducido para mayor responsividad
       retryConfig: {
-        maxRetries: 3, // 🔧 OPTIMIZACIÓN: Reducir reintentos para evitar spam
-        retryDelay: 1000, // 🔧 OPTIMIZACIÓN: Delay más largo
-        backoffMultiplier: 2 // 🔧 OPTIMIZACIÓN: Backoff más agresivo
+        maxRetries: 3,
+        retryDelay: 500,
+        backoffMultiplier: 1.5
       }
     }
   );
@@ -208,12 +288,36 @@ export function useTemplatesRealtime(
   );
 }
 
-// 🔧 OPTIMIZACIÓN: Hook específico para el flujo completo de órdenes
-export function useOrdersFlowRealtime(
-  onOrderCreated?: (payload: any) => void,
-  onOrderStatusChanged?: (payload: any) => void,
-  onOrderDeleted?: (payload: any) => void
-) {
+  // 🔧 OPTIMIZACIÓN: Hook específico para el flujo completo de órdenes
+  export function useOrdersFlowRealtime(
+    onOrderCreated?: (payload: any) => void,
+    onOrderStatusChanged?: (payload: any) => void,
+    onOrderDeleted?: (payload: any) => void
+  ) {
+    // 🔧 MEJORA: Verificar si Realtime está habilitado
+    const isRealtimeEnabled = process.env.NEXT_PUBLIC_REALTIME_ENABLED !== 'false';
+
+      // 🔧 OPTIMIZACIÓN: Reducir logging para evitar spam y múltiples inicializaciones
+  const [hasLogged, setHasLogged] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
+  
+  useEffect(() => {
+    if (!hasLogged && !isInitialized) {
+      // console.log('🔧 useOrdersFlowRealtime: Inicializando...', { isRealtimeEnabled });
+      setHasLogged(true);
+      setIsInitialized(true);
+    }
+  }, [hasLogged, isRealtimeEnabled, isInitialized]);
+
+    if (!isRealtimeEnabled) {
+      // Retornar un hook simulado si Realtime está deshabilitado
+      return {
+        isSubscribed: false,
+        ordersSubscribed: false,
+        connectionStatus: 'disconnected' as const
+      };
+    }
+
   // Suscripción para órdenes con filtros específicos
   const ordersSubscription = useRealtimeSubscription(
     {
@@ -223,7 +327,10 @@ export function useOrdersFlowRealtime(
     {
       onInsert: (payload) => {
         console.log('🆕 Nueva orden creada:', payload.new?.id);
-        onOrderCreated?.(payload);
+        // 🔧 MEJORA: Validar datos antes de procesar
+        if (payload.new && payload.new.id && payload.new.user_id) {
+          onOrderCreated?.(payload);
+        }
       },
       onUpdate: (payload) => {
         // Solo procesar cambios de estado
@@ -233,17 +340,22 @@ export function useOrdersFlowRealtime(
             oldStatus: payload.old?.status,
             newStatus: payload.new?.status
           });
-          onOrderStatusChanged?.(payload);
+          // 🔧 MEJORA: Validar que el cambio sea válido
+          if (payload.new && payload.new.id) {
+            onOrderStatusChanged?.(payload);
+          }
         }
       },
       onDelete: (payload) => {
         console.log('🗑️ Orden eliminada:', payload.old?.id);
-        onOrderDeleted?.(payload);
+        if (payload.old && payload.old.id) {
+          onOrderDeleted?.(payload);
+        }
       },
-      debounceMs: 50, // 🔧 OPTIMIZACIÓN: Mínimo delay para máxima responsividad
+      debounceMs: 150, // 🔧 OPTIMIZACIÓN: Balance entre responsividad y estabilidad
       retryConfig: {
-        maxRetries: 3,
-        retryDelay: 500,
+        maxRetries: 5,
+        retryDelay: 1000,
         backoffMultiplier: 1.5
       }
     }

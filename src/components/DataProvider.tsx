@@ -176,6 +176,8 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
     setLoading(true);
     setErrorMsg(null);
     try {
+      // console.log('🔄 Iniciando fetchAll para usuario:', currentUserId);
+      
       // 🔧 OPTIMIZACIÓN: Cargar datos con información completa de items
       const [{ data: provs, error: provError }, { data: ords, error: ordError }, { data: stocks, error: stockError }] = await Promise.all([
         supabase.from('providers').select('*').eq('user_id', currentUserId).order('created_at', { ascending: false }),
@@ -220,6 +222,8 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
   // CRUD: Orders
   const addOrder = useCallback(async (order: Partial<Order>, user_id: string) => {
     try {
+      // 🔧 OPTIMIZACIÓN: Logging reducido
+      
       // Obtener información del proveedor para el número de orden
       const providerId = (order as any).providerId;
       let providerName = 'PROV';
@@ -263,7 +267,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         updated_at: new Date().toISOString(),
       };
       
-      // console.log('📝 Insertando orden en Supabase:', snakeCaseOrder);
+      // 🔧 OPTIMIZACIÓN: Logging reducido
       
       const { data, error } = await supabase.from('orders').insert([snakeCaseOrder]).select();
       
@@ -273,12 +277,16 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         throw error;
       }
       
-      // console.log('✅ Orden insertada exitosamente:', data);
+      console.log('✅ Orden insertada exitosamente:', data);
       
-      // Retornar la orden creada
+      // 🔧 OPTIMIZACIÓN: Actualizar localmente inmediatamente
       if (data && data.length > 0) {
         const createdOrder = mapOrderFromDb(data[0]);
-        // console.log('📋 Orden mapeada:', createdOrder);
+        console.log('📋 Orden mapeada:', createdOrder);
+        
+        // Actualizar el estado local inmediatamente
+        setOrders(prevOrders => [createdOrder, ...prevOrders]);
+        
         return createdOrder;
       }
       
@@ -291,6 +299,8 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
 
   const updateOrder = useCallback(async (order: Order) => {
     try {
+      console.log('🔄 Actualizando orden:', order.id, 'Estado:', order.status);
+      
       // Mapear campos a snake_case para Supabase
       const snakeCaseOrder = {
         provider_id: (order as any).providerId,
@@ -306,20 +316,28 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         receipt_url: (order as any).receiptUrl,
         notes: order.notes,
         created_at: (order as any).createdAt,
-        updated_at: (order as any).updatedAt,
+        updated_at: new Date().toISOString(), // 🔧 MEJORA: Actualizar timestamp
       };
+      
       const { error } = await supabase.from('orders').update(snakeCaseOrder).eq('id', order.id);
       if (error) {
         console.error('Error updating order:', error);
         setErrorMsg('Error al actualizar pedido: ' + (error.message || error.details || ''));
         throw error;
       }
-      await fetchAll();
+      
+      console.log('✅ Orden actualizada exitosamente:', order.id);
+      
+      // 🔧 OPTIMIZACIÓN: Actualizar localmente sin fetchAll completo
+      setOrders(prevOrders => 
+        prevOrders.map(o => o.id === order.id ? { ...o, ...order, updatedAt: new Date() } : o)
+      );
+      
     } catch (error) {
       console.error('Error in updateOrder:', error);
       throw error;
     }
-  }, [fetchAll]);
+  }, []);
 
   const deleteOrder = useCallback(async (id: string, user_id: string) => {
     try {

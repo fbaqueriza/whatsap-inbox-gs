@@ -24,10 +24,10 @@ export class MetaWhatsAppService {
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
     const businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
 
-    console.log('🔍 [DEBUG] Variables de entorno cargadas:');
-    console.log('🔍 [DEBUG] - WHATSAPP_API_KEY:', accessToken ? `${accessToken.substring(0, 10)}...` : 'No configurada');
-    console.log('🔍 [DEBUG] - WHATSAPP_PHONE_NUMBER_ID:', phoneNumberId || 'No configurada');
-    console.log('🔍 [DEBUG] - WHATSAPP_BUSINESS_ACCOUNT_ID:', businessAccountId || 'No configurada');
+    // 🔧 MEJORA: Reducir logging excesivo
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 [DEBUG] Variables de entorno cargadas');
+    }
 
     // FORZAR MODO PRODUCCIÓN - SIEMPRE
     if (accessToken && phoneNumberId && businessAccountId) {
@@ -145,6 +145,13 @@ export class MetaWhatsAppService {
           messageType: 'sent' // Agregar explícitamente el tipo
         });
 
+        // 🔧 MEJORA: Disparar evento para actualizar el chat
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('whatsappMessage', {
+            detail: { messageId, to, content }
+          }));
+        }
+
         // Log solo en desarrollo
         if (process.env.NODE_ENV === 'development') {
           console.log('✅ [SIMULACIÓN] Mensaje enviado exitosamente:', messageId);
@@ -157,12 +164,10 @@ export class MetaWhatsAppService {
         };
       } else {
         // Modo real
-        console.log('📤 [REAL] Enviando mensaje WhatsApp:', {
-          to,
-          content,
-          from: this.config.phoneNumberId,
-          timestamp: new Date().toISOString()
-        });
+        // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📤 [REAL] Enviando mensaje WhatsApp a:', to);
+        }
 
         // Normalizar número de teléfono
         let normalizedPhone = to.replace(/[\s\-\(\)]/g, '');
@@ -207,7 +212,10 @@ export class MetaWhatsAppService {
         const result = await response.json();
         // Log solo en desarrollo
         if (process.env.NODE_ENV === 'development') {
-          console.log('✅ [REAL] Mensaje enviado exitosamente:', result);
+          // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ [REAL] Mensaje enviado exitosamente');
+        }
         }
 
         // Guardar mensaje enviado en base de datos
@@ -222,6 +230,13 @@ export class MetaWhatsAppService {
           isSimulated: false,
           messageType: 'sent' // Agregar explícitamente el tipo
         });
+
+        // 🔧 MEJORA: Disparar evento para actualizar el chat
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('whatsappMessage', {
+            detail: { messageId: result.messages?.[0]?.id, to, content }
+          }));
+        }
 
         return result;
       }
@@ -353,7 +368,10 @@ export class MetaWhatsAppService {
         const result = await response.json();
         // Log solo en desarrollo
         if (process.env.NODE_ENV === 'development') {
-          console.log('✅ [REAL] Mensaje con plantilla enviado exitosamente:', result);
+          // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ [REAL] Template enviado exitosamente');
+        }
         }
 
         await this.saveMessage({

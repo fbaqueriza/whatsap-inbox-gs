@@ -4,13 +4,17 @@ import { createClient } from '@supabase/supabase-js';
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
+    const limit = searchParams.get('limit') || '20';
     const providerId = searchParams.get('providerId');
     const userId = searchParams.get('userId');
 
-    // Si no hay parámetros, devolver mensajes vacíos (para evitar errores)
-    if (!providerId || !userId) {
+    // 🔧 CORRECCIÓN: Requerir userId como parámetro obligatorio
+    if (!userId) {
+      console.warn('⚠️ userId es requerido para obtener mensajes');
       return NextResponse.json({ messages: [] });
     }
+    
+    const currentUserId = userId;
 
     // 🔧 OPTIMIZACIÓN: Conectar con Supabase para obtener mensajes reales
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -23,16 +27,25 @@ export async function GET(request: NextRequest) {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Obtener mensajes de WhatsApp con información del proveedor
-    const { data: messages, error } = await supabase
-      .from('whatsapp_messages')
-      .select(`
-        *,
-        providers!inner(name, phone)
-      `)
-      .eq('user_id', userId)
-      .order('timestamp', { ascending: true })
-      .limit(100); // Limitar a 100 mensajes para rendimiento
+     // 🔧 CORRECCIÓN: Obtener mensajes de WhatsApp con columnas correctas
+     let query = supabase
+       .from('whatsapp_messages')
+       .select('id, content, timestamp, message_type, status, contact_id, user_id, created_at, read_at')
+       .order('timestamp', { ascending: false })
+       .limit(parseInt(limit));
+     
+     // 🔧 CORRECCIÓN: Lógica simplificada y escalable
+     // Solo incluir mensajes del usuario específico (ya tienen user_id asignado)
+     if (currentUserId) {
+       query = query.eq('user_id', currentUserId);
+     }
+    
+    // Si hay providerId específico, filtrar por él
+    if (providerId) {
+      query = query.eq('provider_id', providerId);
+    }
+    
+    const { data: messages, error } = await query;
 
     if (error) {
       console.error('❌ Error obteniendo mensajes:', error);
@@ -78,11 +91,12 @@ export async function POST(request: NextRequest) {
     const { data: savedMessage, error } = await supabase
       .from('whatsapp_messages')
       .insert([{
-        provider_id: providerId,
         user_id: userId,
         content: message,
-        type,
-        direction,
+        message_type: type,
+        status: direction === 'outbound' ? 'sent' : 'received',
+        contact_id: providerId, // Usar providerId como contact_id
+        message_sid: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, // 🔧 CORRECCIÓN: Generar message_sid único
         timestamp: new Date().toISOString(),
         created_at: new Date().toISOString()
       }])

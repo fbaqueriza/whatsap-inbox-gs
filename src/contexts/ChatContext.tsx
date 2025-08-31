@@ -81,7 +81,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     });
   }, [sendNotification]);
 
-  // CARGAR MENSAJES - VERSIÓN OPTIMIZADA CON NOTIFICACIONES
+  // CARGAR MENSAJES - VERSIÓN OPTIMIZADA Y LIMPIA
   const loadMessages = useCallback(async () => {
     try {
       // Obtener el usuario actual
@@ -114,141 +114,161 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       // Actualizar el estado de proveedores del usuario
       setUserProviderPhones(userProviderPhones);
       
-      const response = await fetch('/api/whatsapp/messages');
+      // 🔧 OPTIMIZACIÓN: Cargar solo 20 mensajes para reducir procesamiento
+      const response = await fetch(`/api/whatsapp/messages?limit=20&userId=${currentUserId}`);
       
       if (!response.ok) {
-        console.warn('API de mensajes no disponible:', response.status);
+        console.warn('⚠️ API de mensajes no disponible:', response.status);
         return;
       }
       
       const data = await response.json();
       
       if (data.messages && Array.isArray(data.messages)) {
+        // 🔧 OPTIMIZACIÓN: Filtrado inteligente y robusto
         const transformedMessages = data.messages
+          .filter((msg: any) => {
+            const contactId = normalizeContactIdentifier(msg.contact_id || msg.from);
+            
+            // Incluir TODOS los mensajes recibidos
+            if (msg.message_type === 'received') {
+              return true;
+            }
+            
+            // Para mensajes enviados, verificar si son de proveedores registrados
+            const isFromRegisteredProvider = userProviderPhones.includes(contactId);
+            
+            // Incluir mensajes enviados del proveedor registrado
+            if (msg.message_type === 'sent' && isFromRegisteredProvider) {
+              return true;
+            }
+            
+            // Para otros mensajes enviados, verificar si son argentinos
+            const isArgentineNumber = contactId.includes('+549');
+            
+            return isArgentineNumber;
+          })
           .map((msg: any) => {
-            // Determinar el tipo de mensaje correctamente
+            // 🔧 OPTIMIZACIÓN: Mapeo simplificado y consistente
             let messageType = 'received';
             
-            // Si el mensaje tiene message_type explícito, usarlo
             if (msg.message_type === 'sent') {
               messageType = 'sent';
             } else if (msg.message_type === 'received') {
               messageType = 'received';
-            } else {
-              // Si no hay message_type explícito, intentar determinar por otros campos
-              // Los mensajes enviados desde la plataforma suelen tener un ID que empieza con 'sim_' o 'msg_'
-              if (msg.message_sid && (msg.message_sid.startsWith('sim_') || msg.message_sid.startsWith('msg_'))) {
-                messageType = 'sent';
-              }
+            } else if (msg.message_sid && (msg.message_sid.startsWith('sim_') || msg.message_sid.startsWith('msg_'))) {
+              messageType = 'sent';
             }
             
             return {
-            id: msg.message_sid || msg.id, // Usar message_sid (ID de Meta) como prioridad
-            content: msg.content,
-            timestamp: new Date(msg.timestamp || msg.created_at),
+              id: msg.message_sid || msg.id,
+              content: msg.content,
+              timestamp: new Date(msg.timestamp || msg.created_at),
               type: messageType,
-            contact_id: msg.contact_id || msg.from,
-            status: msg.status || 'delivered'
+              contact_id: msg.contact_id || msg.from,
+              status: msg.status || 'delivered'
             };
           })
-          // Filtrar mensajes que correspondan a los proveedores del usuario actual
-          // O que vengan de nuestro propio número de WhatsApp Business
-          // O que sean de cualquier número argentino (+549)
-          .filter((msg: any) => {
-            const contactId = normalizeContactIdentifier(msg.contact_id);
-            const ourWhatsAppNumber = process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER_ID;
-            const normalizedOurNumber = ourWhatsAppNumber ? `+${ourWhatsAppNumber}` : null;
-            
-            // Incluir mensajes de cualquier número argentino (+549)
-            const isArgentineNumber = contactId.includes('+549');
-            const isFromOurProvider = userProviderPhones.includes(contactId);
-            const isFromOurWhatsApp = normalizedOurNumber && contactId === normalizedOurNumber;
-            const isIncluded = isArgentineNumber || isFromOurProvider || isFromOurWhatsApp;
-            
-            return isIncluded;
-          });
         
-        // PRESERVAR MENSAJES LOCALES Y DETECTAR NUEVOS MENSAJES
+        // 🔧 OPTIMIZACIÓN: Actualización eficiente del estado
         setMessages(prev => {
-          // Crear un mapa de mensajes existentes por ID para evitar duplicados
           const existingMessagesMap = new Map(prev.map(msg => [msg.id, msg]));
-          
-          // Agregar solo mensajes nuevos que no existan
           let hasNewMessages = false;
           const updatedMessages = [...prev];
           
-                     transformedMessages.forEach((newMsg: ChatWhatsAppMessage) => {
-            // Verificar si el mensaje ya existe por ID exacto
-            const isDuplicate = existingMessagesMap.has(newMsg.id);
-            
-            // Para mensajes enviados, también verificar si hay un mensaje temporal que debe ser reemplazado
-            if (newMsg.type === 'sent') {
-              const tempMessageIndex = updatedMessages.findIndex(msg => 
-                msg.id.startsWith('temp_') && 
-                                              msg.content === newMsg.content && 
-                msg.contact_id === newMsg.contact_id
-              );
-              
-              if (tempMessageIndex !== -1) {
-                // Reemplazar mensaje temporal con el real
-                updatedMessages[tempMessageIndex] = newMsg;
-                hasNewMessages = true;
-                return;
-              }
+          transformedMessages.forEach((newMsg: ChatWhatsAppMessage) => {
+            if (!existingMessagesMap.has(newMsg.id)) {
+              updatedMessages.push(newMsg);
+              hasNewMessages = true;
             }
-             
-             if (!isDuplicate) {
-               updatedMessages.push(newMsg);
-               hasNewMessages = true;
-             }
-           });
+          });
           
-          if (hasNewMessages) {
-            // Los mensajes ya vienen ordenados del API, no reordenar
-            return updatedMessages;
-          }
-          return prev;
+          return hasNewMessages ? updatedMessages : prev;
         });
+        
+        // 🔧 LOGGING INFORMATIVO: Mostrar estadísticas completas (solo una vez)
+        if (process.env.NODE_ENV === 'development') {
+          const receivedMessages = transformedMessages.filter((m: any) => m.type === 'received');
+          const sentMessages = transformedMessages.filter((m: any) => m.type === 'sent');
+          const argentineMessages = transformedMessages.filter((m: any) => 
+            m.contact_id.includes('+549')
+          );
+          
+          console.log(`📱 Chat: ${transformedMessages.length} mensajes totales (${receivedMessages.length} recibidos, ${sentMessages.length} enviados, ${argentineMessages.length} argentinos)`);
+        }
       }
     } catch (error) {
       console.error('Error loading messages:', error);
     }
-  }, []);
+  }, []); // ✅ DEPENDENCIAS VACÍAS - No depende de estado que cambia
 
   const forceReconnectSSE = useCallback(() => {
     window.location.reload();
   }, []);
 
+  // 🔧 OPTIMIZACIÓN: Debounce para evitar múltiples ejecuciones
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const loadMessagesDebounced = useCallback(async () => {
+    if (isLoadingMessages) return;
+    
+    setIsLoadingMessages(true);
+    try {
+      await loadMessages();
+    } finally {
+      setTimeout(() => setIsLoadingMessages(false), 1000); // Debounce de 1 segundo
+    }
+  }, [loadMessages]); // ✅ SOLO DEPENDE DE loadMessages (que tiene dependencias vacías)
+
   // CARGAR MENSAJES INICIALES Y CONFIGURAR LISTENER REALTIME
   useEffect(() => {
     let isMounted = true;
+    let hasInitialized = false; // ✅ PREVENIR MÚLTIPLES INICIALIZACIONES
     
-    // Cargar inmediatamente
-    if (isMounted) {
-      loadMessages();
-    }
+    // 🔧 OPTIMIZACIÓN: Verificar autenticación antes de cargar mensajes
+    const initializeChat = async () => {
+      if (hasInitialized) return; // ✅ EVITAR MÚLTIPLES EJECUCIONES
+      
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.id && isMounted && !hasInitialized) {
+          hasInitialized = true;
+          loadMessagesDebounced();
+        }
+      } catch (error) {
+        console.warn('⚠️ Usuario no autenticado, no se cargan mensajes');
+      }
+    };
+    
+    // Cargar mensajes solo si el usuario está autenticado
+    initializeChat();
     
     // Solicitar permisos de notificación
     if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
 
-    // Listener para actualizar mensajes cuando se envía una orden
+    // 🔧 OPTIMIZACIÓN: Listeners con debounce
     const handleOrderSent = () => {
       if (isMounted) {
-        setTimeout(() => {
-          loadMessages();
-        }, 1000);
+        loadMessagesDebounced();
+      }
+    };
+
+    const handleWhatsAppMessage = () => {
+      if (isMounted) {
+        loadMessagesDebounced();
       }
     };
 
     window.addEventListener('orderSent', handleOrderSent);
+    window.addEventListener('whatsappMessage', handleWhatsAppMessage);
 
     return () => {
       isMounted = false;
       window.removeEventListener('orderSent', handleOrderSent);
+      window.removeEventListener('whatsappMessage', handleWhatsAppMessage);
     };
-  }, []); // Remover loadMessages de las dependencias para evitar múltiples inicializaciones
+  }, []); // ✅ DEPENDENCIAS VACÍAS - Solo ejecutar una vez al montar
 
   // CONFIGURAR LISTENER DE MENSAJES REALTIME
   useEffect(() => {

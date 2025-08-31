@@ -354,8 +354,15 @@ export class OrderNotificationService {
    * Procesa la respuesta de un proveedor a un pedido
    */
   static async processProviderResponse(providerPhone: string, response: string): Promise<boolean> {
+    const startTime = Date.now();
+    const requestId = `process_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
     try {
-      console.log('🔄 Procesando respuesta del proveedor:', { providerPhone, response });
+      console.log(`🔄 [${requestId}] Procesando respuesta del proveedor:`, { 
+        providerPhone, 
+        response: response.substring(0, 50) + (response.length > 50 ? '...' : ''),
+        timestamp: new Date().toISOString()
+      });
 
       // Buscar pedido pendiente
       const { createClient } = await import('@supabase/supabase-js');
@@ -364,26 +371,32 @@ export class OrderNotificationService {
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
+      // 🔧 CORRECCIÓN: Buscar pedidos pendientes con cualquier estado de pending
       const { data: pendingOrders, error: pendingError } = await supabase
         .from('pending_orders')
         .select('*')
         .eq('provider_phone', providerPhone)
-        .eq('status', 'pending')
+        .or('status.eq.pending,status.eq.pending_confirmation')
         .order('created_at', { ascending: false })
         .limit(1);
 
       if (pendingError) {
-        console.error('❌ Error buscando pedidos pendientes:', pendingError);
+        console.error(`❌ [${requestId}] Error buscando pedidos pendientes:`, pendingError);
         return false;
       }
 
       if (!pendingOrders || pendingOrders.length === 0) {
-        console.log('⚠️ No se encontraron pedidos pendientes para:', providerPhone);
+        console.log(`⚠️ [${requestId}] No se encontraron pedidos pendientes para:`, providerPhone);
         return false;
       }
 
       const pendingOrder = pendingOrders[0];
-      console.log('📋 Pedido pendiente encontrado:', pendingOrder);
+      console.log(`📋 [${requestId}] Pedido pendiente encontrado:`, {
+        id: pendingOrder.id,
+        order_id: pendingOrder.order_id,
+        status: pendingOrder.status,
+        created_at: pendingOrder.created_at
+      });
 
       // Buscar orden completa
       const { data: orders, error: orderError } = await supabase
@@ -393,12 +406,17 @@ export class OrderNotificationService {
         .single();
 
       if (orderError || !orders) {
-        console.error('❌ Error buscando orden:', orderError);
+        console.error(`❌ [${requestId}] Error buscando orden:`, orderError);
         return false;
       }
 
       const orderData = orders;
-      console.log('📦 Orden encontrada:', orderData);
+      console.log(`📦 [${requestId}] Orden encontrada:`, {
+        id: orderData.id,
+        order_number: orderData.order_number,
+        status: orderData.status,
+        user_id: orderData.user_id
+      });
 
       // Actualizar estado de la orden
       const { error: updateError } = await supabase
@@ -407,22 +425,22 @@ export class OrderNotificationService {
         .eq('id', orderData.id);
 
       if (updateError) {
-        console.error('❌ Error actualizando estado de orden:', updateError);
+        console.error(`❌ [${requestId}] Error actualizando estado de orden:`, updateError);
         return false;
       }
 
-      console.log('✅ Estado de orden actualizado a confirmado');
+      console.log(`✅ [${requestId}] Estado de orden actualizado a confirmado`);
 
       // Enviar detalles del pedido
       const orderDetails = this.generateOrderDetailsMessage(orderData);
-      console.log('📤 Enviando detalles del pedido:', orderDetails);
+      console.log(`📤 [${requestId}] Enviando detalles del pedido:`, orderDetails.substring(0, 100) + '...');
 
       const sendResult = await this.sendOrderDetails(providerPhone, orderDetails, orderData.user_id);
       
       if (sendResult.success) {
-        console.log('✅ Detalles del pedido enviados exitosamente');
+        console.log(`✅ [${requestId}] Detalles del pedido enviados exitosamente`);
       } else {
-        console.error('❌ Error enviando detalles del pedido:', sendResult.error);
+        console.error(`❌ [${requestId}] Error enviando detalles del pedido:`, sendResult.error);
       }
 
       // Eliminar pedido pendiente
@@ -432,22 +450,25 @@ export class OrderNotificationService {
         .eq('id', pendingOrder.id);
 
       if (deleteError) {
-        console.error('❌ Error eliminando pedido pendiente:', deleteError);
+        console.error(`❌ [${requestId}] Error eliminando pedido pendiente:`, deleteError);
       } else {
-        console.log('🗑️ Pedido pendiente eliminado');
+        console.log(`🗑️ [${requestId}] Pedido pendiente eliminado`);
       }
 
+      const duration = Date.now() - startTime;
+      
       // Retornar el resultado real del envío de detalles
       if (sendResult.success) {
-        console.log('✅ Orden confirmada, detalles enviados y pedido pendiente eliminado');
+        console.log(`✅ [${requestId}] Orden confirmada, detalles enviados y pedido pendiente eliminado en ${duration}ms`);
         return true;
       } else {
-        console.error('❌ Orden confirmada, pero falló el envío de detalles. Pedido pendiente eliminado.');
+        console.error(`❌ [${requestId}] Orden confirmada, pero falló el envío de detalles en ${duration}ms. Pedido pendiente eliminado.`);
         return false; // Reflejar el fallo del envío de detalles
       }
 
     } catch (error) {
-      console.error('❌ Error procesando respuesta del proveedor:', error);
+      const duration = Date.now() - startTime;
+      console.error(`❌ [${requestId}] Error procesando respuesta del proveedor en ${duration}ms:`, error);
       return false;
     }
   }
@@ -574,43 +595,64 @@ export class OrderNotificationService {
      * Envía los detalles del pedido al proveedor
      */
     static async sendOrderDetails(providerPhone: string, message: string, userId?: string): Promise<{ success: boolean; error?: string }> {
+     const startTime = Date.now();
+     const requestId = `details_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+     
      try {
-       // 🔧 MEJORA: Reducir logging excesivo
-       if (process.env.NODE_ENV === 'development') {
-         console.log('📤 Enviando detalles del pedido a:', providerPhone);
-       }
+       console.log(`📤 [${requestId}] Enviando detalles del pedido a: ${providerPhone}`);
+       console.log(`📝 [${requestId}] Longitud del mensaje: ${message.length} caracteres`);
        
        // 🔧 CORRECCIÓN: Construir URL de forma robusta con protocolo
        const baseUrl = this.buildBaseUrl();
+       console.log(`🌐 [${requestId}] URL base: ${baseUrl}`);
        
-       const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
+       const endpointUrl = `${baseUrl}/api/whatsapp/send`;
+       console.log(`📡 [${requestId}] Endpoint: ${endpointUrl}`);
+       
+       const requestBody = {
+         to: providerPhone,
+         message: message,
+         userId: userId
+       };
+       
+       console.log(`📤 [${requestId}] Enviando request:`, {
+         to: requestBody.to,
+         messageLength: requestBody.message.length,
+         userId: requestBody.userId
+       });
+       
+       const response = await fetch(endpointUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            to: providerPhone,
-            message: message,
-            userId: userId // 🔧 MEJORA: Pasar userId para guardar el mensaje
-          }),
+          body: JSON.stringify(requestBody),
         });
 
-       const result = await response.json();
+       console.log(`📥 [${requestId}] Response status: ${response.status} ${response.statusText}`);
        
        if (!response.ok) {
-         console.error('❌ Error enviando detalles:', result);
-         return { success: false, error: result.error || 'Error enviando mensaje' };
+         const errorText = await response.text();
+         console.error(`❌ [${requestId}] Error HTTP ${response.status}:`, errorText);
+         return { success: false, error: `HTTP ${response.status}: ${errorText}` };
        }
 
-       // 🔧 MEJORA: Reducir logging excesivo
-       if (process.env.NODE_ENV === 'development') {
-         console.log('✅ Detalles enviados exitosamente');
+       const result = await response.json();
+       console.log(`📥 [${requestId}] Response JSON:`, result);
+       
+       if (!result.success) {
+         console.error(`❌ [${requestId}] API returned success: false:`, result.error);
+         return { success: false, error: result.error || 'API returned success: false' };
        }
+
+       const duration = Date.now() - startTime;
+       console.log(`✅ [${requestId}] Detalles enviados exitosamente en ${duration}ms`);
        return { success: true };
        
      } catch (error) {
+       const duration = Date.now() - startTime;
        const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
-       console.error('❌ Error enviando detalles del pedido:', error);
+       console.error(`❌ [${requestId}] Error enviando detalles del pedido en ${duration}ms:`, error);
        return { success: false, error: errorMsg };
      }
    }

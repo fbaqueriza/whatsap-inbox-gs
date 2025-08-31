@@ -22,63 +22,79 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
+  const requestId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   try {
     // 🔧 LOG CRÍTICO: Siempre loguear para debugging
-    console.log('🚀 WEBHOOK INICIADO:', new Date().toISOString());
+    console.log(`🚀 [${requestId}] WEBHOOK INICIADO:`, new Date().toISOString());
     
     const body = await request.json();
-    console.log('📥 Webhook recibido:', JSON.stringify(body, null, 2));
+    console.log(`📥 [${requestId}] Webhook recibido:`, JSON.stringify(body, null, 2));
 
     // Verificar que es un mensaje de WhatsApp
     if (body.object === 'whatsapp_business_account') {
-      console.log('✅ Es un mensaje de WhatsApp Business Account');
+      console.log(`✅ [${requestId}] Es un mensaje de WhatsApp Business Account`);
       
       const entry = body.entry?.[0];
       if (entry?.changes?.[0]?.value?.messages) {
         const messages = entry.changes[0].value.messages;
-        console.log(`📱 Procesando ${messages.length} mensajes`);
+        console.log(`📱 [${requestId}] Procesando ${messages.length} mensajes`);
         
         let processedCount = 0;
+        let errorCount = 0;
+        
         for (const message of messages) {
           try {
-            await processWhatsAppMessage(message);
-            processedCount++;
+            const result = await processWhatsAppMessage(message, requestId);
+            if (result.success) {
+              processedCount++;
+            } else {
+              errorCount++;
+              console.error(`❌ [${requestId}] Error procesando mensaje:`, result.error);
+            }
           } catch (error) {
-            console.error('❌ Error procesando mensaje individual:', error);
+            errorCount++;
+            console.error(`❌ [${requestId}] Error procesando mensaje individual:`, error);
           }
         }
-        console.log(`✅ Procesados ${processedCount}/${messages.length} mensajes`);
+        
+        console.log(`✅ [${requestId}] Procesados ${processedCount}/${messages.length} mensajes (${errorCount} errores)`);
       } else {
-        console.log('⚠️ No se encontraron mensajes en el webhook');
+        console.log(`⚠️ [${requestId}] No se encontraron mensajes en el webhook`);
       }
     } else {
-      console.log('❌ No es un mensaje de WhatsApp Business Account');
+      console.log(`❌ [${requestId}] No es un mensaje de WhatsApp Business Account`);
     }
 
     const duration = Date.now() - startTime;
-    console.log(`🏁 WEBHOOK COMPLETADO en ${duration}ms`);
+    console.log(`🏁 [${requestId}] WEBHOOK COMPLETADO en ${duration}ms`);
     
-    return NextResponse.json({ status: 'ok', processed: true });
+    return NextResponse.json({ 
+      status: 'ok', 
+      processed: true, 
+      requestId: requestId,
+      duration: duration 
+    });
   } catch (error) {
     const duration = Date.now() - startTime;
-    console.error('❌ Error procesando webhook:', error);
-    console.error(`💥 WEBHOOK FALLÓ en ${duration}ms`);
+    console.error(`❌ [${requestId}] Error procesando webhook:`, error);
+    console.error(`💥 [${requestId}] WEBHOOK FALLÓ en ${duration}ms`);
     
     return NextResponse.json({ 
       error: 'Internal server error', 
+      requestId: requestId,
       duration: duration 
     }, { status: 500 });
   }
 }
 
-async function processWhatsAppMessage(message: any) {
+async function processWhatsAppMessage(message: any, requestId: string) {
   const messageStartTime = Date.now();
   
   try {
     const { from, text, timestamp } = message;
     
-    console.log('📱 Procesando mensaje de WhatsApp:', {
+    console.log(`📱 [${requestId}] Procesando mensaje de WhatsApp:`, {
       from,
       text: text?.body,
       timestamp
@@ -91,45 +107,50 @@ async function processWhatsAppMessage(message: any) {
     }
 
     // 🔧 NUEVA FUNCIONALIDAD: Guardar mensaje con user_id asignado
-    const saveResult = await saveMessageWithUserId(normalizedFrom, text?.body, timestamp);
+    const saveResult = await saveMessageWithUserId(normalizedFrom, text?.body, timestamp, requestId);
     
     if (saveResult.success) {
-      console.log(`✅ Mensaje guardado con user_id: ${saveResult.userId}`);
+      console.log(`✅ [${requestId}] Mensaje guardado con user_id: ${saveResult.userId}`);
     } else {
-      console.log(`❌ Error guardando mensaje: ${saveResult.error}`);
+      console.log(`❌ [${requestId}] Error guardando mensaje: ${saveResult.error}`);
+      return { success: false, error: saveResult.error };
     }
 
     // Procesar respuesta del proveedor
     if (text?.body) {
-      console.log('🔄 Iniciando processProviderResponse para:', normalizedFrom);
+      console.log(`🔄 [${requestId}] Iniciando processProviderResponse para:`, normalizedFrom);
       
       const success = await OrderNotificationService.processProviderResponse(normalizedFrom, text.body);
       
       if (success) {
-        console.log('✅ Respuesta del proveedor procesada exitosamente');
+        console.log(`✅ [${requestId}] Respuesta del proveedor procesada exitosamente`);
       } else {
-        console.log('ℹ️ No se encontró pedido pendiente para este número:', normalizedFrom);
+        console.log(`ℹ️ [${requestId}] No se encontró pedido pendiente para este número:`, normalizedFrom);
       }
     } else {
-      console.log('⚠️ Mensaje sin texto recibido de:', normalizedFrom);
+      console.log(`⚠️ [${requestId}] Mensaje sin texto recibido de:`, normalizedFrom);
     }
     
     const duration = Date.now() - messageStartTime;
-    console.log(`✅ Mensaje procesado en ${duration}ms`);
+    console.log(`✅ [${requestId}] Mensaje procesado en ${duration}ms`);
+    
+    return { success: true, duration: duration };
     
   } catch (error) {
     const duration = Date.now() - messageStartTime;
-    console.error('❌ Error procesando mensaje de WhatsApp:', error);
-    console.error(`💥 Mensaje falló en ${duration}ms`);
+    console.error(`❌ [${requestId}] Error procesando mensaje de WhatsApp:`, error);
+    console.error(`💥 [${requestId}] Mensaje falló en ${duration}ms`);
     
     if (error instanceof Error) {
-      console.error('❌ Stack trace:', error.stack);
+      console.error(`❌ [${requestId}] Stack trace:`, error.stack);
     }
+    
+    return { success: false, error: error instanceof Error ? error.message : 'Error desconocido' };
   }
 }
 
 // 🔧 FUNCIÓN MEJORADA: Guardar mensaje con user_id asignado automáticamente
-async function saveMessageWithUserId(contactId: string, content: string, timestamp: string) {
+async function saveMessageWithUserId(contactId: string, content: string, timestamp: string, requestId: string) {
   try {
     const { createClient } = await import('@supabase/supabase-js');
     
@@ -137,7 +158,7 @@ async function saveMessageWithUserId(contactId: string, content: string, timesta
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
-      console.error('❌ Variables de entorno faltantes para guardar mensaje');
+      console.error(`❌ [${requestId}] Variables de entorno faltantes para guardar mensaje`);
       return { success: false, error: 'Variables de entorno faltantes' };
     }
 
@@ -151,19 +172,21 @@ async function saveMessageWithUserId(contactId: string, content: string, timesta
       .or(`phone.eq.${contactId},phone.eq.${contactId.replace('+', '')}`);
 
     if (providersError) {
-      console.error('❌ Error buscando proveedor:', providersError);
+      console.error(`❌ [${requestId}] Error buscando proveedor:`, providersError);
       return { success: false, error: 'Error buscando proveedor' };
     }
 
     let userId = null;
     if (providers && providers.length > 0) {
       userId = providers[0].user_id; // Este es el user_id del usuario de la app
-      console.log(`✅ Encontrado usuario de la app ${userId} para proveedor ${contactId}`);
+      console.log(`✅ [${requestId}] Encontrado usuario de la app ${userId} para proveedor ${contactId}`);
     } else {
-      console.log(`⚠️ No se encontró usuario de la app para proveedor ${contactId}`);
+      console.log(`⚠️ [${requestId}] No se encontró usuario de la app para proveedor ${contactId}`);
     }
 
     // Guardar mensaje con user_id del usuario de la app
+    const messageSid = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
     const { error: saveError } = await supabase
       .from('whatsapp_messages')
       .insert([{
@@ -172,20 +195,21 @@ async function saveMessageWithUserId(contactId: string, content: string, timesta
         status: 'delivered',
         contact_id: contactId, // Número del proveedor
         user_id: userId, // ID del usuario de la app
-        message_sid: `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        message_sid: messageSid,
         timestamp: new Date(parseInt(timestamp) * 1000).toISOString(),
         created_at: new Date().toISOString()
       }]);
 
     if (saveError) {
-      console.error('❌ Error guardando mensaje:', saveError);
+      console.error(`❌ [${requestId}] Error guardando mensaje:`, saveError);
       return { success: false, error: saveError.message };
     } else {
-      console.log(`✅ Mensaje guardado con user_id del usuario de la app: ${userId || 'null'}`);
-      return { success: true, userId: userId };
+      console.log(`✅ [${requestId}] Mensaje guardado con user_id del usuario de la app: ${userId || 'null'}`);
+      console.log(`📝 [${requestId}] Message SID: ${messageSid}`);
+      return { success: true, userId: userId, messageSid: messageSid };
     }
   } catch (error) {
-    console.error('❌ Error en saveMessageWithUserId:', error);
+    console.error(`❌ [${requestId}] Error en saveMessageWithUserId:`, error);
     return { success: false, error: error instanceof Error ? error.message : 'Error desconocido' };
   }
 }

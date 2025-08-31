@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useRealtimeManager } from '../hooks/useRealtimeManager';
+import { supabase } from '../lib/supabase/client';
 
 // Tipos
 interface RealtimeMessage {
@@ -11,6 +12,7 @@ interface RealtimeMessage {
   type: 'sent' | 'received';
   contact_id: string;
   status: string;
+  user_id?: string;
 }
 
 interface RealtimeOrder {
@@ -24,6 +26,7 @@ interface RealtimeServiceContextType {
   addMessageListener: (callback: (message: RealtimeMessage) => void) => () => void;
   addOrderListener: (callback: (order: RealtimeOrder) => void) => () => void;
   isConnected: boolean;
+  currentUserId: string | null;
 }
 
 // Contexto
@@ -43,23 +46,52 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const [messages, setMessages] = useState<RealtimeMessage[]>([]);
   const [orders, setOrders] = useState<RealtimeOrder[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   
   const messageListeners = useRef<Set<(message: RealtimeMessage) => void>>(new Set());
   const orderListeners = useRef<Set<(order: RealtimeOrder) => void>>(new Set());
   
   const { subscribe, unsubscribe } = useRealtimeManager();
 
+  // 🔧 OPTIMIZACIÓN: Obtener usuario actual una sola vez
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        setCurrentUserId(user?.id || null);
+      } catch (error) {
+        console.error('Error obteniendo usuario actual:', error);
+        setCurrentUserId(null);
+      }
+    };
+
+    getCurrentUser();
+
+    // Escuchar cambios de autenticación
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setCurrentUserId(session?.user?.id || null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   // Handlers para mensajes
   const handleNewMessage = (payload: any) => {
     const newMessage = payload.new;
     if (newMessage) {
+      // 🔧 OPTIMIZACIÓN: Filtrar mensajes por user_id del usuario actual
+      if (newMessage.user_id && currentUserId && newMessage.user_id !== currentUserId) {
+        return; // Ignorar mensajes de otros usuarios
+      }
+
       const message: RealtimeMessage = {
         id: newMessage.id,
         content: newMessage.content,
         timestamp: new Date(newMessage.timestamp),
         type: newMessage.message_type,
         contact_id: newMessage.contact_id,
-        status: newMessage.status || 'delivered'
+        status: newMessage.status || 'delivered',
+        user_id: newMessage.user_id
       };
       
       setMessages(prev => {
@@ -81,6 +113,11 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const handleMessageUpdate = (payload: any) => {
     const updatedMessage = payload.new;
     if (updatedMessage) {
+      // 🔧 OPTIMIZACIÓN: Filtrar actualizaciones por user_id
+      if (updatedMessage.user_id && currentUserId && updatedMessage.user_id !== currentUserId) {
+        return;
+      }
+
       setMessages(prev => 
         prev.map(msg => 
           msg.id === updatedMessage.id 
@@ -94,33 +131,24 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const handleMessageDelete = (payload: any) => {
     const deletedMessage = payload.old;
     if (deletedMessage) {
+      // 🔧 OPTIMIZACIÓN: Filtrar eliminaciones por user_id
+      if (deletedMessage.user_id && currentUserId && deletedMessage.user_id !== currentUserId) {
+        return;
+      }
+
       setMessages(prev => 
         prev.filter(msg => msg.id !== deletedMessage.id)
       );
     }
   };
 
-  // Handlers para órdenes
   const handleNewOrder = (payload: any) => {
     const newOrder = payload.new;
     if (newOrder) {
-      const order: RealtimeOrder = {
-        id: newOrder.id,
-        status: newOrder.status
-      };
-      
       setOrders(prev => {
-        const exists = prev.some(o => o.id === order.id);
+        const exists = prev.some(order => order.id === newOrder.id);
         if (exists) return prev;
-        return [...prev, order];
-      });
-      
-      orderListeners.current.forEach(callback => {
-        try {
-          callback(order);
-        } catch (error) {
-          console.error('Error en order listener:', error);
-        }
+        return [...prev, newOrder];
       });
     }
   };
@@ -132,7 +160,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         prev.map(order => 
           order.id === updatedOrder.id 
             ? { ...order, ...updatedOrder }
-            : order
+            : msg
         )
       );
     }
@@ -147,10 +175,22 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     }
   };
 
-  // Configurar suscripciones Realtime
+  // 🔧 OPTIMIZACIÓN: Configurar suscripciones solo cuando hay usuario autenticado
   useEffect(() => {
+    if (!currentUserId) {
+      console.log('🔄 RealtimeService: Usuario no autenticado, no configurando suscripciones');
+      return;
+    }
+
+    console.log(`🔗 RealtimeService: Configurando suscripciones para usuario ${currentUserId}`);
+
+    // Suscripción a mensajes con filtro por user_id
     subscribe(
-      { table: 'whatsapp_messages', event: '*' },
+      { 
+        table: 'whatsapp_messages', 
+        event: '*',
+        filter: `user_id=eq.${currentUserId}` // 🔧 FILTRO CRÍTICO: Solo mensajes del usuario actual
+      },
       {
         onInsert: handleNewMessage,
         onUpdate: handleMessageUpdate,
@@ -166,6 +206,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       }
     );
 
+    // Suscripción a órdenes (sin filtro por ahora)
     subscribe(
       { table: 'orders', event: '*' },
       {
@@ -186,10 +227,15 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     setIsConnected(true);
 
     return () => {
-      unsubscribe({ table: 'whatsapp_messages', event: '*' });
+      console.log(`🔌 RealtimeService: Desuscribiendo de mensajes para usuario ${currentUserId}`);
+      unsubscribe({ 
+        table: 'whatsapp_messages', 
+        event: '*',
+        filter: `user_id=eq.${currentUserId}`
+      });
       unsubscribe({ table: 'orders', event: '*' });
     };
-  }, [subscribe, unsubscribe]);
+  }, [currentUserId, subscribe, unsubscribe]); // 🔧 DEPENDENCIA CRÍTICA: currentUserId
 
   // Funciones para agregar/remover listeners
   const addMessageListener = (callback: (message: RealtimeMessage) => void) => {
@@ -211,7 +257,8 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     orders,
     addMessageListener,
     addOrderListener,
-    isConnected
+    isConnected,
+    currentUserId
   };
 
   return (

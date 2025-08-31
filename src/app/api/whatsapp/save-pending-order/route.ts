@@ -1,61 +1,128 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+// Solo crear el cliente si las variables están disponibles
+let supabase: any = null;
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (supabaseUrl && supabaseKey) {
+  supabase = createClient(supabaseUrl, supabaseKey);
+} else {
+  console.error('❌ API save-pending-order - Variables de entorno faltantes');
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { orderId, providerId, providerPhone, orderData } = await request.json();
-
-    if (!orderId || !providerId || !providerPhone || !orderData) {
-      return NextResponse.json(
-        { success: false, error: 'Datos incompletos' },
-        { status: 400 }
-      );
-    }
-
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-
-    // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
-    const phoneRegex = /^\+54\d{9,11}$/;
-    if (!phoneRegex.test(providerPhone)) {
-      console.error('❌ Formato de teléfono inválido:', providerPhone);
-      console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
-      return NextResponse.json(
-        { success: false, error: 'Formato de teléfono inválido. Debe ser: +54XXXXXXXXXX' },
-        { status: 400 }
-      );
+    // Verificar que Supabase esté inicializado
+    if (!supabase) {
+      console.error('❌ Supabase no inicializado');
+      return NextResponse.json({
+        success: false,
+        error: 'Database not configured'
+      }, { status: 500 });
     }
     
-    const { error } = await supabase
-      .from('pending_orders')
-      .insert({
-        order_id: orderId,
-        provider_id: providerId,
-        provider_phone: providerPhone,
-        order_data: orderData,
-        status: 'pending_confirmation',
-        created_at: new Date().toISOString()
-      });
+    const body = await request.json();
+    const { orderId, providerId, userId, providerPhone, status = 'pending_confirmation' } = body;
 
-    if (error) {
-      console.error('❌ Error guardando pedido pendiente:', error);
+    if (!orderId || !providerId || !userId) {
       return NextResponse.json(
-        { success: false, error: 'Error guardando en base de datos' },
+        { error: 'orderId, providerId y userId son requeridos' },
+        { status: 400 }
+      );
+    }
+
+    // Obtener el teléfono del proveedor si no se proporciona
+    let phone = providerPhone;
+    if (!phone) {
+      const { data: provider, error: providerError } = await supabase
+        .from('providers')
+        .select('phone')
+        .eq('id', providerId)
+        .single();
+      
+      if (providerError) {
+        console.error('Error obteniendo teléfono del proveedor:', providerError);
+        return NextResponse.json(
+          { error: 'Error obteniendo datos del proveedor' },
+          { status: 500 }
+        );
+      }
+      phone = provider.phone;
+    }
+
+    // Obtener datos completos de la orden para guardar en order_data
+    const { data: orderData, error: orderError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+    if (orderError) {
+      console.error('Error obteniendo datos de la orden:', orderError);
+      return NextResponse.json(
+        { error: 'Error obteniendo datos de la orden' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      message: 'Pedido pendiente guardado exitosamente'
+    // Verificar si ya existe un pedido pendiente para esta orden
+    const { data: existingPending, error: checkError } = await supabase
+      .from('pending_orders')
+      .select('id')
+      .eq('order_id', orderId)
+      .single();
+
+    if (existingPending) {
+      console.log('Pedido pendiente ya existe para la orden:', orderId);
+      return NextResponse.json({ 
+        success: true, 
+        message: 'Pedido pendiente ya existe',
+        pendingOrder: existingPending 
+      });
+    }
+
+    // Guardar pedido pendiente en la base de datos
+    const { data, error } = await supabase
+      .from('pending_orders')
+      .insert({
+        order_id: orderId,
+        provider_id: providerId,
+        user_id: userId,
+        provider_phone: phone,
+        order_data: orderData, // Incluir los datos completos de la orden
+        status,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error guardando pedido pendiente:', error);
+      return NextResponse.json(
+        { error: 'Error guardando pedido pendiente' },
+        { status: 500 }
+      );
+    }
+
+    console.log('✅ Pedido pendiente guardado exitosamente:', {
+      orderId,
+      providerId,
+      providerPhone: phone,
+      status
     });
 
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Pedido pendiente guardado exitosamente',
+      pendingOrder: data 
+    });
   } catch (error) {
-    console.error('❌ Error en save-pending-order:', error);
+    console.error('Error en POST /api/whatsapp/save-pending-order:', error);
     return NextResponse.json(
-      { success: false, error: 'Error interno del servidor' },
+      { error: 'Error interno del servidor' },
       { status: 500 }
     );
   }

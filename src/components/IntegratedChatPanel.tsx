@@ -93,6 +93,52 @@ const MessageStatus = ({ status }: { status: 'sent' | 'delivered' | 'read' | 'fa
   );
 };
 
+// Función para obtener el contenido del template desde Meta API
+const getTemplateContent = async (templateName: string): Promise<string> => {
+  try {
+    // Intentar obtener el contenido real del template desde Meta API
+    const response = await fetch('/api/whatsapp/template-content', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        template_name: templateName
+      }),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      if (result.content) {
+        console.log(`📋 Contenido real del template ${templateName}:`, result.content);
+        return result.content;
+      }
+    }
+  } catch (error) {
+    console.warn(`⚠️ No se pudo obtener contenido real del template ${templateName}:`, error);
+  }
+
+  // Fallback con contenido básico si no se puede obtener el real
+  const fallbackTemplates: { [key: string]: string } = {
+    'envio_de_orden': '🛒 *NUEVO PEDIDO*\n\nSe ha recibido un nuevo pedido. Por favor revisa los detalles y confirma la recepción.',
+    'inicializador_de_conv': '👋 ¡Hola! Iniciando conversación para coordinar pedidos.',
+    'notificacion_pedido': '📋 Notificación de nuevo pedido recibido.',
+    'confirmacion_pedido': '✅ Pedido confirmado y en proceso.',
+    'recordatorio_pedido': '⏰ Recordatorio: Pedido pendiente de confirmación.',
+    'pedido_enviado': '📤 Pedido enviado al proveedor.',
+    'pedido_confirmado': '✅ Pedido confirmado por el proveedor.',
+    'pedido_rechazado': '❌ Pedido rechazado por el proveedor.',
+    'pedido_modificado': '🔄 Pedido modificado.',
+    'pedido_cancelado': '🚫 Pedido cancelado.',
+    'pedido_entregado': '🎉 Pedido entregado exitosamente.',
+    'recordatorio_pago': '💰 Recordatorio de pago pendiente.',
+    'confirmacion_pago': '💳 Pago confirmado.',
+    'error_pago': '⚠️ Error en el procesamiento del pago.'
+  };
+  
+  return fallbackTemplates[templateName] || `📋 Template: ${templateName} enviado`;
+};
+
 export default function IntegratedChatPanel({ 
   providers,
   isOpen, 
@@ -109,7 +155,8 @@ export default function IntegratedChatPanel({
     closeChat,
     isConnected,
     connectionStatus,
-    selectContact
+    selectContact,
+    addMessage
   } = useChat();
 
   // Función para verificar si han pasado 24 horas desde el último mensaje (enviado O recibido)
@@ -295,6 +342,75 @@ export default function IntegratedChatPanel({
     };
   }, [contacts, selectContact]);
 
+  // Listener para detectar cuando se envía un template desde el flujo de notificación
+  // ELIMINADO: Este listener causaba duplicación de mensajes ya que el template se envía desde orderNotificationService
+  // useEffect(() => {
+  //   const handleOrderSent = async (event: CustomEvent) => {
+  //     const { orderId, providerId } = event.detail;
+  //     
+  //     // Buscar el proveedor por ID
+  //     const provider = providers.find(p => p.id === providerId);
+  //     if (provider) {
+  //       const normalizedPhone = normalizeContactIdentifier(provider.phone);
+  //       
+  //       try {
+  //         console.log('📱 Iniciando obtención de contenido real del template...');
+  //         
+  //         // Obtener el contenido real del template desde Meta API
+  //         const templateContent = await getTemplateContent('envio_de_orden');
+  //         
+  //         console.log('📱 Contenido real obtenido:', templateContent);
+  //         
+  //         // Crear el mensaje del template
+  //         const templateMessage = {
+  //           id: `template_${orderId}_${Date.now()}`,
+  //           from: 'me',
+  //           to: normalizedPhone,
+  //           content: templateContent,
+  //           type: 'sent' as const,
+  //           timestamp: new Date(),
+  //           status: 'sent' as const,
+  //           isTemplate: true,
+  //           templateName: 'envio_de_orden',
+  //           contact_id: normalizedPhone
+  //         };
+  //         
+  //         // Agregar el mensaje al contexto del chat
+  //         addMessage(normalizedPhone, templateMessage);
+  //         
+  //         console.log('📱 Template agregado al chat con contenido real:', templateContent);
+  //       } catch (error) {
+  //         console.error('❌ Error obteniendo contenido del template:', error);
+  //         
+  //         // Fallback: usar contenido básico si falla la obtención
+  //         const fallbackContent = '🛒 *NUEVO PEDIDO*\n\nSe ha recibido un nuevo pedido. Por favor revisa los detalles y confirma la recepción.';
+  //         
+  //         const fallbackMessage = {
+  //           id: `template_${orderId}_${Date.now()}`,
+  //           from: 'me',
+  //           to: normalizedPhone,
+  //           content: fallbackContent,
+  //           type: 'sent' as const,
+  //           timestamp: new Date(),
+  //           status: 'sent' as const,
+  //           isTemplate: true,
+  //           templateName: 'envio_de_orden',
+  //           contact_id: normalizedPhone
+  //         };
+  //         
+  //         addMessage(normalizedPhone, fallbackMessage);
+  //         console.log('📱 Template agregado al chat con contenido fallback');
+  //       }
+  //     }
+  //   };
+
+  //   window.addEventListener('orderSent', handleOrderSent as unknown as EventListener);
+  //   
+  //   return () => {
+  //     window.removeEventListener('orderSent', handleOrderSent as unknown as EventListener);
+  //   };
+  // }, [providers, addMessage]);
+
   // Seleccionar automáticamente el primer contacto cuando se abre el chat
   useEffect(() => {
     if (isPanelOpen && contacts.length > 0 && !currentContact) {
@@ -310,6 +426,19 @@ export default function IntegratedChatPanel({
     }
   }, [currentContact?.phone, isPanelOpen, markAsRead]);
 
+  // Marcar como leído automáticamente cuando llegan nuevos mensajes a la conversación activa
+  useEffect(() => {
+    if (currentContact?.phone && isPanelOpen) {
+      const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
+      const contactMessages = messagesByContact[normalizedPhone];
+      
+      // Si hay mensajes no leídos en la conversación activa, marcarlos como leídos
+      if (contactMessages && contactMessages.some(msg => msg.type === 'received' && msg.status !== 'read')) {
+        markAsRead(normalizedPhone);
+      }
+    }
+  }, [messagesByContact, currentContact?.phone, isPanelOpen, markAsRead]);
+
   // Scroll al final de los mensajes (optimizado)
   const scrollToBottom = useCallback(() => {
     if (messagesEndRef.current) {
@@ -321,7 +450,7 @@ export default function IntegratedChatPanel({
     }
   }, []);
 
-  // Scroll automático solo cuando se cambia de contacto o se abre el chat
+  // Scroll automático cuando cambia el contacto o llegan nuevos mensajes
   useEffect(() => {
     if (currentContact && messagesEndRef.current) {
       // Scroll inmediatamente al final sin animación
@@ -335,7 +464,7 @@ export default function IntegratedChatPanel({
         }
       }, 200); // Aumentar delay para asegurar que el DOM esté listo
     }
-  }, [currentContact?.phone]); // Solo cuando cambia el contacto, no cuando cambian los mensajes
+  }, [currentContact?.phone, messagesByContact[currentContact?.phone || '']?.length]); // Agregar dependencia de cantidad de mensajes
 
   // Scroll adicional cuando se abre el chat por primera vez
   useEffect(() => {
@@ -598,7 +727,17 @@ export default function IntegratedChatPanel({
                              : 'bg-white text-gray-900 shadow-sm'
                          }`}
                        >
-                         <p className="whitespace-pre-wrap">{message.content}</p>
+                         {/* Indicador de template */}
+                         {message.isTemplate && (
+                           <div className="mb-1">
+                             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                               📋 Template: {message.templateName}
+                             </span>
+                           </div>
+                         )}
+                         <div className="whitespace-pre-wrap">
+                           {message.content}
+                         </div>
                          <div className={`text-xs mt-1 flex items-center justify-between ${
                            message.type === 'sent' ? 'text-green-100' : 'text-gray-500'
                          }`}>

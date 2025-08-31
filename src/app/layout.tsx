@@ -1,3 +1,4 @@
+import React from 'react';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
@@ -7,6 +8,7 @@ import { ChatProvider } from '../contexts/ChatContext';
 import { GlobalChatProvider } from '../contexts/GlobalChatContext';
 import GlobalChatWrapper from '../components/GlobalChatWrapper';
 import ChatInitializer from '../components/ChatInitializer';
+import { RealtimeServiceProvider } from '../services/realtimeService';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -46,16 +48,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="es">
       <body className={inter.className}>
         <SupabaseAuthProvider>
-          <ChatProvider>
-            <GlobalChatProvider>
-              <ChatInitializer />
-              <ConditionalNavigation />
-              <main className="min-h-screen">
-                {children}
-              </main>
-              <GlobalChatWrapper />
-            </GlobalChatProvider>
-          </ChatProvider>
+          <RealtimeServiceProvider>
+            <ChatProvider>
+              <GlobalChatProvider>
+                <ChatInitializer />
+                <ConditionalNavigation />
+                <main className="min-h-screen">
+                  {children}
+                </main>
+                <GlobalChatWrapper />
+              </GlobalChatProvider>
+            </ChatProvider>
+          </RealtimeServiceProvider>
         </SupabaseAuthProvider>
       </body>
     </html>

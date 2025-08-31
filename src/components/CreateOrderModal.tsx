@@ -8,7 +8,7 @@ import DateSelector from './DateSelector';
 interface CreateOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateOrder: (order: {
+  onSubmit: (order: {
     providerId: string;
     items: OrderItem[];
     notes: string;
@@ -19,22 +19,23 @@ interface CreateOrderModalProps {
   providers: Provider[];
   stockItems: StockItem[];
   suggestedOrder?: {
-    productName: string;
-    suggestedQuantity: number;
-    unit: string;
-    suggestedProviders: Provider[];
+    providerId?: string;
+    providerName?: string;
+    productName?: string;
+    suggestedQuantity?: number;
+    unit?: string;
   };
-  selectedProviderId?: string | null;
+  isLoading?: boolean;
 }
 
 export default function CreateOrderModal({
   isOpen,
   onClose,
-  onCreateOrder,
+  onSubmit,
   providers,
   stockItems,
   suggestedOrder,
-  selectedProviderId,
+  isLoading = false,
 }: CreateOrderModalProps) {
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [orderText, setOrderText] = useState('');
@@ -44,20 +45,10 @@ export default function CreateOrderModal({
   const [additionalFiles, setAdditionalFiles] = useState<OrderFile[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
 
-  // Set selectedProvider from prop if provided
+  // Set selectedProvider from suggestedOrder if present
   useEffect(() => {
-    if (selectedProviderId && selectedProviderId !== selectedProvider) {
-      setSelectedProvider(selectedProviderId);
-    }
-  }, [selectedProviderId]);
-
-  // Set selectedProvider and orderText from suggestedOrder if present
-  useEffect(() => {
-    if (suggestedOrder) {
-      if (suggestedOrder.suggestedProviders && suggestedOrder.suggestedProviders.length > 0) {
-        setSelectedProvider(suggestedOrder.suggestedProviders[0].id);
-      }
-      setOrderText(`${suggestedOrder.productName}: ${suggestedOrder.suggestedQuantity} ${suggestedOrder.unit}`);
+    if (suggestedOrder?.providerId) {
+      setSelectedProvider(suggestedOrder.providerId);
     }
   }, [suggestedOrder]);
 
@@ -106,39 +97,67 @@ export default function CreateOrderModal({
     }
   }, [selectedProvider, providers]);
 
-  // Generate suggested order text when provider is selected
+  // 🔧 OPTIMIZACIÓN: Precarga mejorada de items de proveedores
   useEffect(() => {
-    if (selectedProvider && !suggestedOrder) {
+    if (selectedProvider) {
       const provider = providers.find(p => p.id === selectedProvider);
       if (provider) {
         const now = new Date();
         const weekFromNow = new Date();
         weekFromNow.setDate(now.getDate() + 7);
-        // Suggest items where associatedProviders includes selectedProvider and preferredProvider is empty or matches
-        const matchingItems = stockItems.filter(stock =>
-          stock.associatedProviders.includes(selectedProvider) &&
-          (!stock.preferredProvider || stock.preferredProvider === selectedProvider)
+        
+        // 🔧 MEJORA: Filtrar items asociados al proveedor seleccionado
+        const matchingItems = stockItems.filter(stock => {
+          // Verificar que el item tenga providers asociados
+          if (!Array.isArray(stock.associatedProviders)) return false;
+          
+          // Verificar que el proveedor esté en la lista de asociados
+          const isAssociated = stock.associatedProviders.includes(selectedProvider);
+          
+          // Verificar preferencia si existe
+          const isPreferred = !stock.preferredProvider || stock.preferredProvider === selectedProvider;
+          
+          return isAssociated && isPreferred;
+        });
+        
+        // 🔧 MEJORA: Priorizar items urgentes (próxima orden en 7 días)
+        const urgentItems = matchingItems.filter(stock => 
+          stock.nextOrder && new Date(stock.nextOrder) <= weekFromNow
         );
-        // Urgent items first (nextOrder due soon)
-        const urgentItems = matchingItems.filter(stock => stock.nextOrder && new Date(stock.nextOrder) <= weekFromNow);
-        const nonUrgentItems = matchingItems.filter(stock => !urgentItems.includes(stock));
-        const itemsToSuggest = [...urgentItems, ...nonUrgentItems];
+        
+        // 🔧 MEJORA: Items no urgentes
+        const nonUrgentItems = matchingItems.filter(stock => 
+          !urgentItems.includes(stock)
+        );
+        
+        // 🔧 MEJORA: Combinar y limitar a 20 items máximo
+        const itemsToSuggest = [...urgentItems, ...nonUrgentItems].slice(0, 20);
+        
         if (itemsToSuggest.length > 0) {
           const suggestedText = itemsToSuggest.map(stock => {
-            let suggestedQty = stock.quantity;
+            // 🔧 MEJORA: Calcular cantidad sugerida basada en historial
+            let suggestedQty = stock.quantity || 1;
+            
             if (Array.isArray(stock.consumptionHistory) && stock.consumptionHistory.length > 0) {
-              suggestedQty = Math.round(stock.consumptionHistory.reduce((a, b) => a + b, 0) / stock.consumptionHistory.length);
+              const avgConsumption = stock.consumptionHistory.reduce((a, b) => a + b, 0) / stock.consumptionHistory.length;
+              suggestedQty = Math.max(1, Math.round(avgConsumption));
             }
-            // Elimina el status del final
-            return `${stock.productName}: ${suggestedQty} ${stock.unit}`;
+            
+            // 🔧 MEJORA: Agregar indicador de urgencia
+            const isUrgent = urgentItems.includes(stock);
+            const urgencyIndicator = isUrgent ? ' 🔴' : '';
+            
+            return `${stock.productName}: ${suggestedQty} ${stock.unit}${urgencyIndicator}`;
           }).join('\n');
+          
           setOrderText(suggestedText);
         } else {
-          setOrderText('');
+          // 🔧 MEJORA: Mensaje informativo cuando no hay items
+          setOrderText(`// No hay items asociados al proveedor ${provider.name}\n// Agregar items manualmente o configurar asociaciones en Stock`);
         }
       }
     } else if (suggestedOrder) {
-      // Handle suggested order from sidebar
+      // 🔧 MEJORA: Manejo de orden sugerida desde sidebar
       const suggestedText = `${suggestedOrder.productName}: ${suggestedOrder.suggestedQuantity} ${suggestedOrder.unit} - $0 (SUGERIDO)`;
       setOrderText(suggestedText);
     }
@@ -218,7 +237,7 @@ export default function CreateOrderModal({
 
     if (!selectedProvider) return;
     
-    onCreateOrder({
+    onSubmit({
       providerId: selectedProvider,
       items: parseOrderText(orderText),
       notes,
@@ -470,7 +489,16 @@ export default function CreateOrderModal({
             {/* Footer */}
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
               <button
-                onClick={onClose}
+                onClick={() => {
+                  // 🔧 MEJORA: Actualizar datos al cerrar modal
+                  onClose();
+                  // Trigger refresh después de cerrar
+                  setTimeout(() => {
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('orderModalClosed'));
+                    }
+                  }, 100);
+                }}
                 className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
               >
                 Cancelar

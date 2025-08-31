@@ -1,13 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Solo crear el cliente si las variables están disponibles
+let supabase: any = null;
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (supabaseUrl && supabaseKey) {
+  supabase = createClient(supabaseUrl, supabaseKey);
+} else {
+  console.error('❌ API debug pending-orders - Variables de entorno faltantes');
+}
 
 export async function GET(request: NextRequest) {
   try {
+    // Verificar que Supabase esté inicializado
+    if (!supabase) {
+      console.error('❌ Supabase no inicializado');
+      return NextResponse.json({
+        success: false,
+        error: 'Database not configured',
+        pendingOrders: []
+      }, { status: 500 });
+    }
+    
     const { searchParams } = new URL(request.url);
     const providerPhone = searchParams.get('providerPhone');
     

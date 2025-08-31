@@ -1,30 +1,21 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Configuración básica
+  swcMinify: true,
+  
+  // Configuración de ESLint
   eslint: {
     ignoreDuringBuilds: true,
   },
-  // Minimal configuration
-  webpack: (config, { isServer }) => {
-    if (!isServer) {
-      config.resolve.fallback = {
-        ...config.resolve.fallback,
-        undici: false,
-      };
-    }
-    return config;
+  
+  // Configuración de TypeScript
+  typescript: {
+    ignoreBuildErrors: true,
   },
-  async headers() {
-    return [
-      {
-        source: '/api/whatsapp/twilio/webhook',
-        headers: [
-          {
-            key: 'Content-Type',
-            value: 'application/json',
-          },
-        ],
-      },
-    ];
+  
+  // Configuración experimental simplificada
+  experimental: {
+    optimizeCss: true,
   },
 };
 

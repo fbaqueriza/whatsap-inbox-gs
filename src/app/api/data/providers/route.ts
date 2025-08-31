@@ -6,6 +6,16 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
+    // Verificar que Supabase esté inicializado
+    if (!supabaseServer) {
+      console.error('❌ Supabase no inicializado');
+      return NextResponse.json({
+        success: false,
+        error: 'Database not configured',
+        providers: []
+      }, { status: 500 });
+    }
+    
     // Obtener el token de autorización del header
     const authHeader = request.headers.get('authorization');
     let userId = null;

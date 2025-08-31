@@ -6,55 +6,448 @@ interface OrderNotificationData {
   items: OrderItem[];
 }
 
+interface NotificationResult {
+  success: boolean;
+  templateSent: boolean;
+  pendingOrderSaved: boolean;
+  errors: string[];
+}
+
+// Callbacks para notificar al frontend
+type PendingOrderCallback = (providerPhone: string, orderId: string) => void;
+
 export class OrderNotificationService {
+  private static onPendingOrderDeletedCallbacks: PendingOrderCallback[] = [];
+
   /**
-   * Envía notificación automática de nuevo pedido al proveedor
-   * NUEVO FLUJO: Solo envía el disparador y espera confirmación
+   * Registra un callback para cuando se elimina un pending order
    */
-  static async sendOrderNotification(data: { order: Order; provider: Provider; items: OrderItem[] }): Promise<boolean> {
+  static onPendingOrderDeleted(callback: PendingOrderCallback): void {
+    this.onPendingOrderDeletedCallbacks.push(callback);
+  }
+
+  /**
+   * Notifica a todos los callbacks registrados que se eliminó un pending order
+   */
+  private static notifyPendingOrderDeleted(providerPhone: string, orderId: string): void {
+    console.log(`🔔 Notificando eliminación de pending order: ${providerPhone} (${orderId})`);
+    this.onPendingOrderDeletedCallbacks.forEach(callback => {
+      try {
+        callback(providerPhone, orderId);
+      } catch (error) {
+        console.error('❌ Error en callback de eliminación:', error);
+      }
+    });
+  }
+
+  // Método singleton para obtener cliente Supabase
+  private static async getSupabaseClient() {
+    const { createClient } = await import('@supabase/supabase-js');
+    
+    // Determinar si estamos en el servidor o cliente
+    const isServer = typeof window === 'undefined';
+    
+    // Usar una instancia singleton para evitar múltiples clientes
+    const clientKey = isServer ? 'supabaseServiceClient' : 'supabaseClient';
+    
+    if (!(global as any)[clientKey]) {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = isServer 
+        ? process.env.SUPABASE_SERVICE_ROLE_KEY 
+        : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseKey) {
+        throw new Error(`Variables de entorno faltantes: ${!supabaseUrl ? 'NEXT_PUBLIC_SUPABASE_URL' : ''} ${!supabaseKey ? (isServer ? 'SUPABASE_SERVICE_ROLE_KEY' : 'NEXT_PUBLIC_SUPABASE_ANON_KEY') : ''}`);
+      }
+      
+      (global as any)[clientKey] = createClient(supabaseUrl, supabaseKey);
+    }
+    return (global as any)[clientKey];
+  }
+
+  /**
+   * Normaliza un número de teléfono al formato requerido +54XXXXXXXXXX
+   */
+  private static normalizePhoneNumber(phone: string): string | null {
+    if (!phone) return null;
+    
+    // Remover espacios, guiones, paréntesis y otros caracteres
+    let normalized = phone.replace(/[\s\-\(\)]/g, '');
+    
+    // Si ya empieza con +54, verificar que tenga el formato correcto
+    if (normalized.startsWith('+54')) {
+      if (normalized.length >= 12 && normalized.length <= 14) {
+        return normalized;
+      }
+    }
+    
+    // Si empieza con 54 (sin +), agregar +
+    if (normalized.startsWith('54')) {
+      normalized = '+' + normalized;
+      if (normalized.length >= 12 && normalized.length <= 14) {
+        return normalized;
+      }
+    }
+    
+    // Si empieza con 9 (número argentino), agregar +54
+    if (normalized.startsWith('9') && normalized.length === 10) {
+      return '+54' + normalized;
+    }
+    
+    // Si empieza con 11 (código de área), agregar +549
+    if (normalized.startsWith('11') && normalized.length === 10) {
+      return '+54' + normalized;
+    }
+    
+    // Si tiene 10 dígitos y empieza con 15, agregar +54
+    if (normalized.startsWith('15') && normalized.length === 10) {
+      return '+54' + normalized;
+    }
+    
+    // Si tiene 9 dígitos y empieza con 9, agregar +549
+    if (normalized.startsWith('9') && normalized.length === 9) {
+      return '+549' + normalized;
+    }
+    
+    // Si tiene 8 dígitos y empieza con 9, agregar +549
+    if (normalized.startsWith('9') && normalized.length === 8) {
+      return '+549' + normalized;
+    }
+    
+    console.warn('⚠️ No se pudo normalizar el número:', phone);
+    return null;
+  }
+
+  /**
+   * 🔧 FLUJO OPTIMIZADO: Envía notificación automática de nuevo pedido al proveedor
+   * 1. Orden se crea como 'pending'
+   * 2. Se envía template envio_de_orden con detalles completos
+   * 3. Se guarda como 'pending_confirmation'
+   * 4. Cuando el proveedor responde, se actualiza automáticamente
+   */
+  static async sendOrderNotification(order: Order, userId: string): Promise<NotificationResult> {
+    const result: NotificationResult = {
+      success: false,
+      templateSent: false,
+      pendingOrderSaved: false,
+      errors: []
+    };
+
     try {
-      const { order, provider, items } = data;
+      // 🔧 MEJORA: Log detallado para debugging
+      // 🔧 MEJORA: Reducir logging excesivo
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📤 Enviando notificación para orden:', order.id);
+      }
       
-      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
-      const phoneRegex = /^\+54\d{9,11}$/;
-      if (!phoneRegex.test(provider.phone)) {
-        console.error('❌ Formato de teléfono inválido:', provider.phone);
-        console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+      // 🔧 MEJORA: Obtener información del proveedor usando singleton mejorado
+      const supabase = await this.getSupabaseClient();
+
+      const { data: provider, error: providerError } = await supabase
+        .from('providers')
+        .select('*')
+        .eq('id', order.providerId)
+        .single();
+
+      if (providerError || !provider) {
+        const error = `No se encontró el proveedor: ${order.providerId}`;
+        console.error('❌', error);
+        result.errors.push(error);
+        return result;
+      }
+      
+             // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ Proveedor:', provider.name);
+        }
+      
+      // PASO 1: Normalizar número de teléfono
+      const normalizedPhone = this.normalizePhoneNumber(provider.phone);
+      if (!normalizedPhone) {
+        const error = `No se pudo normalizar el número: ${provider.phone}`;
+        console.error('❌', error);
+        result.errors.push(error);
+        return result;
+      }
+      
+             // Log solo si hay cambio en la normalización
+       if (provider.phone !== normalizedPhone) {
+         // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📱 Número normalizado:', provider.phone, '→', normalizedPhone);
+        }
+       }
+
+      // 🔧 PASO 2: Enviar template envio_de_orden con detalles completos
+      const baseUrl = this.buildBaseUrl();
+
+      try {
+        const templateResult = await this.sendTemplateToMeta(normalizedPhone, baseUrl, order, provider, userId);
+        result.templateSent = templateResult.success;
+        if (!templateResult.success) {
+          result.errors.push(`Template: ${templateResult.error}`);
+        }
+        // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📱 Template:', templateResult.success ? '✅ Enviado' : '❌ Falló');
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+        result.errors.push(`Template: ${errorMsg}`);
+        console.error('❌ Error enviando template:', error);
+      }
+
+      // PASO 3: Guardar pedido pendiente de confirmación
+      try {
+        const saveResult = await this.savePendingOrderAtomic(order, provider, normalizedPhone, userId, baseUrl);
+        result.pendingOrderSaved = saveResult.success;
+        if (!saveResult.success) {
+          result.errors.push(`Guardado: ${saveResult.error}`);
+        }
+        // 🔧 MEJORA: Reducir logging excesivo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('💾 Pending order:', saveResult.success ? '✅ Guardado' : '❌ Falló');
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+        result.errors.push(`Guardado: ${errorMsg}`);
+        console.error('❌ Error guardando pedido:', error);
+      }
+
+      // DETERMINAR ÉXITO GENERAL
+      result.success = result.templateSent || result.pendingOrderSaved;
+      
+             // Log solo si hay errores o éxito completo
+       if (result.errors.length > 0) {
+         console.log('❌ Errores en notificación:', result.errors.length);
+       } else if (result.success) {
+         console.log('✅ Notificación completada');
+       }
+
+      return result;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+      result.errors.push(errorMsg);
+      console.error('❌ Error general en sendOrderNotification:', error);
+      return result;
+    }
+  }
+
+  /**
+   * 🔧 OPTIMIZADO: Envía template a Meta API con detalles completos del pedido
+   */
+  private static async sendTemplateToMeta(
+    phone: string, 
+    baseUrl: string,
+    order?: Order,
+    provider?: Provider,
+    userId?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      // 🔧 CORRECCIÓN: Usar template disparador simple como funcionaba antes
+      const messageContent = 'envio_de_orden';
+      
+             const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json',
+         },
+         body: JSON.stringify({
+           to: phone,
+           message: messageContent,
+           userId: userId // 🔧 MEJORA: Pasar userId para guardar el mensaje
+         }),
+       });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error('❌ Error enviando template:', result);
+        return { success: false, error: result.error || 'Error enviando template' };
+      }
+
+      if (!result.success) {
+        console.error('❌ Template falló:', result);
+        return { success: false, error: result.error || 'Template falló' };
+      }
+
+      console.log('✅ Template enviado exitosamente a Meta API');
+      return { success: true };
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+      console.error('❌ Error enviando template:', error);
+      return { success: false, error: errorMsg };
+    }
+  }
+
+     /**
+    * Guarda pedido pendiente de confirmación de forma atómica
+    */
+   private static async savePendingOrderAtomic(
+     order: Order,
+     provider: Provider, 
+     normalizedPhone: string, 
+     userId: string,
+     baseUrl: string
+   ): Promise<{ success: boolean; error?: string }> {
+     try {
+       // Validar datos antes de enviar
+       if (!order.id || !provider.id || !normalizedPhone || !userId) {
+         const missingData = [];
+         if (!order.id) missingData.push('orderId');
+         if (!provider.id) missingData.push('providerId');
+         if (!normalizedPhone) missingData.push('providerPhone');
+         if (!userId) missingData.push('userId');
+         
+         console.error('❌ Datos faltantes para guardar pedido pendiente:', missingData);
+         return { success: false, error: `Datos faltantes: ${missingData.join(', ')}` };
+       }
+       
+       const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json',
+         },
+         body: JSON.stringify({
+           orderId: order.id,
+           providerId: provider.id,
+           providerPhone: normalizedPhone,
+           userId: userId
+         }),
+       });
+
+       const result = await response.json();
+       
+       if (!response.ok) {
+         console.error('❌ Error guardando pedido pendiente:', result);
+         return { success: false, error: result.error || 'Error guardando pedido' };
+       }
+
+       console.log('✅ Pedido pendiente guardado exitosamente');
+       return { success: true };
+
+     } catch (error) {
+       const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+       console.error('❌ Error guardando pedido pendiente:', error);
+       return { success: false, error: errorMsg };
+     }
+   }
+
+  /**
+   * Verifica si un mensaje es una confirmación
+   * 🔧 MEJORA: Cualquier mensaje se considera confirmación
+   */
+  private static isConfirmationMessage(message: string): boolean {
+    // 🔧 SIMPLIFICACIÓN: Cualquier mensaje válido se considera confirmación
+    if (!message || typeof message !== 'string') {
+      return false;
+    }
+    
+    // Solo verificar que no esté vacío después de limpiar espacios
+    const trimmedMessage = message.trim();
+    return trimmedMessage.length > 0;
+  }
+
+  /**
+   * Procesa la respuesta de un proveedor a un pedido
+   */
+  static async processProviderResponse(providerPhone: string, response: string): Promise<boolean> {
+    try {
+      console.log('🔄 Procesando respuesta del proveedor:', { providerPhone, response });
+      
+             // 🔧 MEJORA: Verificar si es un mensaje válido (cualquier mensaje se considera confirmación)
+       const isValidMessage = this.isConfirmationMessage(response);
+       if (!isValidMessage) {
+         console.log('ℹ️ Mensaje vacío o inválido, ignorando:', response);
+         return false;
+       }
+       
+       console.log('✅ Mensaje recibido del proveedor, procesando como confirmación:', response);
+      
+      // Buscar el pedido pendiente
+      const pendingOrder = await this.checkPendingOrder(providerPhone);
+      if (!pendingOrder) {
+        console.log('ℹ️ No se encontró pedido pendiente para:', providerPhone);
         return false;
       }
-      const normalizedPhone = provider.phone; // Ya está en formato correcto
 
-      // PASO 1: Enviar template real de Meta
-      const baseUrl = typeof window !== 'undefined' 
-        ? window.location.origin 
-        : (process.env.VERCEL_URL 
-            ? `https://${process.env.VERCEL_URL}` 
-            : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
-      const triggerResponse = await fetch(`${baseUrl}/api/whatsapp/trigger-conversation`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          to: normalizedPhone,
-          template_name: 'envio_de_orden'
-        }),
-      });
+      console.log('✅ Pedido pendiente encontrado, procesando confirmación...');
 
-      const triggerResult = await triggerResponse.json();
-      
-      if (!triggerResponse.ok) {
-        console.error('❌ Error disparando conversación de Meta:', triggerResult);
+      // Actualizar el estado de la orden a 'confirmed'
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({ 
+          status: 'confirmed',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', pendingOrder.order_id);
+
+      if (updateError) {
+        console.error('❌ Error actualizando orden:', updateError);
         return false;
       }
 
-      // PASO 2: Guardar el pedido en estado "pendiente de confirmación"
-      await this.savePendingOrder(order, provider, items);
+      console.log('✅ Orden actualizada a confirmed');
 
+      // 🔧 MEJORA: Enviar detalles del pedido automáticamente
+      console.log('📤 Enviando detalles del pedido al proveedor...');
+      
+      // Obtener información completa de la orden con validación robusta
+      const { data: orderData, error: orderError } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          providers(name, phone)
+        `)
+        .eq('id', pendingOrder.order_id)
+        .single();
+
+      if (orderError || !orderData) {
+        console.error('❌ Error obteniendo detalles de la orden:', orderError);
+        return false;
+      }
+
+      // Validar que tenemos todos los datos necesarios
+      if (!orderData.providers || !orderData.providers.name) {
+        console.error('❌ Datos de proveedor incompletos para la orden:', pendingOrder.order_id);
+        return false;
+      }
+
+      // Generar mensaje con detalles del pedido
+      const orderDetails = this.generateOrderDetailsMessage(orderData);
+      
+             // Enviar mensaje con detalles
+       const sendResult = await this.sendOrderDetails(providerPhone, orderDetails, orderData.user_id);
+      
+      if (sendResult.success) {
+        console.log('✅ Detalles del pedido enviados exitosamente');
+      } else {
+        console.error('❌ Error enviando detalles del pedido:', sendResult.error);
+      }
+
+      // Eliminar el pedido pendiente
+      const { error: deleteError } = await supabase
+        .from('pending_orders')
+        .delete()
+        .eq('order_id', pendingOrder.order_id);
+
+      if (deleteError) {
+        console.error('❌ Error eliminando pedido pendiente:', deleteError);
+      }
+
+      console.log('✅ Orden confirmada, detalles enviados y pedido pendiente eliminado');
       return true;
 
     } catch (error) {
-      console.error('❌ Error en sendOrderNotification:', error);
+      console.error('❌ Error procesando respuesta del proveedor:', error);
       return false;
     }
   }
@@ -64,6 +457,8 @@ export class OrderNotificationService {
    */
   static async checkPendingOrder(providerPhone: string): Promise<any> {
     try {
+      console.log(`🔍 Buscando pedido pendiente para: ${providerPhone}`);
+      
       const { createClient } = await import('@supabase/supabase-js');
       
       const supabase = createClient(
@@ -71,250 +466,249 @@ export class OrderNotificationService {
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
-      const phoneRegex = /^\+54\d{9,11}$/;
-      if (!phoneRegex.test(providerPhone)) {
-        console.error('❌ Formato de teléfono inválido:', providerPhone);
+      // Normalizar el número de teléfono
+      const normalizedPhone = this.normalizePhoneNumber(providerPhone);
+      if (!normalizedPhone) {
+        console.error('❌ No se pudo normalizar el número de teléfono:', providerPhone);
         return null;
       }
       
-      // Buscar directamente con el número validado
+      console.log('✅ Buscando con número normalizado:', providerPhone, '->', normalizedPhone);
+      
+      // Buscar directamente con el número normalizado
       const { data, error } = await supabase
         .from('pending_orders')
         .select('*')
-        .eq('provider_phone', providerPhone)
+        .eq('provider_phone', normalizedPhone)
         .eq('status', 'pending_confirmation')
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
 
-      if (error || !data) {
+      console.log(`🔍 Resultado de búsqueda para ${providerPhone}:`, { 
+        data: data ? {
+          orderId: data.order_id,
+          providerPhone: data.provider_phone,
+          status: data.status,
+          createdAt: data.created_at
+        } : null, 
+        error 
+      });
+
+      if (error) {
+        console.log(`ℹ️ No se encontró pedido pendiente para ${providerPhone}:`, error.message);
         return null;
       }
 
-      return {
+      if (!data) {
+        console.log(`ℹ️ No hay pedidos pendientes para: ${providerPhone}`);
+        return null;
+      }
+
+      console.log(`✅ Pedido pendiente encontrado para ${providerPhone}:`, {
         orderId: data.order_id,
-        providerId: data.provider_id,
         providerPhone: data.provider_phone,
-        orderData: data.order_data,
         status: data.status,
         createdAt: data.created_at
-      };
+      });
+
+      return data;
 
     } catch (error) {
-      console.error('❌ Error en checkPendingOrder:', error);
+      console.error('❌ Error verificando pedido pendiente:', error);
       return null;
     }
   }
 
+     /**
+    * Genera mensaje con detalles del pedido
+    */
+   static generateOrderDetailsMessage(orderData: any): string {
+     try {
+       // Validación robusta de datos
+       if (!orderData) {
+         console.error('❌ orderData es undefined en generateOrderDetailsMessage');
+         return '📋 Detalles del pedido confirmado. Gracias.';
+       }
+
+       const items = Array.isArray(orderData.items) ? orderData.items : [];
+       const totalItems = items.length;
+       const orderNumber = orderData.order_number || orderData.id || 'N/A';
+       
+       // Validación específica del proveedor
+       let providerName = 'Proveedor';
+       if (orderData.providers && typeof orderData.providers === 'object') {
+         providerName = orderData.providers.name || 'Proveedor';
+       }
+       
+       let message = `📋 *DETALLES DEL PEDIDO CONFIRMADO*\n\n`;
+       message += `*Orden:* ${orderNumber}\n`;
+       message += `*Proveedor:* ${providerName}\n`;
+       message += `*Total de items:* ${totalItems}\n`;
+       message += `*Fecha de confirmación:* ${new Date().toLocaleDateString('es-AR')}\n\n`;
+       
+       if (items.length > 0) {
+         message += `*Items confirmados:*\n`;
+         items.forEach((item: any, index: number) => {
+           if (item && typeof item === 'object') {
+             const quantity = item.quantity || 1;
+             const unit = item.unit || 'un';
+             const name = item.productName || item.name || item.product_name || 'Producto';
+             message += `${index + 1}. ${name} - ${quantity} ${unit}\n`;
+           }
+         });
+       }
+       
+       message += `\n*Estado:* ✅ Confirmado y procesando\n`;
+       message += `*Próximo paso:* Preparación y envío\n\n`;
+       message += `Gracias por confirmar. Su pedido está siendo procesado.`;
+       
+       return message;
+     } catch (error) {
+       console.error('❌ Error generando mensaje de detalles:', error);
+       return '📋 Detalles del pedido confirmado. Gracias.';
+     }
+   }
+
+         /**
+     * Envía los detalles del pedido al proveedor
+     */
+    static async sendOrderDetails(providerPhone: string, message: string, userId?: string): Promise<{ success: boolean; error?: string }> {
+     try {
+       // 🔧 MEJORA: Reducir logging excesivo
+       if (process.env.NODE_ENV === 'development') {
+         console.log('📤 Enviando detalles del pedido a:', providerPhone);
+       }
+       
+       // 🔧 CORRECCIÓN: Construir URL de forma robusta con protocolo
+       const baseUrl = this.buildBaseUrl();
+       
+       const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            to: providerPhone,
+            message: message,
+            userId: userId // 🔧 MEJORA: Pasar userId para guardar el mensaje
+          }),
+        });
+
+       const result = await response.json();
+       
+       if (!response.ok) {
+         console.error('❌ Error enviando detalles:', result);
+         return { success: false, error: result.error || 'Error enviando mensaje' };
+       }
+
+       // 🔧 MEJORA: Reducir logging excesivo
+       if (process.env.NODE_ENV === 'development') {
+         console.log('✅ Detalles enviados exitosamente');
+       }
+       return { success: true };
+       
+     } catch (error) {
+       const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+       console.error('❌ Error enviando detalles del pedido:', error);
+       return { success: false, error: errorMsg };
+     }
+   }
+
   /**
-   * Guarda el pedido en estado pendiente de confirmación
+   * Elimina un pedido pendiente específico
    */
-  private static async savePendingOrder(order: Order, provider: Provider, items: OrderItem[]): Promise<void> {
+  static async deletePendingOrder(orderId: string): Promise<boolean> {
     try {
-      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
-      const phoneRegex = /^\+54\d{9,11}$/;
-      if (!phoneRegex.test(provider.phone)) {
-        console.error('❌ Formato de teléfono inválido en savePendingOrder:', provider.phone);
-        console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
-        return;
-      }
+      console.log(`🗑️ Eliminando pedido pendiente: ${orderId}`);
       
-      // Guardar en Supabase en lugar de localStorage
-      const baseUrl = typeof window !== 'undefined' 
-        ? window.location.origin 
-        : (process.env.VERCEL_URL 
-            ? `https://${process.env.VERCEL_URL}` 
-            : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
+      const { createClient } = await import('@supabase/supabase-js');
       
-      const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          orderId: order.id,
-          providerId: provider.id,
-          providerPhone: provider.phone, // Usar el número del proveedor
-          orderData: {
-            order,
-            provider,
-            items
-          }
-        }),
-      });
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
 
-      if (response.ok) {
-        const result = await response.json();
-        console.log('✅ Pedido guardado en estado pendiente de confirmación:', result);
-      } else {
-        console.error('❌ Error guardando pedido pendiente en BD');
-        const errorData = await response.json();
-        console.error('❌ Detalles del error:', errorData);
-      }
-    } catch (error) {
-      console.error('❌ Error guardando pedido pendiente:', error);
-    }
-  }
+      // Obtener información del pedido antes de eliminarlo
+      const { data: pendingOrder, error: fetchError } = await supabase
+        .from('pending_orders')
+        .select('provider_phone')
+        .eq('order_id', orderId)
+        .single();
 
-  /**
-   * Envía los detalles completos del pedido después de recibir confirmación
-   */
-  static async sendOrderDetailsAfterConfirmation(providerPhone: string): Promise<boolean> {
-    try {
-      // Usar método directo en lugar de fetch para evitar errores de API
-      const pendingOrder = await this.checkPendingOrder(providerPhone);
-      
-      if (!pendingOrder?.orderData) {
-        console.log('❌ No se encontró pedido pendiente para:', providerPhone);
+      if (fetchError) {
+        console.error('❌ Error obteniendo pedido pendiente:', fetchError);
         return false;
       }
 
-      const { order, provider, items } = pendingOrder.orderData;
-      const orderMessage = this.createOrderMessage(order, provider, items);
+      // Eliminar el pedido
+      const { error: deleteError } = await supabase
+        .from('pending_orders')
+        .delete()
+        .eq('order_id', orderId);
 
-      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
-      const phoneRegex = /^\+54\d{9,11}$/;
-      if (!phoneRegex.test(providerPhone)) {
-        console.error('❌ Formato de teléfono inválido:', providerPhone);
-        console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
+      if (deleteError) {
+        console.error('❌ Error eliminando pedido pendiente:', deleteError);
         return false;
       }
-      const normalizedPhone = providerPhone; // Ya está en formato correcto
 
-      // Construir URL base para las llamadas a la API
-      const baseUrl = typeof window !== 'undefined' 
-        ? window.location.origin 
-        : (process.env.VERCEL_URL 
-            ? `https://${process.env.VERCEL_URL}` 
-            : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001');
-
-      // Usar el servicio directo en lugar de fetch para evitar errores de API
-      const { metaWhatsAppService } = await import('../lib/metaWhatsAppService');
-      
-      const sendResult = await metaWhatsAppService.sendMessage(normalizedPhone, orderMessage);
-      
-      if (sendResult && (sendResult.id || sendResult.simulated || sendResult.messages)) {
-        console.log('✅ Detalles del pedido enviados exitosamente después de confirmación');
-        
-        // Remover el pedido de la lista de pendientes usando método directo
-        try {
-          const { createClient } = await import('@supabase/supabase-js');
-          const supabase = createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!
-          );
-          
-          await supabase
-            .from('pending_orders')
-            .delete()
-            .eq('provider_phone', providerPhone)
-            .eq('status', 'pending_confirmation');
-            
-          console.log('✅ Pedido pendiente removido de la base de datos');
-        } catch (removeError) {
-          console.error('⚠️ Error removiendo pedido pendiente:', removeError);
-        }
-        
-        return true;
-      } else {
-        console.error('❌ Error enviando detalles del pedido:', sendResult);
-        return false;
+      // Notificar a los callbacks
+      if (pendingOrder?.provider_phone) {
+        this.notifyPendingOrderDeleted(pendingOrder.provider_phone, orderId);
       }
+
+      console.log(`✅ Pedido pendiente eliminado: ${orderId}`);
+      return true;
 
     } catch (error) {
-      console.error('❌ Error en sendOrderDetailsAfterConfirmation:', error);
+      console.error('❌ Error eliminando pedido pendiente:', error);
       return false;
     }
   }
 
   /**
-   * Crea el mensaje formateado del pedido
-   */
-  private static createOrderMessage(order: Order, provider: Provider, items: OrderItem[]): string {
-    const totalAmount = items.reduce((sum, item) => sum + item.total, 0);
-    const itemsList = items.map(item => 
-      `• ${item.productName}: ${item.quantity} ${item.unit} - $${item.total}`
-    ).join('\n');
-
-    let message = `🛒 *NUEVO PEDIDO*\n\n`;
-    message += `*Proveedor:* ${provider.name}\n`;
-    message += `*Fecha:* ${new Date().toLocaleDateString('es-AR')}\n`;
-    message += `*Total:* $${totalAmount.toLocaleString()}\n\n`;
-    message += `*Productos:*\n${itemsList}`;
-
-    if (order.desiredDeliveryDate) {
-      message += `\n\n*Fecha de entrega deseada:* ${new Date(order.desiredDeliveryDate).toLocaleDateString('es-AR')}`;
-    }
-
-    if (order.paymentMethod) {
-      message += `\n*Método de pago:* ${order.paymentMethod}`;
-    }
-
-    if (order.notes) {
-      message += `\n\n*Notas:* ${order.notes}`;
-    }
-
-    message += `\n\n_Por favor confirma la recepción de este pedido._`;
-
-    return message;
-  }
-
-  /**
-   * Envía notificación de actualización de estado del pedido
+   * Envía actualización de estado de orden (DEPRECATED - usar processProviderResponse)
    */
   static async sendOrderStatusUpdate(
     order: Order, 
     provider: Provider, 
     status: string
   ): Promise<boolean> {
-    try {
-      // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
-      const phoneRegex = /^\+54\d{9,11}$/;
-      if (!phoneRegex.test(provider.phone)) {
-        console.error('❌ Formato de teléfono inválido:', provider.phone);
-        console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
-        return false;
-      }
-      const normalizedPhone = provider.phone; // Ya está en formato correcto
+    console.warn('⚠️ sendOrderStatusUpdate está deprecado. Usar processProviderResponse en su lugar.');
+    return false;
+  }
 
-      const statusMessages = {
-        'enviado': '📤 *PEDIDO ENVIADO*\n\nTu pedido ha sido enviado al proveedor.',
-        'factura_recibida': '📄 *FACTURA RECIBIDA*\n\nEl proveedor ha enviado la factura.',
-        'pagado': '💳 *PEDIDO PAGADO*\n\nEl pago ha sido confirmado.',
-        'finalizado': '✅ *PEDIDO FINALIZADO*\n\nEl pedido ha sido completado exitosamente.',
-        'cancelled': '❌ *PEDIDO CANCELADO*\n\nEl pedido ha sido cancelado.'
-      };
-
-      const statusMessage = statusMessages[status as keyof typeof statusMessages] || 
-        `📋 *ACTUALIZACIÓN DE PEDIDO*\n\nEstado actualizado a: ${status}`;
-
-      const message = `${statusMessage}\n\n*Pedido:* ${order.orderNumber || 'N/A'}\n*Proveedor:* ${provider.name}`;
-
-      const response = await fetch('/api/whatsapp/trigger-conversation', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          to: normalizedPhone,
-          message: message
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        console.error('❌ Error enviando actualización de estado:', result);
-        return false;
-      }
-
-      console.log('✅ Actualización de estado enviada exitosamente');
-      return true;
-
-    } catch (error) {
-      console.error('❌ Error en sendOrderStatusUpdate:', error);
-      return false;
+  /**
+   * 🔧 MEJORA: Construye URL base de forma robusta y consistente
+   * Maneja todos los casos: desarrollo, producción, Vercel, etc.
+   */
+  private static buildBaseUrl(): string {
+    // Cliente (navegador)
+    if (typeof window !== 'undefined') {
+      return window.location.origin;
     }
+    
+    // Servidor - Vercel
+    if (process.env.VERCEL_URL) {
+      return `https://${process.env.VERCEL_URL}`;
+    }
+    
+    // Servidor - Variables de entorno personalizadas
+    if (process.env.NEXT_PUBLIC_APP_URL) {
+      return process.env.NEXT_PUBLIC_APP_URL;
+    }
+    
+    // Servidor - Vercel URL (con validación de protocolo)
+    if (process.env.NEXT_PUBLIC_VERCEL_URL) {
+      const vercelUrl = process.env.NEXT_PUBLIC_VERCEL_URL;
+      // Asegurar que tenga protocolo https://
+      if (vercelUrl.startsWith('http://') || vercelUrl.startsWith('https://')) {
+        return vercelUrl;
+      }
+      return `https://${vercelUrl}`;
+    }
+    
+    // Fallback de producción
+    return 'https://gastronomy-saas.vercel.app';
   }
 }

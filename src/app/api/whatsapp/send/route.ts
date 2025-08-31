@@ -1,60 +1,108 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { metaWhatsAppService } from '../../../../lib/metaWhatsAppService';
+import { createClient } from '@supabase/supabase-js';
+
+// Cliente Supabase singleton
+let supabase: any = null;
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (supabaseUrl && supabaseKey) {
+  supabase = createClient(supabaseUrl, supabaseKey);
+} else {
+  console.error('❌ API send - Variables de entorno faltantes');
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const { to, message } = await request.json();
-
-    console.log('📤 API sendMessage - Recibido:', { to, message });
+    const body = await request.json();
+    const { to, message, userId } = body;
 
     if (!to || !message) {
-      console.log('❌ API sendMessage - Campos faltantes:', { to, message });
       return NextResponse.json(
-        { error: 'Missing required fields: to and message' },
+        { error: 'to y message son requeridos' },
         { status: 400 }
       );
     }
 
-    // Validar formato de teléfono - DEBE ser +54XXXXXXXXXX
-    const phoneRegex = /^\+54\d{9,11}$/;
-    if (!phoneRegex.test(to)) {
-      console.error('❌ Formato de teléfono inválido:', to);
-      console.error('❌ Debe ser: +54XXXXXXXXXX (ej: +5491135562673)');
-      return NextResponse.json(
-        { error: 'Formato de teléfono inválido. Debe ser: +54XXXXXXXXXX' },
-        { status: 400 }
-      );
-    }
-
-    console.log('🔍 API sendMessage - Estado del servicio:', {
-      enabled: metaWhatsAppService.isServiceEnabled(),
-      simulationMode: metaWhatsAppService.isSimulationModeEnabled()
-    });
-
-    const result = await metaWhatsAppService.sendMessage(to, message);
+    // Determinar si es un template o mensaje de texto
+    const isTemplate = ['envio_de_orden', 'hello_world', 'inicializador_de_conv'].includes(message);
     
-    console.log('📋 API sendMessage - Resultado del servicio:', result);
-    
-    if (result && (result.id || result.simulated || result.messages)) {
-      return NextResponse.json({
-        success: true,
-        messageId: result.messages?.[0]?.id || result.id, // Priorizar el message_sid de Meta
-        timestamp: new Date().toISOString(),
-        simulated: result.simulated || false,
-        mode: metaWhatsAppService.isSimulationModeEnabled() ? 'simulation' : 'production'
-      });
+    let result;
+    if (isTemplate) {
+      // Usar el servicio existente que ya funciona para templates
+      result = await metaWhatsAppService.sendTemplateMessage(to, message, 'es_AR');
     } else {
-      console.log('❌ API sendMessage - Resultado inválido:', result);
+      // Enviar como mensaje de texto normal
+      result = await metaWhatsAppService.sendMessage(to, message);
+    }
+    
+    if (!result) {
       return NextResponse.json(
-        { error: 'Failed to send message - Service not available' },
+        { success: false, error: 'Error enviando mensaje' },
         { status: 500 }
       );
     }
+
+    // 🔧 MEJORA: Guardar mensaje en la base de datos para que aparezca en el chat
+    if (supabase && userId) {
+      try {
+        // Buscar el user_id del proveedor basado en el número de teléfono
+        const { data: providers, error: providerError } = await supabase
+          .from('providers')
+          .select('user_id, phone')
+          .or(`phone.eq.${to},phone.eq.${to.replace('+', '')}`);
+
+        if (!providerError && providers && providers.length > 0) {
+          const providerUserId = providers[0].user_id;
+          
+          // Guardar mensaje enviado en la base de datos
+          const messageSid = result.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          
+          const { error: saveError } = await supabase
+            .from('whatsapp_messages')
+            .insert([{
+              content: message,
+              message_type: 'sent',
+              status: 'sent',
+              contact_id: to,
+              user_id: providerUserId, // user_id del proveedor
+              message_sid: messageSid,
+              timestamp: new Date().toISOString(),
+              created_at: new Date().toISOString()
+            }]);
+
+          if (saveError) {
+            console.error('❌ Error guardando mensaje enviado:', saveError);
+          } else {
+            console.log('✅ Mensaje enviado guardado en la base de datos:', {
+              messageSid,
+              to,
+              content: message,
+              userId: providerUserId
+            });
+          }
+        }
+      } catch (dbError) {
+        console.error('❌ Error en operación de base de datos:', dbError);
+        // No fallar el envío por errores de base de datos
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      message_id: result.id || `msg_${Date.now()}`,
+      recipient: to,
+      content: message,
+      simulated: false
+    });
+
   } catch (error) {
-    console.error('💥 API sendMessage - Error:', error);
+    console.error('Error en POST /api/whatsapp/send:', error);
     return NextResponse.json(
-      { error: 'Error sending message' },
+      { error: 'Error interno del servidor' },
       { status: 500 }
     );
   }
-} 
+}

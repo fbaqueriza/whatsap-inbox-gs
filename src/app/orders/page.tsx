@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import SuggestedOrders from '../../components/SuggestedOrders';
 import CreateOrderModal from '../../components/CreateOrderModal';
@@ -76,8 +76,19 @@ function OrdersPage({ user }: OrdersPageProps) {
 
   // 🔧 OPTIMIZACIÓN: SINCRONIZAR ÓRDENES LOCALES CON DATOS GLOBALES
   useEffect(() => {
+    // console.log('🔄 Sincronizando órdenes locales con datos globales:', orders.length);
     setLocalOrders(orders);
   }, [orders]);
+
+  // 🔧 MEJORA: REFRESH PERIÓDICO COMO FALLBACK
+  useEffect(() => {
+    const refreshInterval = setInterval(() => {
+      // console.log('🔄 Refresh periódico de órdenes (fallback)');
+      fetchAll();
+    }, 30000); // Cada 30 segundos
+
+    return () => clearInterval(refreshInterval);
+  }, [fetchAll]);
 
   // Estados para filtros y búsqueda
   const [providerSearchTerm, setProviderSearchTerm] = useState('');
@@ -125,39 +136,30 @@ function OrdersPage({ user }: OrdersPageProps) {
     }
   }, []);
 
-  // 🔧 OPTIMIZACIÓN: SISTEMA DE FALLBACK PARA REALTIME
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
-  
-  // Polling como fallback cuando Realtime no está disponible
-  useEffect(() => {
-    if (!isSubscribed) {
-      console.log('⚠️ Realtime no disponible, activando polling de respaldo');
-      const interval = setInterval(() => {
-        console.log('🔄 Polling de respaldo: actualizando datos...');
-        fetchAll();
-        setLastUpdate(new Date());
-      }, 5000); // Polling cada 5 segundos
-
-      return () => clearInterval(interval);
-    }
-  }, [isSubscribed, fetchAll]);
-
   // 🔧 OPTIMIZACIÓN: SUSCRIPCIÓN REALTIME COMPLETA
   const { isSubscribed, ordersSubscribed, connectionStatus } = useOrdersFlowRealtime(
     handleNewOrder,
     handleOrderUpdate,
     handleOrderDelete
   );
-  
-  // 🔧 OPTIMIZACIÓN: LOGGING DE ESTADO REALTIME
-  useEffect(() => {
-    console.log('📡 Estado de Realtime:', {
-      isSubscribed,
-      ordersSubscribed,
-      connectionStatus,
-      totalOrders: localOrders.length
-    });
-  }, [isSubscribed, ordersSubscribed, connectionStatus, localOrders.length]);
+
+  // 🔧 OPTIMIZACIÓN: SISTEMA DE FALLBACK PARA REALTIME
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+
+  // 🔧 OPTIMIZACIÓN: INDICADOR VISUAL DE ESTADO REALTIME
+  const getRealtimeStatus = () => {
+    if (connectionStatus === 'connected' && isSubscribed) {
+      return { status: 'connected', text: 'Tiempo Real Activo', color: 'text-green-600' };
+    } else if (connectionStatus === 'connecting') {
+      return { status: 'connecting', text: 'Conectando...', color: 'text-yellow-600' };
+    } else if (connectionStatus === 'error') {
+      return { status: 'error', text: 'Error de Conexión', color: 'text-red-600' };
+    } else {
+      return { status: 'disconnected', text: 'Realtime Desconectado', color: 'text-gray-500' };
+    }
+  };
+
+  const realtimeStatus = getRealtimeStatus();
 
   // Helper functions
   const getStatusIcon = (status: string) => {

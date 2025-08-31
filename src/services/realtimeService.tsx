@@ -145,10 +145,24 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const handleNewOrder = (payload: any) => {
     const newOrder = payload.new;
     if (newOrder) {
+      // 🔧 OPTIMIZACIÓN: Filtrar nuevas órdenes por user_id
+      if (newOrder.user_id && currentUserId && newOrder.user_id !== currentUserId) {
+        return;
+      }
+
       setOrders(prev => {
         const exists = prev.some(order => order.id === newOrder.id);
         if (exists) return prev;
         return [...prev, newOrder];
+      });
+      
+      // 🔧 OPTIMIZACIÓN: Notificar a los listeners sobre la nueva orden
+      orderListeners.current.forEach(callback => {
+        try {
+          callback(newOrder);
+        } catch (error) {
+          console.error('Error en order listener:', error);
+        }
       });
     }
   };
@@ -156,19 +170,38 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const handleOrderUpdate = (payload: any) => {
     const updatedOrder = payload.new;
     if (updatedOrder) {
+      // 🔧 OPTIMIZACIÓN: Filtrar actualizaciones por user_id
+      if (updatedOrder.user_id && currentUserId && updatedOrder.user_id !== currentUserId) {
+        return;
+      }
+
       setOrders(prev => 
         prev.map(order => 
           order.id === updatedOrder.id 
             ? { ...order, ...updatedOrder }
-            : msg
+            : order
         )
       );
+      
+      // 🔧 OPTIMIZACIÓN: Notificar a los listeners sobre la actualización
+      orderListeners.current.forEach(callback => {
+        try {
+          callback(updatedOrder);
+        } catch (error) {
+          console.error('Error en order listener:', error);
+        }
+      });
     }
   };
 
   const handleOrderDelete = (payload: any) => {
     const deletedOrder = payload.old;
     if (deletedOrder) {
+      // 🔧 OPTIMIZACIÓN: Filtrar eliminaciones por user_id
+      if (deletedOrder.user_id && currentUserId && deletedOrder.user_id !== currentUserId) {
+        return;
+      }
+
       setOrders(prev => 
         prev.filter(order => order.id !== deletedOrder.id)
       );
@@ -206,9 +239,13 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       }
     );
 
-    // Suscripción a órdenes (sin filtro por ahora)
+    // Suscripción a órdenes con filtro por user_id
     subscribe(
-      { table: 'orders', event: '*' },
+      { 
+        table: 'orders', 
+        event: '*',
+        filter: `user_id=eq.${currentUserId}` // 🔧 FILTRO CRÍTICO: Solo órdenes del usuario actual
+      },
       {
         onInsert: handleNewOrder,
         onUpdate: handleOrderUpdate,
@@ -227,13 +264,17 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     setIsConnected(true);
 
     return () => {
-      console.log(`🔌 RealtimeService: Desuscribiendo de mensajes para usuario ${currentUserId}`);
+      console.log(`🔌 RealtimeService: Desuscribiendo de mensajes y órdenes para usuario ${currentUserId}`);
       unsubscribe({ 
         table: 'whatsapp_messages', 
         event: '*',
         filter: `user_id=eq.${currentUserId}`
       });
-      unsubscribe({ table: 'orders', event: '*' });
+      unsubscribe({ 
+        table: 'orders', 
+        event: '*',
+        filter: `user_id=eq.${currentUserId}`
+      });
     };
   }, [currentUserId, subscribe, unsubscribe]); // 🔧 DEPENDENCIA CRÍTICA: currentUserId
 

@@ -61,6 +61,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [userProviderPhones, setUserProviderPhones] = useState<string[]>([]);
+  const [lastMessageCount, setLastMessageCount] = useState<number>(0);
 
   // Hook de notificaciones push
   const { sendNotification } = usePushNotifications();
@@ -186,15 +187,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           return hasNewMessages ? updatedMessages : prev;
         });
         
-        // 🔧 LOGGING INFORMATIVO: Mostrar estadísticas completas (solo una vez)
-        if (process.env.NODE_ENV === 'development') {
+        // 🔧 LOGGING INFORMATIVO: Mostrar estadísticas completas (solo en desarrollo y cuando hay cambios)
+        if (process.env.NODE_ENV === 'development' && transformedMessages.length > 0) {
           const receivedMessages = transformedMessages.filter((m: any) => m.type === 'received');
           const sentMessages = transformedMessages.filter((m: any) => m.type === 'sent');
           const argentineMessages = transformedMessages.filter((m: any) => 
             m.contact_id.includes('+549')
           );
           
-          console.log(`📱 Chat: ${transformedMessages.length} mensajes totales (${receivedMessages.length} recibidos, ${sentMessages.length} enviados, ${argentineMessages.length} argentinos)`);
+          // 🔧 OPTIMIZACIÓN: Solo loggear si hay mensajes nuevos o cambios significativos
+          const currentCount = transformedMessages.length;
+          if (lastMessageCount !== currentCount) {
+            console.log(`📱 Chat: ${transformedMessages.length} mensajes totales (${receivedMessages.length} recibidos, ${sentMessages.length} enviados, ${argentineMessages.length} argentinos)`);
+            setLastMessageCount(currentCount);
+          }
         }
       }
     } catch (error) {

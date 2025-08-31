@@ -1,34 +1,63 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRealtimeManager, SubscriptionConfig, RealtimeHandlers } from './useRealtimeManager';
 
-// Hook genérico para suscripciones Realtime
+// Hook genérico para suscripciones de Realtime
 export function useRealtimeSubscription(
-  config: SubscriptionConfig,
-  handlers: RealtimeHandlers & { debounceMs?: number; retryConfig?: any }
+  config: { table: string; event: string; filter?: string },
+  handlers: {
+    onInsert?: (payload: any) => void;
+    onUpdate?: (payload: any) => void;
+    onDelete?: (payload: any) => void;
+    debounceMs?: number;
+    retryConfig?: any;
+  }
 ) {
   const { subscribe, unsubscribe } = useRealtimeManager();
   const isSubscribed = useRef(false);
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
 
   useEffect(() => {
+    // 🔧 OPTIMIZACIÓN: Verificar si Realtime está habilitado
+    const isRealtimeEnabled = process.env.NEXT_PUBLIC_REALTIME_ENABLED !== 'false';
+    
+    if (!isRealtimeEnabled) {
+      console.log('⚠️ Realtime deshabilitado por configuración');
+      setConnectionStatus('disconnected');
+      return;
+    }
+
     if (!isSubscribed.current) {
-      subscribe(config, handlers, { 
-        debounceMs: handlers.debounceMs,
-        retryConfig: handlers.retryConfig
-      });
-      isSubscribed.current = true;
+      setConnectionStatus('connecting');
+      try {
+        subscribe(config, handlers, { 
+          debounceMs: handlers.debounceMs,
+          retryConfig: handlers.retryConfig
+        });
+        isSubscribed.current = true;
+        setConnectionStatus('connected');
+        console.log('✅ Suscripción Realtime establecida para:', config.table);
+      } catch (error) {
+        console.error('❌ Error estableciendo suscripción Realtime:', error);
+        setConnectionStatus('error');
+        isSubscribed.current = false;
+      }
     }
 
     return () => {
       if (isSubscribed.current) {
         unsubscribe(config);
         isSubscribed.current = false;
+        setConnectionStatus('disconnected');
       }
     };
   }, [config.table, config.event, config.filter, subscribe, unsubscribe]);
 
-  return { isSubscribed: isSubscribed.current };
+  return { 
+    isSubscribed: isSubscribed.current && connectionStatus === 'connected',
+    connectionStatus 
+  };
 }
 
 // Hook específico para mensajes de WhatsApp
@@ -222,6 +251,7 @@ export function useOrdersFlowRealtime(
 
   return {
     isSubscribed: ordersSubscription.isSubscribed,
-    ordersSubscribed: ordersSubscription.isSubscribed
+    ordersSubscribed: ordersSubscription.isSubscribed,
+    connectionStatus: ordersSubscription.connectionStatus
   };
 }

@@ -125,21 +125,39 @@ function OrdersPage({ user }: OrdersPageProps) {
     }
   }, []);
 
+  // 🔧 OPTIMIZACIÓN: SISTEMA DE FALLBACK PARA REALTIME
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  
+  // Polling como fallback cuando Realtime no está disponible
+  useEffect(() => {
+    if (!isSubscribed) {
+      console.log('⚠️ Realtime no disponible, activando polling de respaldo');
+      const interval = setInterval(() => {
+        console.log('🔄 Polling de respaldo: actualizando datos...');
+        fetchAll();
+        setLastUpdate(new Date());
+      }, 5000); // Polling cada 5 segundos
+
+      return () => clearInterval(interval);
+    }
+  }, [isSubscribed, fetchAll]);
+
   // 🔧 OPTIMIZACIÓN: SUSCRIPCIÓN REALTIME COMPLETA
-  const { isSubscribed, ordersSubscribed } = useOrdersFlowRealtime(
+  const { isSubscribed, ordersSubscribed, connectionStatus } = useOrdersFlowRealtime(
     handleNewOrder,
     handleOrderUpdate,
     handleOrderDelete
   );
   
-  // Solo mostrar estado inicial de suscripción
+  // 🔧 OPTIMIZACIÓN: LOGGING DE ESTADO REALTIME
   useEffect(() => {
     console.log('📡 Estado de Realtime:', {
       isSubscribed,
       ordersSubscribed,
+      connectionStatus,
       totalOrders: localOrders.length
     });
-  }, [isSubscribed, ordersSubscribed, localOrders.length]);
+  }, [isSubscribed, ordersSubscribed, connectionStatus, localOrders.length]);
 
   // Helper functions
   const getStatusIcon = (status: string) => {

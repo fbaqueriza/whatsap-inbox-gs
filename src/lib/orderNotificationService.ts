@@ -549,7 +549,7 @@ export class OrderNotificationService {
        // Validación robusta de datos
        if (!orderData) {
          console.error('❌ orderData es undefined en generateOrderDetailsMessage');
-         return '📋 Detalles del pedido confirmado. Gracias.';
+         return '📋 Detalles del pedido confirmado.';
        }
 
        const items = Array.isArray(orderData.items) ? orderData.items : [];
@@ -562,32 +562,69 @@ export class OrderNotificationService {
          providerName = orderData.providers.name || 'Proveedor';
        }
        
-       let message = `📋 *DETALLES DEL PEDIDO CONFIRMADO*\n\n`;
+       // 🔧 MEJORA: Formatear fecha de entrega
+       let deliveryDate = 'No especificada';
+       if (orderData.delivery_date) {
+         try {
+           const date = new Date(orderData.delivery_date);
+           deliveryDate = date.toLocaleDateString('es-AR', {
+             weekday: 'long',
+             year: 'numeric',
+             month: 'long',
+             day: 'numeric'
+           });
+         } catch (error) {
+           console.warn('⚠️ Error formateando fecha de entrega:', error);
+         }
+       }
+       
+       // �� MEJORA: Obtener método de pago
+       const paymentMethod = orderData.payment_method || 'No especificado';
+       
+       // 🔧 MEJORA: Obtener notas
+       const notes = orderData.notes || orderData.notes || '';
+       
+       let message = `📋 *DETALLES DEL PEDIDO*\n\n`;
        message += `*Orden:* ${orderNumber}\n`;
        message += `*Proveedor:* ${providerName}\n`;
        message += `*Total de items:* ${totalItems}\n`;
-       message += `*Fecha de confirmación:* ${new Date().toLocaleDateString('es-AR')}\n\n`;
+       message += `*Fecha de entrega:* ${deliveryDate}\n`;
+       message += `*Método de pago:* ${paymentMethod}\n`;
+       
+       // 🔧 MEJORA: Agregar notas solo si existen
+       if (notes && notes.trim()) {
+         message += `*Notas:* ${notes}\n`;
+       }
+       
+       message += `\n`;
        
        if (items.length > 0) {
-         message += `*Items confirmados:*\n`;
+         message += `*Items del pedido:*\n`;
          items.forEach((item: any, index: number) => {
            if (item && typeof item === 'object') {
              const quantity = item.quantity || 1;
              const unit = item.unit || 'un';
              const name = item.productName || item.name || item.product_name || 'Producto';
-             message += `${index + 1}. ${name} - ${quantity} ${unit}\n`;
+             const price = item.price || item.total || '';
+             
+             if (price) {
+               message += `${index + 1}. ${name} - ${quantity} ${unit} - $${price}\n`;
+             } else {
+               message += `${index + 1}. ${name} - ${quantity} ${unit}\n`;
+             }
            }
          });
        }
        
-       message += `\n*Estado:* ✅ Confirmado y procesando\n`;
-       message += `*Próximo paso:* Preparación y envío\n\n`;
-       message += `Gracias por confirmar. Su pedido está siendo procesado.`;
+       // 🔧 MEJORA: Agregar total si está disponible
+       if (orderData.total_amount) {
+         message += `\n*Total:* $${orderData.total_amount} ${orderData.currency || 'ARS'}`;
+       }
        
        return message;
      } catch (error) {
        console.error('❌ Error generando mensaje de detalles:', error);
-       return '📋 Detalles del pedido confirmado. Gracias.';
+       return '📋 Detalles del pedido confirmado.';
      }
    }
 

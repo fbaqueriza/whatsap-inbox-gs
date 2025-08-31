@@ -31,6 +31,7 @@ import { Menu } from '@headlessui/react';
 import SuggestedOrders from '../../components/SuggestedOrders';
 import CreateOrderModal from '../../components/CreateOrderModal';
 import ComprobanteButton from '../../components/ComprobanteButton';
+import CurrentOrdersModule from '../../components/CurrentOrdersModule';
 import { useOrdersRealtime } from '../../hooks/useSupabaseRealtime';
 
 export default function DashboardPageWrapper() {
@@ -145,70 +146,9 @@ function DashboardPageContent({
     }
   }, [contextIsChatOpen, isChatOpen, setIsChatOpen]);
   
-  // Ordenar órdenes por fecha descendente (created_at) - los más recientes primero
-  const sortedOrders = [...orders].sort((a, b) => {
-    const dateA = new Date(a.createdAt || a.orderDate || 0);
-    const dateB = new Date(b.createdAt || b.orderDate || 0);
-    return dateB.getTime() - dateA.getTime();
-  });
-  const finishedOrders = sortedOrders.filter(order => ['finalizado', 'delivered'].includes(order.status));
-  const pendingOrders = orders.filter((order: Order) => order.status !== 'delivered').length;
-  // Calculate upcoming orders (stock items with próxima orden within 7 days)
-  const upcomingOrders = stockItems.filter((item: StockItem) => {
-    if (!item.nextOrder) return false;
-    const nextOrder = new Date(item.nextOrder);
-    const weekFromNow = new Date();
-    weekFromNow.setDate(weekFromNow.getDate() + 7);
-    return nextOrder <= weekFromNow;
-  });
+  // 🔧 OPTIMIZACIÓN: Variables simplificadas para el dashboard
   const totalProviders = providers.length;
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return <Clock className="h-4 w-4 text-yellow-500" />;
-      case 'enviado':
-        return <Send className="h-4 w-4 text-blue-500" />;
-      case 'factura_recibida':
-        return <FileText className="h-4 w-4 text-purple-500" />;
-      case 'pagado':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'finalizado':
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
-      case 'cancelled':
-        return <AlertCircle className="h-4 w-4 text-red-500" />;
-      default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
-    }
-  };
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "pending":
-        return "bg-yellow-100 text-yellow-800";
-      case "sent":
-        return "bg-blue-100 text-blue-800";
-      case "confirmed":
-        return "bg-green-100 text-green-800";
-      case "delivered":
-        return "bg-green-100 text-green-800";
-      case "cancelled":
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-  // Función getProviderName que usa el array providers del contexto
-  const getProviderName = (providerId: string) => {
-    if (!providerId) return 'Proveedor desconocido';
-    if (!providers || providers.length === 0) {
-      return `(ID: ${providerId})`;
-    }
-    const provider = providers.find((p: Provider) => p.id === providerId);
-    if (provider && provider.name) {
-      return provider.name;
-    } else {
-      return `(ID: ${providerId})`;
-    }
-  };
+
   // 🔧 OPTIMIZACIÓN: Creación de órdenes mejorada con manejo de errores
   const handleCreateOrder = async (orderData: {
     providerId: string;
@@ -494,18 +434,7 @@ function DashboardPageContent({
     }
   };
 
-  const formatDate = (date: Date | string | undefined) => {
-    if (!date) return '';
-    const d = typeof date === 'string' ? new Date(date) : date;
-    if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('es-ES', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+
 
     const handleOrderClick = (order: Order) => {
     // Encontrar el proveedor correspondiente
@@ -579,19 +508,7 @@ function DashboardPageContent({
     }
   };
 
-  const showPaymentOrder = (order: Order) => {
-    if (order.status !== 'factura_recibida' || !order.bankInfo) return null;
-    
-    return (
-      <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
-        <h4 className="text-sm font-medium text-blue-900 mb-2">Orden de Pago</h4>
-        <div className="text-xs text-blue-800 space-y-1">
-          <div><strong>CBU:</strong> {order.bankInfo.accountNumber}</div>
-          <div><strong>Monto a pagar:</strong> {order.totalAmount} {order.currency}</div>
-        </div>
-      </div>
-    );
-  };
+
   const handleProviderOrder = (providerId: string) => {
     setSelectedProviderId(providerId ?? null);
     setIsCreateModalOpen(true);
@@ -648,243 +565,37 @@ function DashboardPageContent({
           </div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-x-8 gap-y-8">
-          {/* Left Section: Pedidos pendientes + Pedidos recientes */}
+          {/* Left Section: Pedidos actuales */}
           <div className="w-full">
-            {/* Pedidos actuales */}
-            <div className="bg-blue-50 border-l-4 border-blue-400 rounded-lg p-6 mb-6 shadow">
-              <h2 className="text-xl font-bold text-blue-800 mb-4">Pedidos actuales</h2>
-              {currentOrders.length === 0 ? (
-                <div className="text-center py-8">
-                  <div className="text-gray-500 mb-4">No hay pedidos actuales</div>
-                  <div className="flex justify-center space-x-3">
-                    <button
-                      onClick={() => setIsCreateModalOpen(true)}
-                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Crear nuevo pedido
-                    </button>
-                    <button
-                      onClick={() => {
-                        // Abrir chat con el primer proveedor disponible
-                        const firstProvider = providers[0];
-                        if (firstProvider) {
-                          handleOrderClick({
-                            id: 'general-chat',
-                            providerId: firstProvider.id,
-                            status: 'pending'
-                          } as Order);
-                        }
-                      }}
-                      className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                    >
-                      <MessageSquare className="h-4 w-4 mr-2" />
-                      Chat general
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {currentOrders.slice(0, 5).map((order) => (
-                    <div key={order.id} className="bg-white rounded-lg p-4 border border-blue-200 hover:shadow-md transition-shadow">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center space-x-3">
-                          {getStatusIcon(order.status)}
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-2">
-                              <div className="font-medium text-gray-900">
-                                {getProviderName(order.providerId)}
-                              </div>
-                              <div className="text-sm text-gray-500">
-                                {formatDate(order.createdAt || order.orderDate)}
-                              </div>
-                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
-                                {order.status === 'pending' ? 'Pendiente' :
-                                 order.status === 'pending_confirmation' ? 'Pendiente de Confirmación' :
-                                 order.status === 'confirmed' ? 'Confirmado' :
-                                 order.status === 'enviado' ? 'Enviado' :
-                                 order.status === 'factura_recibida' ? 'Factura Recibida' :
-                                 order.status === 'pagado' ? 'Pagado' :
-                                 order.status}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-2">
-                          
-                          {/* Botón de chat */}
-                          <button
-                            onClick={() => handleOrderClick(order)}
-                            className="inline-flex items-center px-3 py-1 rounded-md text-xs font-medium border border-gray-200 text-gray-600 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-gray-400"
-                            title="Abrir chat con proveedor"
-                          >
-                            <MessageSquare className="h-3 w-3" />
-                          </button>
-                          
-                          {/* Enviar pedido - solo en estado pending */}
-                          {order.status === 'pending' && (
-                            <button
-                              onClick={() => handleSendOrder(order.id)}
-                              className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 focus:ring-2 focus:ring-blue-500"
-                            >
-                              <Send className="h-4 w-4 mr-1" /> Enviar pedido
-                            </button>
-                          )}
-                          
-                          {/* Descargar factura - cuando hay factura disponible */}
-                          {['factura_recibida','pagado','enviado','finalizado'].includes(order.status) && (
-                            <a
-                              href="/mock-factura.pdf"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-gray-400"
-                            >
-                              <FileText className="h-4 w-4 mr-1" /> Descargar factura
-                            </a>
-                          )}
-                          
-                          {/* Subir comprobante - solo en estado factura_recibida */}
-                          {order.status === 'factura_recibida' && (
-                            <ComprobanteButton
-                              comprobante={null}
-                              onUpload={(file) => handleUploadPaymentProof(order.id, file)}
-                              onView={() => { if(order.receiptUrl) openReceipt(order.receiptUrl); }}
-                            />
-                          )}
-                          
-                          {/* Ver comprobante - cuando hay comprobante disponible */}
-                          {['pagado','finalizado'].includes(order.status) && order.receiptUrl && (
-                            <button
-                              onClick={() => openReceipt(order.receiptUrl)}
-                              className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-gray-400"
-                            >
-                              <Upload className="h-4 w-4 mr-1" /> Ver comprobante
-                            </button>
-                          )}
-                          
-                          {/* Confirmar recepción - solo en estado pagado */}
-                          {order.status === 'pagado' && (
-                            <button
-                              className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-green-200 text-white bg-green-600 hover:bg-green-700 focus:ring-2 focus:ring-green-500"
-                              onClick={() => handleConfirmReception(order.id)}
-                            >
-                              <CheckCircle className="h-4 w-4 mr-1" /> Confirmar recepción
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {order.items && order.items.length > 0 && (
-                        <div className="text-xs text-gray-600">
-                          {order.items.slice(0, 3).map((item, index) => (
-                            <span key={index} className="mr-2">
-                              {item.productName}: {item.quantity} {item.unit}
-                            </span>
-                          ))}
-                          {order.items.length > 3 && (
-                            <span className="text-gray-400">+{order.items.length - 3} más</span>
-                          )}
-                        </div>
-                      )}
-                       
-                      {/* Orden de pago - solo en estado factura_recibida */}
-                      {showPaymentOrder(order)}
-                    </div>
-                  ))}
-                  {currentOrders.length > 5 && (
-                    <div className="text-center">
-                      <button
-                        onClick={() => window.location.href = '/orders'}
-                        className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                      >
-                        Ver todos los pedidos ({currentOrders.length})
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-                        {/* Divider */}
-            <div className="my-6 border-t border-gray-200" />
+            <CurrentOrdersModule
+              orders={currentOrders}
+              providers={providers}
+              onOrderClick={handleOrderClick}
+              onSendOrder={handleSendOrder}
+              onUploadPaymentProof={handleUploadPaymentProof}
+              onConfirmReception={handleConfirmReception}
+              onOpenReceipt={openReceipt}
+              onCreateOrder={() => setIsCreateModalOpen(true)}
+              onOpenChat={() => {
+                // Abrir chat con el primer proveedor disponible
+                const firstProvider = providers[0];
+                if (firstProvider) {
+                  handleOrderClick({
+                    id: 'general-chat',
+                    providerId: firstProvider.id,
+                    status: 'pending'
+                  } as Order);
+                }
+              }}
+              showCreateButton={true}
+              maxOrders={5}
+              title="Pedidos actuales"
+              className="mb-6"
+            />
           </div>
-          {/* Right Section: Próximos pedidos + Providers table */}
+          {/* Right Section: Providers table */}
           <div className="w-full">
-            {/* Próximos pedidos */}
-            <div className="bg-blue-100 border-l-8 border-blue-400 rounded-xl p-5 mb-6 shadow-lg">
-              <h2 className="text-xl font-bold text-blue-900 mb-4">Próximos pedidos</h2>
-              {user?.email === 'test@test.com' ? (
-                <div className="flex flex-col gap-3 max-h-64 overflow-y-auto">
-                  {[
-                    {
-                      providerName: "Panadería Los Hermanos",
-                      frecuenciaDias: 7,
-                      ultimaOrden: "2025-07-15",
-                      proximaOrden: "2025-07-22",
-                      diasRestantes: 1,
-                      lastMessage: "¿Van a necesitar el pan integral esta semana?"
-                    },
-                    {
-                      providerName: "Distribuciones Verduras Martínez",
-                      frecuenciaDias: 7,
-                      ultimaOrden: "2025-07-14",
-                      proximaOrden: "2025-07-21",
-                      diasRestantes: 0,
-                      lastMessage: "La última entrega fue el lunes. ¿Confirmamos para mañana?"
-                    }
-                  ]
-                    .sort((a, b) => new Date(a.proximaOrden).getTime() - new Date(b.proximaOrden).getTime())
-                    .map((item, idx) => (
-                      <div
-                        key={idx}
-                        className={`bg-white rounded-lg p-4 flex flex-col gap-1 shadow-sm border-l-4 ${item.diasRestantes <= 1 ? 'border-blue-500' : 'border-transparent'}`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-gray-900">{item.providerName}</span>
-                          <span className={`ml-2 text-sm ${item.diasRestantes <= 1 ? 'text-blue-700 font-bold' : 'text-gray-500'}`}>{new Date(item.proximaOrden).toLocaleDateString()} ({item.diasRestantes === 0 ? 'Hoy' : `En ${item.diasRestantes} día${item.diasRestantes > 1 ? 's' : ''}`})</span>
-        </div>
-                        <div className="text-xs text-gray-500 mt-1 truncate max-w-full" title={item.lastMessage}>{item.lastMessage.length > 80 ? item.lastMessage.slice(0, 80) + '…' : item.lastMessage}</div>
-          </div>
-                    ))}
-              </div>
-              ) : (
-                (() => {
-                  // Real upcoming orders for real users
-                  const now = new Date();
-                  const weekFromNow = new Date();
-                  weekFromNow.setDate(now.getDate() + 7);
-                  // Find providers with next order due in 7 days
-                                     const providerUpcoming = providers
-                     .map((provider: Provider) => {
-                                               const nextOrderDates = stockItems
-                        .filter((item: StockItem) => Array.isArray(item.associatedProviders) && item.associatedProviders.includes(provider.id) && item.nextOrder)
-                        .map((item: StockItem) => item.nextOrder ? new Date(item.nextOrder as string | number | Date) : null)
-                         .filter((d): d is Date => d !== null);
-                      const nextExpectedOrderDate = nextOrderDates.length > 0 ? new Date(Math.min(...nextOrderDates.map((d: Date) => d.getTime()))) : null;
-                      return { provider, nextExpectedOrderDate };
-                    })
-                    .filter(({ nextExpectedOrderDate }: { nextExpectedOrderDate: Date | null }) => nextExpectedOrderDate && nextExpectedOrderDate <= weekFromNow)
-                    .sort((a: { nextExpectedOrderDate: Date | null }, b: { nextExpectedOrderDate: Date | null }) => (a.nextExpectedOrderDate as Date).getTime() - (b.nextExpectedOrderDate as Date).getTime());
-                  if (providerUpcoming.length === 0) {
-                    return <div className="text-gray-500 text-sm">No hay próximos pedidos en los próximos 7 días.</div>;
-                  }
-                  return (
-                    <div className="flex flex-col gap-3 max-h-64 overflow-y-auto">
-                      {providerUpcoming.map(({ provider, nextExpectedOrderDate }: { provider: Provider, nextExpectedOrderDate: Date | null }, idx: number) => (
-                        <div
-                          key={provider.id}
-                          className={`bg-white rounded-lg p-4 flex flex-col gap-1 shadow-sm border-l-4 ${(nextExpectedOrderDate && (nextExpectedOrderDate.getTime() - now.getTime()) < 2*24*60*60*1000) ? 'border-blue-500' : 'border-transparent'}`}
-                        >
-                      <div className="flex items-center justify-between">
-                            <span className="font-semibold text-gray-900">{provider.name}</span>
-                            <span className={`ml-2 text-sm ${(nextExpectedOrderDate && (nextExpectedOrderDate.getTime() - now.getTime()) < 2*24*60*60*1000) ? 'text-blue-700 font-bold' : 'text-gray-500'}`}>{nextExpectedOrderDate ? nextExpectedOrderDate.toLocaleDateString() : '-'}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })()
-              )}
-            </div>
-            
+            {/* Providers table - se mantiene igual */}
           </div>
         </div>
 
@@ -902,9 +613,7 @@ function DashboardPageContent({
                 <div className="mt-2 text-sm text-blue-700">
                   <ul className="list-disc list-inside space-y-1">
                     <li><strong>Vista general:</strong> Aquí puedes ver todos tus pedidos, proveedores y stock en un solo lugar</li>
-                    <li><strong>Pedidos pendientes:</strong> Gestiona pedidos que necesitan atención inmediata</li>
-                    <li><strong>Pedidos recientes:</strong> Revisa el historial de pedidos finalizados</li>
-                    <li><strong>Próximos pedidos:</strong> Ve qué pedidos están programados para los próximos días</li>
+                    <li><strong>Pedidos actuales:</strong> Gestiona pedidos que necesitan atención inmediata (mismo módulo que en /orders)</li>
                     <li><strong>Proveedores:</strong> Accede rápidamente a tus proveedores y crea nuevos pedidos</li>
                     <li><strong>Chat integrado:</strong> Comunícate directamente con proveedores desde el dashboard</li>
                     <li><strong>Acciones rápidas:</strong> Todos los botones funcionan igual que en las páginas específicas</li>

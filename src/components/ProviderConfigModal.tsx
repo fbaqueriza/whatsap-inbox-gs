@@ -5,7 +5,7 @@ import { X, Plus, User, Mail, Phone, MapPin, Building, CreditCard, Edit, Upload,
 import { Provider, Catalog } from '../types';
 import PaymentMethodSelector from './PaymentMethodSelector';
 import WeekDaySelector from './WeekDaySelector';
-import TimeRangeSelector from './TimeRangeSelector';
+
 
 interface ProviderConfigModalProps {
   isOpen: boolean;
@@ -449,11 +449,18 @@ export default function ProviderConfigModal({
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Horario de entrega por defecto
                 </label>
-                <TimeRangeSelector
-                  value={formData.defaultDeliveryTime}
-                  onChange={(time) => handleInputChange('defaultDeliveryTime', time)}
-                  className="w-full"
-                />
+                <div className="space-y-2">
+                  <input
+                    type="time"
+                    value={formData.defaultDeliveryTime[0] || ''}
+                    onChange={(e) => handleInputChange('defaultDeliveryTime', [e.target.value])}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Hora de entrega"
+                  />
+                  <p className="text-xs text-gray-500">
+                    Formato: HH:MM (24 horas)
+                  </p>
+                </div>
               </div>
 
               <div>

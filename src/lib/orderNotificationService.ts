@@ -521,14 +521,30 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
+      // 🔧 DEBUG: Verificar normalización del número
+      const normalizedProviderPhone = this.normalizePhoneNumber(providerPhone);
+      console.log(`🔧 DEBUG - Normalización de número:`, {
+        original: providerPhone,
+        normalized: normalizedProviderPhone,
+        match: providerPhone === normalizedProviderPhone ? 'SÍ' : 'NO'
+      });
+
       // 🔧 CORRECCIÓN: Buscar pedidos pendientes con cualquier estado de pending
       const { data: pendingOrders, error: pendingError } = await supabase
         .from('pending_orders')
         .select('*')
-        .eq('provider_phone', providerPhone)
+        .eq('provider_phone', normalizedProviderPhone || providerPhone)
         .or('status.eq.pending,status.eq.pending_confirmation')
         .order('created_at', { ascending: false })
         .limit(1);
+
+      console.log(`🔧 DEBUG - Búsqueda de pedidos pendientes:`, {
+        providerPhone,
+        normalizedProviderPhone,
+        searchQuery: normalizedProviderPhone || providerPhone,
+        pendingOrdersCount: pendingOrders?.length || 0,
+        error: pendingError
+      });
 
       if (pendingError) {
         console.error(`❌ [${requestId}] Error buscando pedidos pendientes:`, pendingError);
@@ -548,24 +564,62 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         created_at: pendingOrder.created_at
       });
 
-      // Buscar orden completa
-      const { data: orders, error: orderError } = await supabase
+      // 🔧 CORRECCIÓN: Buscar orden completa con información del proveedor
+      console.log(`🔧 DEBUG - Buscando orden con ID: ${pendingOrder.order_id}`);
+      
+      // 🔧 CORRECCIÓN: Primero obtener la orden básica
+      const { data: orderBasic, error: orderBasicError } = await supabase
         .from('orders')
         .select('*')
         .eq('id', pendingOrder.order_id)
         .single();
 
-      if (orderError || !orders) {
-        console.error(`❌ [${requestId}] Error buscando orden:`, orderError);
+      if (orderBasicError || !orderBasic) {
+        console.error(`❌ [${requestId}] Error buscando orden básica:`, orderBasicError);
         return false;
       }
 
-      const orderData = orders;
+      // 🔧 CORRECCIÓN: Luego obtener información del proveedor por separado
+      const { data: provider, error: providerError } = await supabase
+        .from('providers')
+        .select('id, name, contact_name, phone, notes, default_payment_method')
+        .eq('id', orderBasic.provider_id)
+        .single();
+
+      console.log(`🔧 DEBUG - Resultado de consultas:`, {
+        orderBasic: {
+          id: orderBasic.id,
+          provider_id: orderBasic.provider_id,
+          order_number: orderBasic.order_number
+        },
+        provider: {
+          id: provider?.id,
+          name: provider?.name,
+          contact_name: provider?.contact_name,
+          notes: provider?.notes,
+          default_payment_method: provider?.default_payment_method
+        },
+        providerError: providerError
+      });
+
+      // 🔧 CORRECCIÓN: Combinar los datos
+      const orderData = {
+        ...orderBasic,
+        providers: provider
+      };
+
+      console.log(`🔧 DEBUG - Resultado de consulta:`, {
+        data: orderData,
+        hasProviders: orderData?.providers ? 'SÍ' : 'NO'
+      });
       console.log(`📦 [${requestId}] Orden encontrada:`, {
         id: orderData.id,
         order_number: orderData.order_number,
         status: orderData.status,
-        user_id: orderData.user_id
+        user_id: orderData.user_id,
+        providers: orderData.providers,
+        order_date: orderData.order_date,
+        notes: orderData.notes
       });
 
       // Actualizar estado de la orden
@@ -582,6 +636,17 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       console.log(`✅ [${requestId}] Estado de orden actualizado a confirmado`);
 
       // Enviar detalles del pedido
+      console.log(`🔧 DEBUG - Antes de generar detalles del pedido:`, {
+        orderDataKeys: Object.keys(orderData),
+        providers: orderData.providers,
+        providerName: orderData.providers?.name,
+        providerId: orderData.providers?.id,
+        providerNotes: orderData.providers?.notes,
+        orderDate: orderData.order_date,
+        orderNotes: orderData.notes,
+        fullOrderData: JSON.stringify(orderData, null, 2)
+      });
+      
       const orderDetails = this.generateOrderDetailsMessage(orderData);
       console.log(`📤 [${requestId}] Enviando detalles del pedido:`, orderDetails.substring(0, 100) + '...');
 
@@ -702,37 +767,104 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return '📋 Detalles del pedido confirmado.';
        }
 
+       // 🔧 DEBUG: Log detallado de los datos recibidos
+       console.log('🔧 DEBUG - Datos completos de orderData:', {
+         id: orderData.id,
+         order_number: orderData.order_number,
+         providers: orderData.providers,
+         providerName: orderData.providers?.name,
+         providerId: orderData.providers?.id,
+         providerNotes: orderData.providers?.notes,
+         order_date: orderData.order_date,
+         notes: orderData.notes,
+         items: orderData.items,
+         total_amount: orderData.total_amount,
+         currency: orderData.currency,
+         fullData: JSON.stringify(orderData, null, 2)
+       });
+
        const items = Array.isArray(orderData.items) ? orderData.items : [];
        const totalItems = items.length;
        const orderNumber = orderData.order_number || orderData.id || 'N/A';
        
-       // Validación específica del proveedor
+       // 🔧 CORRECCIÓN: Obtener nombre del proveedor desde la relación con fallback robusto
        let providerName = 'Proveedor';
-       if (orderData.providers && typeof orderData.providers === 'object') {
-         providerName = orderData.providers.name || 'Proveedor';
+       console.log('🔧 DEBUG - Estructura de providers:', {
+         providers: orderData.providers,
+         type: typeof orderData.providers,
+         hasName: orderData.providers?.name,
+         hasId: orderData.providers?.id,
+         fullProviders: JSON.stringify(orderData.providers)
+       });
+       
+       if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.name) {
+         providerName = orderData.providers.name;
+         console.log('🔧 DEBUG - Nombre del proveedor encontrado:', providerName);
+       } else if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.id) {
+         // Si no hay nombre pero sí ID, usar un identificador más descriptivo
+         providerName = `Proveedor ID: ${orderData.providers.id}`;
+         console.log('🔧 DEBUG - Usando ID del proveedor como nombre:', providerName);
+       } else {
+         console.log('🔧 DEBUG - No se encontró información del proveedor, usando valor por defecto');
+         providerName = 'Proveedor';
        }
        
-       // 🔧 MEJORA: Formatear fecha de entrega
+       // 🔧 CORRECCIÓN: Formatear fecha de entrega usando campo correcto (order_date) con fallback robusto
        let deliveryDate = 'No especificada';
-       if (orderData.delivery_date) {
+       if (orderData.order_date) {
          try {
-           const date = new Date(orderData.delivery_date);
-           deliveryDate = date.toLocaleDateString('es-AR', {
-             weekday: 'long',
-             year: 'numeric',
-             month: 'long',
-             day: 'numeric'
-           });
+           const date = new Date(orderData.order_date);
+           if (!isNaN(date.getTime())) {
+             deliveryDate = date.toLocaleDateString('es-AR', {
+               weekday: 'long',
+               year: 'numeric',
+               month: 'long',
+               day: 'numeric'
+             });
+             console.log('🔧 DEBUG - Fecha de entrega formateada:', deliveryDate);
+           } else {
+             console.warn('⚠️ Fecha de orden inválida:', orderData.order_date);
+             deliveryDate = 'Fecha inválida';
+           }
          } catch (error) {
            console.warn('⚠️ Error formateando fecha de entrega:', error);
+           deliveryDate = 'Error en fecha';
          }
+       } else {
+         console.log('🔧 DEBUG - No hay fecha de orden disponible');
        }
        
        // �� MEJORA: Obtener método de pago
-       const paymentMethod = orderData.payment_method || 'No especificado';
+       // 🔧 CORRECCIÓN: Obtener método de pago con traducción
+       const getPaymentMethodText = (method: string): string => {
+         const paymentMethods: { [key: string]: string } = {
+           'efectivo': 'Efectivo',
+           'transferencia': 'Transferencia',
+           'tarjeta': 'Tarjeta',
+           'cheque': 'Cheque'
+         };
+         return paymentMethods[method] || method || 'No especificado';
+       };
        
-       // 🔧 MEJORA: Obtener notas
-       const notes = orderData.notes || orderData.notes || '';
+       // 🔧 CORRECCIÓN: Usar valor por defecto ya que payment_method no existe en BD
+       // 🔧 MEJORA: Intentar obtener método de pago del proveedor si está disponible
+       let paymentMethod = 'Efectivo'; // Valor por defecto hasta que se agregue la columna
+       if (orderData.providers?.default_payment_method) {
+         paymentMethod = getPaymentMethodText(orderData.providers.default_payment_method);
+         console.log('🔧 DEBUG - Método de pago del proveedor:', paymentMethod);
+       } else {
+         console.log('🔧 DEBUG - Usando método de pago por defecto:', paymentMethod);
+       }
+       
+       // 🔧 CORRECCIÓN: Obtener notas del proveedor por defecto con fallback inteligente
+       let notes = '';
+       if (orderData.providers?.notes && orderData.providers.notes.trim()) {
+         notes = orderData.providers.notes;
+       } else if (orderData.notes && orderData.notes.trim()) {
+         notes = orderData.notes;
+       } else {
+         notes = 'Sin notas adicionales';
+       }
        
        let message = `📋 *DETALLES DEL PEDIDO*\n\n`;
        message += `*Orden:* ${orderNumber}\n`;

@@ -13,6 +13,7 @@ interface CreateOrderModalProps {
     items: OrderItem[];
     notes: string;
     desiredDeliveryDate?: Date;
+    desiredDeliveryTime?: string[];
     paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
     additionalFiles?: OrderFile[];
   }) => void;
@@ -41,6 +42,7 @@ export default function CreateOrderModal({
   const [orderText, setOrderText] = useState('');
   const [notes, setNotes] = useState('');
   const [desiredDeliveryDate, setDesiredDeliveryDate] = useState<string>('');
+  const [desiredDeliveryTime, setDesiredDeliveryTime] = useState<string[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'transferencia' | 'tarjeta' | 'cheque'>('efectivo');
   const [additionalFiles, setAdditionalFiles] = useState<OrderFile[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -57,10 +59,36 @@ export default function CreateOrderModal({
     if (selectedProvider) {
       const provider = providers.find(p => p.id === selectedProvider);
       if (provider) {
+        // 🔧 MEJORA: Log para verificar que el proveedor se encontró correctamente
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔧 DEBUG - Proveedor seleccionado:', {
+            id: provider.id,
+            name: provider.name,
+            notes: provider.notes,
+            hasNotes: !!provider.notes,
+            notesLength: provider.notes?.length || 0,
+            defaultDeliveryDays: provider.defaultDeliveryDays,
+            defaultDeliveryTime: provider.defaultDeliveryTime,
+            defaultPaymentMethod: provider.defaultPaymentMethod
+          });
+        }
         // Set default payment method
         if (provider.defaultPaymentMethod) {
           setPaymentMethod(provider.defaultPaymentMethod);
         }
+        
+        // 🔧 CORRECCIÓN: Pre-poblar notas del proveedor
+        if (provider.notes && provider.notes.trim()) {
+          setNotes(provider.notes);
+          console.log('🔧 DEBUG - Notas del proveedor pre-pobladas:', provider.notes);
+        } else {
+          setNotes('');
+          console.log('🔧 DEBUG - No hay notas del proveedor disponibles');
+        }
+        
+        // 🔧 MEJORA: Limpiar campos al cambiar de proveedor
+        setOrderText('');
+        setAdditionalFiles([]);
         
         // Set default delivery date based on provider's delivery days
         if (provider.defaultDeliveryDays && provider.defaultDeliveryTime) {
@@ -68,30 +96,81 @@ export default function CreateOrderModal({
           const deliveryDays = provider.defaultDeliveryDays;
           const deliveryTime = provider.defaultDeliveryTime;
           
-          // Find next available delivery day
-          let nextDeliveryDate = new Date();
-          let daysToAdd = 0;
-          
-          while (daysToAdd < 14) { // Look up to 2 weeks ahead
-            const checkDate = new Date(today);
-            checkDate.setDate(today.getDate() + daysToAdd);
-            const dayName = checkDate.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+          // 🔧 CORRECCIÓN: Función robusta para calcular próximo día de entrega
+          const calculateNextDeliveryDate = () => {
+            let daysToAdd = 0;
             
-            if (deliveryDays.includes(dayName)) {
-              nextDeliveryDate = checkDate;
-              break;
+            while (daysToAdd < 14) { // Look up to 2 weeks ahead
+              const checkDate = new Date(today);
+              checkDate.setDate(today.getDate() + daysToAdd);
+              
+              // 🔧 MEJORA: Normalización más robusta de nombres de días
+              const dayName = checkDate.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+              const dayNameSpanish = checkDate.toLocaleDateString('es-ES', { weekday: 'short' }).toLowerCase();
+              const dayNameFull = checkDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+              const dayNameSpanishFull = checkDate.toLocaleDateString('es-ES', { weekday: 'long' }).toLowerCase();
+              
+              // 🔧 MEJORA: Verificación más exhaustiva
+              const isDeliveryDay = deliveryDays.some(day => {
+                const normalizedDay = day.toLowerCase().trim();
+                const normalizedDayShort = normalizedDay.substring(0, 3);
+                
+                return normalizedDay === dayName || 
+                       normalizedDay === dayNameSpanish ||
+                       normalizedDay === dayNameFull ||
+                       normalizedDay === dayNameSpanishFull ||
+                       normalizedDayShort === dayName.substring(0, 3) ||
+                       normalizedDayShort === dayNameSpanish.substring(0, 3);
+              });
+              
+              if (isDeliveryDay) {
+                return { date: checkDate, daysToAdd };
+              }
+              daysToAdd++;
             }
-            daysToAdd++;
-          }
+            
+            // Si no se encuentra, usar mañana como fallback
+            const tomorrow = new Date(today);
+            tomorrow.setDate(today.getDate() + 1);
+            return { date: tomorrow, daysToAdd: 1 };
+          };
           
-          // Set time - use first available time if it's an array
-          const timeToUse = Array.isArray(deliveryTime) ? deliveryTime[0] : deliveryTime;
-          if (timeToUse && typeof timeToUse === 'string') {
-            const [hours, minutes] = timeToUse.split(':');
-            nextDeliveryDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+          const { date: nextDeliveryDate, daysToAdd } = calculateNextDeliveryDate();
+          
+          // 🔧 DEBUG: Log mejorado para verificar el cálculo de fecha
+          if (process.env.NODE_ENV === 'development') {
+            console.log('🔧 DEBUG - Cálculo de fecha por defecto:', {
+              providerName: provider.name,
+              deliveryDays: deliveryDays,
+              calculatedDate: nextDeliveryDate.toISOString().split('T')[0],
+              today: today.toISOString().split('T')[0],
+              daysToAdd: daysToAdd,
+              dayName: nextDeliveryDate.toLocaleDateString('en-US', { weekday: 'short' }),
+              dayNameSpanish: nextDeliveryDate.toLocaleDateString('es-ES', { weekday: 'short' })
+            });
           }
           
           setDesiredDeliveryDate(nextDeliveryDate.toISOString().split('T')[0]);
+          
+          // Set default delivery time ranges
+          if (Array.isArray(deliveryTime) && deliveryTime.length > 0) {
+            // Convert single time to time range format (e.g., "14:00" -> "14:00-16:00")
+            const defaultTimeRanges = deliveryTime.map(time => {
+              if (time.includes('-')) return time; // Already a range
+              const [hours, minutes] = time.split(':');
+              const startHour = parseInt(hours);
+              const endHour = startHour + 2; // 2-hour range by default
+              return `${time}-${endHour.toString().padStart(2, '0')}:${minutes}`;
+            });
+            setDesiredDeliveryTime(defaultTimeRanges);
+          } else if (typeof deliveryTime === 'string' && deliveryTime) {
+            // Single time string
+            const [hours, minutes] = deliveryTime.split(':');
+            const startHour = parseInt(hours);
+            const endHour = startHour + 2; // 2-hour range by default
+            const timeRange = `${deliveryTime}-${endHour.toString().padStart(2, '0')}:${minutes}`;
+            setDesiredDeliveryTime([timeRange]);
+          }
         }
       }
     }
@@ -170,6 +249,7 @@ export default function CreateOrderModal({
       setOrderText('');
       setNotes('');
       setDesiredDeliveryDate('');
+      setDesiredDeliveryTime([]);
       setPaymentMethod('efectivo');
       setAdditionalFiles([]);
     }
@@ -242,6 +322,7 @@ export default function CreateOrderModal({
       items: parseOrderText(orderText),
       notes,
       desiredDeliveryDate: desiredDeliveryDate ? new Date(desiredDeliveryDate) : undefined,
+      desiredDeliveryTime: desiredDeliveryTime.length > 0 ? desiredDeliveryTime : undefined,
       paymentMethod,
       additionalFiles,
     });
@@ -255,10 +336,44 @@ export default function CreateOrderModal({
   // Haz el resumen del pedido expandible/colapsable
   const [showSummary, setShowSummary] = useState(false);
 
+  // 🔧 CORRECCIÓN: Función para traducir días de inglés a español
+  const translateDeliveryDays = (days: string[]): string[] => {
+    const dayTranslations: { [key: string]: string } = {
+      'monday': 'Lunes',
+      'tuesday': 'Martes', 
+      'wednesday': 'Miércoles',
+      'thursday': 'Jueves',
+      'friday': 'Viernes',
+      'saturday': 'Sábado',
+      'sunday': 'Domingo',
+      'mon': 'Lun',
+      'tue': 'Mar',
+      'wed': 'Mié',
+      'thu': 'Jue',
+      'fri': 'Vie',
+      'sat': 'Sáb',
+      'sun': 'Dom'
+    };
+
+    return days.map(day => {
+      const normalizedDay = day.toLowerCase().trim();
+      return dayTranslations[normalizedDay] || day;
+    });
+  };
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" 
+      data-modal="true"
+      onClick={(e) => {
+        // 🔧 CORRECCIÓN: Prevenir que el modal se cierre al hacer clic en el overlay
+        if (e.target === e.currentTarget) {
+          e.stopPropagation();
+        }
+      }}
+    >
       <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200">
@@ -308,7 +423,7 @@ export default function CreateOrderModal({
                   )}
                   {selectedProviderInfo.defaultDeliveryDays && selectedProviderInfo.defaultDeliveryTime && (
                     <div className="text-sm text-blue-700 mt-1">
-                      <strong>Entrega:</strong> {selectedProviderInfo.defaultDeliveryDays.join(', ')} a las {selectedProviderInfo.defaultDeliveryTime}
+                      <strong>Entrega:</strong> {translateDeliveryDays(selectedProviderInfo.defaultDeliveryDays).join(', ')} a las {selectedProviderInfo.defaultDeliveryTime}
                     </div>
                   )}
                   {selectedProviderInfo.defaultPaymentMethod && (
@@ -320,50 +435,51 @@ export default function CreateOrderModal({
               )}
             </div>
 
-            {/* Delivery Date and Payment Method */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              {/* Delivery Date */}
+            {/* Delivery Date and Time */}
+            <div className="mb-6">
               <DateSelector
                 value={desiredDeliveryDate}
                 onChange={setDesiredDeliveryDate}
                 providerDeliveryDays={selectedProviderInfo?.defaultDeliveryDays}
                 providerDeliveryTime={selectedProviderInfo?.defaultDeliveryTime}
+                timeRanges={desiredDeliveryTime}
+                onTimeRangesChange={setDesiredDeliveryTime}
               />
+            </div>
 
-              {/* Payment Method */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <CreditCard className="inline h-4 w-4 mr-1" />
-                  Método de pago
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { value: 'efectivo', label: 'Efectivo', icon: '💵' },
-                    { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
-                    { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
-                    { value: 'cheque', label: 'Cheque', icon: '📄' },
-                  ].map((method) => (
-                    <button
-                      key={method.value}
-                      type="button"
-                      onClick={() => setPaymentMethod(method.value as any)}
-                      className={`p-3 border rounded-lg text-center transition-colors ${
-                        paymentMethod === method.value
-                          ? 'border-blue-500 bg-blue-50 text-blue-700'
-                          : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="text-2xl mb-1">{method.icon}</div>
-                      <div className="text-sm font-medium">{method.label}</div>
-                    </button>
-                  ))}
-                </div>
-                {selectedProviderInfo?.defaultPaymentMethod && (
-                  <p className="mt-1 text-xs text-gray-500">
-                    Método por defecto del proveedor: {selectedProviderInfo.defaultPaymentMethod}
-                  </p>
-                )}
+            {/* Payment Method */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <CreditCard className="inline h-4 w-4 mr-1" />
+                Método de pago
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: 'efectivo', label: 'Efectivo', icon: '💵' },
+                  { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
+                  { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
+                  { value: 'cheque', label: 'Cheque', icon: '📄' },
+                ].map((method) => (
+                  <button
+                    key={method.value}
+                    type="button"
+                    onClick={() => setPaymentMethod(method.value as any)}
+                    className={`p-3 border rounded-lg text-center transition-colors ${
+                      paymentMethod === method.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">{method.icon}</div>
+                    <div className="text-sm font-medium">{method.label}</div>
+                  </button>
+                ))}
               </div>
+              {selectedProviderInfo?.defaultPaymentMethod && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Método por defecto del proveedor: {selectedProviderInfo.defaultPaymentMethod}
+                </p>
+              )}
             </div>
 
             {/* Order Items Text */}
@@ -475,16 +591,28 @@ export default function CreateOrderModal({
 
             {/* Notes */}
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Notas
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Notas
+                </label>
+                {selectedProviderInfo?.notes && notes === selectedProviderInfo.notes && (
+                  <span className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded-full">
+                    📝 Notas del proveedor
+                  </span>
+                )}
+              </div>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Instrucciones especiales o notas de entrega..."
+                placeholder="Instrucciones especiales, notas de entrega, o información del proveedor..."
               />
+              {selectedProviderInfo?.notes && (
+                <p className="mt-1 text-xs text-gray-500">
+                  💡 Las notas del proveedor se han pre-poblado automáticamente
+                </p>
+              )}
             </div>
             {/* Footer */}
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Calendar, Clock } from 'lucide-react';
 
 interface DateSelectorProps {
@@ -9,16 +9,34 @@ interface DateSelectorProps {
   className?: string;
   providerDeliveryDays?: string[];
   providerDeliveryTime?: string[];
+  timeRanges?: string[];
+  onTimeRangesChange?: (times: string[]) => void;
 }
+
+const TIME_RANGES = [
+  { value: '08:00-10:00', label: '8:00 - 10:00 AM', description: 'Mañana temprano' },
+  { value: '10:00-12:00', label: '10:00 - 12:00 AM', description: 'Mañana' },
+  { value: '12:00-14:00', label: '12:00 - 2:00 PM', description: 'Mediodía' },
+  { value: '14:00-16:00', label: '2:00 - 4:00 PM', description: 'Tarde' },
+  { value: '16:00-18:00', label: '4:00 - 6:00 PM', description: 'Tarde tarde' },
+  { value: '18:00-20:00', label: '6:00 - 8:00 PM', description: 'Noche' },
+];
 
 export default function DateSelector({ 
   value, 
   onChange, 
   className = '',
   providerDeliveryDays,
-  providerDeliveryTime 
+  providerDeliveryTime,
+  timeRanges = [],
+  onTimeRangesChange
 }: DateSelectorProps) {
   const [showQuickOptions, setShowQuickOptions] = useState(false);
+  const [showTimeSelector, setShowTimeSelector] = useState(false);
+  const [showCustomTime, setShowCustomTime] = useState(false);
+  const [customStartTime, setCustomStartTime] = useState('');
+  const [customEndTime, setCustomEndTime] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const getQuickDates = () => {
     const today = new Date();
@@ -67,10 +85,100 @@ export default function DateSelector({
     return dates;
   };
 
+  const getTimeCategory = (time: string) => {
+    const startHour = parseInt(time.split('-')[0].split(':')[0]);
+    if (startHour < 12) return 'morning';
+    if (startHour < 18) return 'afternoon';
+    return 'evening';
+  };
+
+  const getCategoryColor = (category: string) => {
+    switch (category) {
+      case 'morning': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case 'afternoon': return 'bg-orange-100 text-orange-800 border-orange-200';
+      case 'evening': return 'bg-purple-100 text-purple-800 border-purple-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const toggleTimeRange = (timeRange: string) => {
+    if (!onTimeRangesChange) return;
+    
+    const newValue = timeRanges.includes(timeRange)
+      ? timeRanges.filter(t => t !== timeRange)
+      : [...timeRanges, timeRange];
+    onTimeRangesChange(newValue);
+  };
+
+  const addCustomTimeRange = () => {
+    if (!onTimeRangesChange || !customStartTime || !customEndTime) return;
+    
+    const customRange = `${customStartTime}-${customEndTime}`;
+    if (!timeRanges.includes(customRange)) {
+      onTimeRangesChange([...timeRanges, customRange]);
+    }
+    setCustomStartTime('');
+    setCustomEndTime('');
+  };
+
+  // 🔧 CORRECCIÓN: Función para traducir días de inglés a español
+  const translateDeliveryDays = (days: string[]): string[] => {
+    const dayTranslations: { [key: string]: string } = {
+      'monday': 'Lunes',
+      'tuesday': 'Martes', 
+      'wednesday': 'Miércoles',
+      'thursday': 'Jueves',
+      'friday': 'Viernes',
+      'saturday': 'Sábado',
+      'sunday': 'Domingo',
+      'mon': 'Lun',
+      'tue': 'Mar',
+      'wed': 'Mié',
+      'thu': 'Jue',
+      'fri': 'Vie',
+      'sat': 'Sáb',
+      'sun': 'Dom'
+    };
+
+    return days.map(day => {
+      const normalizedDay = day.toLowerCase().trim();
+      return dayTranslations[normalizedDay] || day;
+    });
+  };
+
+  // Handle click outside to close dropdowns
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      // 🔧 CORRECCIÓN: Solo cerrar si el clic es completamente fuera del DateSelector
+      const target = event.target as Node;
+      
+      // Verificar si el clic es dentro del DateSelector
+      if (containerRef.current && containerRef.current.contains(target)) {
+        return; // No hacer nada si el clic es dentro del DateSelector
+      }
+      
+      // Verificar si el clic es dentro del modal padre
+      const modalElement = document.querySelector('[data-modal="true"]');
+      if (modalElement && modalElement.contains(target)) {
+        return; // No hacer nada si el clic es dentro del modal
+      }
+      
+      // Solo cerrar si el clic es completamente fuera
+      setShowQuickOptions(false);
+      setShowTimeSelector(false);
+    };
+
+    // 🔧 MEJORA: Usar capture phase para interceptar eventos antes
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside, true);
+    };
+  }, []);
+
   const quickDates = getQuickDates();
 
   return (
-    <div className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative ${className}`}>
       <label className="block text-sm font-medium text-gray-700 mb-2">
         <Calendar className="inline h-4 w-4 mr-1" />
         Fecha de entrega deseada
@@ -85,15 +193,38 @@ export default function DateSelector({
         />
         <button
           type="button"
-          onClick={() => setShowQuickOptions(!showQuickOptions)}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setShowQuickOptions(!showQuickOptions);
+            setShowTimeSelector(false); // Close time selector when opening date selector
+          }}
           className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
-          <Clock className="h-4 w-4" />
+          <Calendar className="h-4 w-4" />
         </button>
+        {onTimeRangesChange && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowTimeSelector(!showTimeSelector);
+              setShowQuickOptions(false); // Close date selector when opening time selector
+            }}
+            className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <Clock className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
+      {/* Date Quick Options */}
       {showQuickOptions && (
-        <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg">
+        <div 
+          className="absolute z-[9999] mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="p-3">
             <h4 className="text-sm font-medium text-gray-900 mb-2">Fechas sugeridas</h4>
             <div className="space-y-1 max-h-48 overflow-y-auto">
@@ -126,9 +257,115 @@ export default function DateSelector({
         </div>
       )}
 
+      {/* Time Range Selector */}
+      {showTimeSelector && onTimeRangesChange && (
+        <div 
+          className="absolute z-[9999] mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-3 space-y-3">
+            <h4 className="text-sm font-medium text-gray-900 mb-2">Rangos horarios</h4>
+            
+            {/* Quick Time Selection */}
+            <div className="grid grid-cols-2 gap-2">
+              {TIME_RANGES.map((timeRange) => {
+                const category = getTimeCategory(timeRange.value);
+                const isSelected = timeRanges.includes(timeRange.value);
+                
+                return (
+                  <button
+                    key={timeRange.value}
+                    type="button"
+                    onClick={() => toggleTimeRange(timeRange.value)}
+                    className={`p-2 rounded-lg text-center transition-colors border min-h-[60px] flex flex-col justify-center ${
+                      isSelected
+                        ? 'bg-blue-500 text-white border-blue-600 shadow-md'
+                        : `${getCategoryColor(category)} hover:border-blue-300`
+                    }`}
+                  >
+                    <div className="text-xs font-medium mb-1">{timeRange.label}</div>
+                    <div className="text-[9px] opacity-75 leading-tight">{timeRange.description}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom Time Input */}
+            <div className="border-t pt-3">
+              <button
+                type="button"
+                onClick={() => setShowCustomTime(!showCustomTime)}
+                className="text-sm text-blue-600 hover:text-blue-800 underline"
+              >
+                {showCustomTime ? 'Ocultar hora personalizada' : 'Hora personalizada'}
+              </button>
+
+              {showCustomTime && (
+                <div className="mt-3 space-y-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="text-sm font-medium text-gray-700 mb-2">
+                    Agregar rango personalizado:
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="time"
+                      value={customStartTime}
+                      onChange={(e) => setCustomStartTime(e.target.value)}
+                      className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Hora inicio"
+                    />
+                    <span className="text-sm text-gray-500">a</span>
+                    <input
+                      type="time"
+                      value={customEndTime}
+                      onChange={(e) => setCustomEndTime(e.target.value)}
+                      className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Hora fin"
+                    />
+                    <button
+                      type="button"
+                      onClick={addCustomTimeRange}
+                      disabled={!customStartTime || !customEndTime}
+                      className="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    >
+                      Agregar
+                    </button>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    Formato: HH:MM (24 horas)
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Selected Times Display */}
+            {timeRanges.length > 0 && (
+              <div className="border-t pt-3">
+                <div className="text-sm text-gray-600 mb-2">
+                  <strong>Horarios seleccionados:</strong>
+                </div>
+                <div className="space-y-1">
+                  {timeRanges.map((time, index) => (
+                    <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded border">
+                      <span className="text-sm">{time}</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleTimeRange(time)}
+                        className="text-red-500 hover:text-red-700 text-xs"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {providerDeliveryDays && providerDeliveryTime && (
         <p className="mt-1 text-xs text-gray-500">
-          Días de entrega del proveedor: {providerDeliveryDays.join(', ')} a las {providerDeliveryTime}
+          Días de entrega del proveedor: {translateDeliveryDays(providerDeliveryDays).join(', ')} a las {Array.isArray(providerDeliveryTime) ? providerDeliveryTime.join(', ') : providerDeliveryTime}
         </p>
       )}
     </div>

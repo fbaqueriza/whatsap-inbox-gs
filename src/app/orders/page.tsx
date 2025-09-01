@@ -312,9 +312,6 @@ function OrdersPage({ user }: OrdersPageProps) {
               <h1 className="text-2xl font-semibold text-gray-900">Órdenes</h1>
               <p className="mt-1 text-sm text-gray-500">
                 Gestión de pedidos y órdenes
-                {connectionStatus === 'connected' && (
-                  <span className="ml-2 text-green-600">• Tiempo Real Activo</span>
-                )}
               </p>
             </div>
             <div className="flex items-center space-x-3">

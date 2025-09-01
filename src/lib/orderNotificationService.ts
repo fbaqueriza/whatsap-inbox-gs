@@ -121,7 +121,7 @@ export class OrderNotificationService {
   /**
    * 🔧 FLUJO OPTIMIZADO: Envía notificación automática de nuevo pedido al proveedor
    * 1. Orden se crea como 'pending'
-   * 2. Se envía template envio_de_orden con detalles completos
+   * 2. Se envía template evio_orden con variables personalizadas
    * 3. Se guarda como 'pending_confirmation'
    * 4. Cuando el proveedor responde, se actualiza automáticamente
    */
@@ -178,14 +178,20 @@ export class OrderNotificationService {
         }
        }
 
-      // 🔧 PASO 2: Enviar template envio_de_orden con detalles completos
+      // 🔧 PASO 2: Enviar template evio_orden con variables personalizadas
       const baseUrl = this.buildBaseUrl();
 
       try {
         const templateResult = await this.sendTemplateToMeta(normalizedPhone, baseUrl, order, provider, userId);
         result.templateSent = templateResult.success;
         if (!templateResult.success) {
-          result.errors.push(`Template: ${templateResult.error}`);
+          // 🔧 MEJORA: Clasificar errores para mejor manejo
+          if (templateResult.error?.includes('activación manual')) {
+            result.errors.push(`⚠️ ${templateResult.error}`);
+            console.log('⚠️ Número requiere activación manual - guardando pedido pendiente');
+          } else {
+            result.errors.push(`Template: ${templateResult.error}`);
+          }
         }
         // 🔧 MEJORA: Reducir logging excesivo
         if (process.env.NODE_ENV === 'development') {
@@ -215,11 +221,17 @@ export class OrderNotificationService {
       }
 
       // DETERMINAR ÉXITO GENERAL
+      // 🔧 MEJORA: Considerar éxito si se guardó el pedido pendiente, incluso si el template falló
       result.success = result.templateSent || result.pendingOrderSaved;
       
              // Log solo si hay errores o éxito completo
        if (result.errors.length > 0) {
          console.log('❌ Errores en notificación:', result.errors.length);
+         // 🔧 MEJORA: Log específico para errores de activación
+         const activationErrors = result.errors.filter(e => e.includes('activación manual'));
+         if (activationErrors.length > 0) {
+           console.log('⚠️ Errores de activación manual detectados:', activationErrors.length);
+         }
        } else if (result.success) {
          console.log('✅ Notificación completada');
        }
@@ -235,7 +247,10 @@ export class OrderNotificationService {
   }
 
   /**
-   * 🔧 OPTIMIZADO: Envía template a Meta API con detalles completos del pedido
+   * 🔧 ESTRATEGIA DE ACTIVACIÓN: Maneja números bloqueados por WhatsApp
+   * 1. Intenta enviar template primero
+   * 2. Si falla por engagement, proporciona instrucciones de activación
+   * 3. Guarda el pedido como pendiente para envío manual
    */
   private static async sendTemplateToMeta(
     phone: string, 
@@ -245,40 +260,148 @@ export class OrderNotificationService {
     userId?: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      // 🔧 CORRECCIÓN: Usar template disparador simple como funcionaba antes
-      const messageContent = 'envio_de_orden';
+      // Preparar variables del template
+      const templateVariables = {
+        Proveedor: provider?.name || 'Proveedor',
+        'Nombre Proveedor': provider?.contactName || provider?.name || 'Proveedor'
+      };
       
-             const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
+      console.log('📋 Variables del template:', templateVariables);
+      
+      // PASO 1: Intentar enviar template evio_orden (template correcto)
+      console.log('📤 Intentando enviar template evio_orden...');
+      
+      const templateResponse = await fetch(`${baseUrl}/api/whatsapp/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to: phone,
+          message: 'evio_orden',
+          templateVariables: templateVariables,
+          userId: userId
+        }),
+      });
+
+       const templateResult = await templateResponse.json();
+
+       if (templateResponse.ok && templateResult.success) {
+         console.log('✅ Template evio_orden enviado exitosamente a Meta API');
+         return { success: true };
+       }
+
+       // PASO 1.5: Si falla evio_orden, intentar con envio_de_orden como fallback
+       console.log('⚠️ Template evio_orden falló, intentando con envio_de_orden...');
+       
+       const fallbackResponse = await fetch(`${baseUrl}/api/whatsapp/send`, {
          method: 'POST',
          headers: {
            'Content-Type': 'application/json',
          },
          body: JSON.stringify({
            to: phone,
-           message: messageContent,
-           userId: userId // 🔧 MEJORA: Pasar userId para guardar el mensaje
+           message: 'envio_de_orden',
+           templateVariables: templateVariables,
+           userId: userId
          }),
        });
 
-      const result = await response.json();
+       const fallbackResult = await fallbackResponse.json();
 
-      if (!response.ok) {
-        console.error('❌ Error enviando template:', result);
-        return { success: false, error: result.error || 'Error enviando template' };
+       if (fallbackResponse.ok && fallbackResult.success) {
+         console.log('✅ Template envio_de_orden enviado exitosamente como fallback');
+         return { success: true };
+       }
+
+             // PASO 2: Verificar si es error de engagement/bloqueo
+       const isEngagementError = templateResult.error?.includes('engagement') || 
+                                templateResult.error?.includes('131049') ||
+                                templateResult.error?.includes('131047') ||
+                                templateResult.error?.includes('blocked') ||
+                                fallbackResult.error?.includes('engagement') ||
+                                fallbackResult.error?.includes('131049') ||
+                                fallbackResult.error?.includes('131047') ||
+                                fallbackResult.error?.includes('blocked');
+
+      if (isEngagementError) {
+        console.log('⚠️ Número bloqueado por WhatsApp - requiere activación manual');
+        
+        // PASO 3: Proporcionar instrucciones de activación
+        const activationInstructions = this.generateActivationInstructions(phone, provider, order);
+        console.log('📋 Instrucciones de activación:', activationInstructions);
+        
+        // PASO 4: Guardar pedido como "requiere activación manual"
+        if (order && provider && userId) {
+          await this.saveManualActivationOrder(order, provider, phone, userId);
+        }
+        
+        return { 
+          success: false, 
+          error: `Número ${phone} requiere activación manual. ${activationInstructions}` 
+        };
       }
 
-      if (!result.success) {
-        console.error('❌ Template falló:', result);
-        return { success: false, error: result.error || 'Template falló' };
-      }
-
-      console.log('✅ Template enviado exitosamente a Meta API');
-      return { success: true };
+             // Si no es error de engagement, retornar el error original
+       console.error('❌ Error enviando template (no engagement):', templateResult);
+       console.error('❌ Error fallback (no engagement):', fallbackResult);
+       return { success: false, error: templateResult.error || fallbackResult.error || 'Error enviando template' };
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
-      console.error('❌ Error enviando template:', error);
+      console.error('❌ Error en sendTemplateToMeta:', error);
       return { success: false, error: errorMsg };
+    }
+  }
+
+  /**
+   * Genera instrucciones claras para activar un número bloqueado
+   */
+  private static generateActivationInstructions(phone: string, provider?: Provider, order?: Order): string {
+    const providerName = provider?.name || 'Proveedor';
+    const orderNumber = order?.orderNumber || order?.id || 'N/A';
+    
+        return `Para activar el número ${phone} (${providerName}):
+
+1. El proveedor debe enviar un mensaje a nuestro WhatsApp Business: +5491141780300
+2. El mensaje debe contener: "Hola, soy ${providerName}"
+3. Una vez activado, podremos enviar notificaciones automáticas
+4. Pedido ${orderNumber} esperando confirmación manual
+
+NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última respuesta del proveedor. Es necesario que el proveedor inicie una nueva conversación.`;
+  }
+
+  /**
+   * Guarda pedido que requiere activación manual
+   */
+  private static async saveManualActivationOrder(
+    order: Order, 
+    provider: Provider, 
+    phone: string, 
+    userId: string
+  ): Promise<void> {
+    try {
+      const supabase = await this.getSupabaseClient();
+      
+      const { error } = await supabase
+        .from('pending_orders')
+        .insert([{
+          order_id: order?.id,
+          provider_id: provider?.id,
+          provider_phone: phone,
+          user_id: userId,
+          status: 'manual_activation_required',
+          notes: `Número ${phone} requiere activación manual en WhatsApp`,
+          created_at: new Date().toISOString()
+        }]);
+
+      if (error) {
+        console.error('❌ Error guardando pedido de activación manual:', error);
+      } else {
+        console.log('✅ Pedido guardado como "requiere activación manual"');
+      }
+    } catch (error) {
+      console.error('❌ Error en saveManualActivationOrder:', error);
     }
   }
 

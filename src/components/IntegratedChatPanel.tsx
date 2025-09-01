@@ -122,6 +122,7 @@ const getTemplateContent = async (templateName: string): Promise<string> => {
   const fallbackTemplates: { [key: string]: string } = {
     'envio_de_orden': '🛒 *NUEVO PEDIDO*\n\nSe ha recibido un nuevo pedido. Por favor revisa los detalles y confirma la recepción.',
     'inicializador_de_conv': '👋 ¡Hola! Iniciando conversación para coordinar pedidos.',
+    'evio_orden': '🛒 *NUEVA ORDEN*\n\nSe ha recibido una nueva orden. Por favor revisa los detalles y confirma la recepción.',
     'notificacion_pedido': '📋 Notificación de nuevo pedido recibido.',
     'confirmacion_pedido': '✅ Pedido confirmado y en proceso.',
     'recordatorio_pedido': '⏰ Recordatorio: Pedido pendiente de confirmación.',

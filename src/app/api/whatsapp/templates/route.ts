@@ -1,23 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 // Configuración de Meta WhatsApp Business API
-const WHATSAPP_API_URL = 'https://graph.facebook.com/v23.0';
-const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
+const WHATSAPP_API_URL = 'https://graph.facebook.com/v18.0'; // Versión más estable
+const BUSINESS_ACCOUNT_ID = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
 const ACCESS_TOKEN = process.env.WHATSAPP_API_KEY;
 
 export async function GET(request: NextRequest) {
   try {
-    if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
+    if (!BUSINESS_ACCOUNT_ID || !ACCESS_TOKEN) {
       return NextResponse.json(
         { error: 'Configuración de WhatsApp incompleta' },
         { status: 500 }
       );
     }
 
-    // Obtener templates disponibles
-    const url = `${WHATSAPP_API_URL}/${PHONE_NUMBER_ID}/message_templates`;
+    // 🔧 CORRECCIÓN: Usar BUSINESS_ACCOUNT_ID para obtener templates
+    const url = `${WHATSAPP_API_URL}/${BUSINESS_ACCOUNT_ID}/message_templates`;
     
     console.log('🔍 Consultando templates disponibles...');
+    console.log('🔗 URL:', url);
 
     const response = await fetch(url, {
       method: 'GET',
@@ -38,6 +39,8 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('✅ Templates obtenidos exitosamente');
+    console.log('📋 Templates encontrados:', result.data?.length || 0);
+    
     return NextResponse.json(result);
 
   } catch (error) {

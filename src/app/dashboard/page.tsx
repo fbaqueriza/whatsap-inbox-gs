@@ -31,7 +31,7 @@ import { Menu } from '@headlessui/react';
 import SuggestedOrders from '../../components/SuggestedOrders';
 import CreateOrderModal from '../../components/CreateOrderModal';
 import ComprobanteButton from '../../components/ComprobanteButton';
-import CurrentOrdersModule from '../../components/CurrentOrdersModule';
+import OrdersModule from '../../components/OrdersModule';
 import { useOrdersRealtime } from '../../hooks/useSupabaseRealtime';
 
 export default function DashboardPageWrapper() {
@@ -323,8 +323,8 @@ function DashboardPageContent({
       new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
     
-    // 🔧 MEJORA: Logging para debugging
-    if (sortedOrders.length > 0) {
+    // 🔧 OPTIMIZACIÓN: Logs reducidos para evitar spam
+    if (process.env.NODE_ENV === 'development' && sortedOrders.length > 0 && sortedOrders.length % 3 === 0) {
       console.log('📊 Órdenes actuales filtradas:', sortedOrders.length, 'Órdenes totales:', orders.length);
     }
     
@@ -342,20 +342,7 @@ function DashboardPageContent({
     return () => window.removeEventListener('orderModalClosed', handleModalClosed);
   }, [fetchAll]);
 
-  // 🔧 MEJORA: Indicador visual de estado de Realtime
-  const getRealtimeStatus = () => {
-    if (connectionStatus === 'connected' && isSubscribed) {
-      return { status: 'connected', text: 'Tiempo Real Activo', color: 'text-green-600' };
-    } else if (connectionStatus === 'connecting') {
-      return { status: 'connecting', text: 'Conectando...', color: 'text-yellow-600' };
-    } else if (connectionStatus === 'error') {
-      return { status: 'error', text: 'Error de Conexión', color: 'text-red-600' };
-    } else {
-      return { status: 'disconnected', text: 'Realtime Desconectado', color: 'text-gray-500' };
-    }
-  };
 
-  const realtimeStatus = getRealtimeStatus();
 
   const handleSendOrder = async (orderId: string) => {
     const order = orders.find(o => o.id === orderId);
@@ -434,6 +421,10 @@ function DashboardPageContent({
     }
   };
 
+  const handleEditOrder = (order: Order) => {
+    // Redirigir a la página de pedidos para editar
+    window.location.href = `/orders?edit=${order.id}`;
+  };
 
 
     const handleOrderClick = (order: Order) => {
@@ -557,24 +548,15 @@ function DashboardPageContent({
       {/* Remove floating chat button */}
       {/* Header */}
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        {/* 🔧 MEJORA: Indicador de estado de Realtime */}
-        <div className="mb-4 px-4 sm:px-0">
-          <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${realtimeStatus.color} bg-gray-100`}>
-            <div className={`w-2 h-2 rounded-full mr-2 ${realtimeStatus.status === 'connected' ? 'bg-green-500' : realtimeStatus.status === 'connecting' ? 'bg-yellow-500' : realtimeStatus.status === 'error' ? 'bg-red-500' : 'bg-gray-400'}`}></div>
-            {realtimeStatus.text}
-          </div>
-        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-x-8 gap-y-8">
           {/* Left Section: Pedidos actuales */}
           <div className="w-full">
-            <CurrentOrdersModule
+            <OrdersModule
               orders={currentOrders}
               providers={providers}
               onOrderClick={handleOrderClick}
-              onSendOrder={handleSendOrder}
-              onUploadPaymentProof={handleUploadPaymentProof}
-              onConfirmReception={handleConfirmReception}
-              onOpenReceipt={openReceipt}
+              onEditOrder={handleEditOrder}
               onCreateOrder={() => setIsCreateModalOpen(true)}
               onOpenChat={() => {
                 // Abrir chat con el primer proveedor disponible
@@ -589,7 +571,7 @@ function DashboardPageContent({
               }}
               showCreateButton={true}
               maxOrders={5}
-              title="Pedidos actuales"
+              title="Órdenes Actuales"
               className="mb-6"
             />
           </div>

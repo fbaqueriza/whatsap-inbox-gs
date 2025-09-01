@@ -25,7 +25,6 @@ export async function POST(request: NextRequest) {
   const requestId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   try {
-    // 🔧 LOG CRÍTICO: Siempre loguear para debugging
     console.log(`🚀 [${requestId}] WEBHOOK INICIADO:`, new Date().toISOString());
     
     const body = await request.json();
@@ -36,14 +35,40 @@ export async function POST(request: NextRequest) {
       console.log(`✅ [${requestId}] Es un mensaje de WhatsApp Business Account`);
       
       const entry = body.entry?.[0];
-      if (entry?.changes?.[0]?.value?.messages) {
-        const messages = entry.changes[0].value.messages;
-        console.log(`📱 [${requestId}] Procesando ${messages.length} mensajes`);
+      if (!entry?.changes?.[0]?.value) {
+        console.log(`⚠️ [${requestId}] No se encontraron cambios en el webhook`);
+        return NextResponse.json({ status: 'ok', processed: false, requestId });
+      }
+
+      const value = entry.changes[0].value;
+      let processedCount = 0;
+      let errorCount = 0;
+
+      // 🔧 NUEVA FUNCIONALIDAD: Procesar statuses (errores de delivery)
+      if (value.statuses && Array.isArray(value.statuses)) {
+        console.log(`📊 [${requestId}] Procesando ${value.statuses.length} statuses`);
         
-        let processedCount = 0;
-        let errorCount = 0;
+        for (const status of value.statuses) {
+          try {
+            const result = await processWhatsAppStatus(status, requestId);
+            if (result.success) {
+              processedCount++;
+            } else {
+              errorCount++;
+              console.error(`❌ [${requestId}] Error procesando status:`, result.error);
+            }
+          } catch (error) {
+            errorCount++;
+            console.error(`❌ [${requestId}] Error procesando status individual:`, error);
+          }
+        }
+      }
+
+      // 🔧 FUNCIONALIDAD EXISTENTE: Procesar mensajes
+      if (value.messages && Array.isArray(value.messages)) {
+        console.log(`📱 [${requestId}] Procesando ${value.messages.length} mensajes`);
         
-        for (const message of messages) {
+        for (const message of value.messages) {
           try {
             const result = await processWhatsAppMessage(message, requestId);
             if (result.success) {
@@ -57,10 +82,18 @@ export async function POST(request: NextRequest) {
             console.error(`❌ [${requestId}] Error procesando mensaje individual:`, error);
           }
         }
-        
-        console.log(`✅ [${requestId}] Procesados ${processedCount}/${messages.length} mensajes (${errorCount} errores)`);
+      }
+
+      // 🔧 NUEVA FUNCIONALIDAD: Procesar actualizaciones de template
+      if (value.event === 'APPROVED' && value.message_template_name) {
+        console.log(`✅ [${requestId}] Template ${value.message_template_name} aprobado`);
+        processedCount++;
+      }
+
+      if (processedCount === 0 && errorCount === 0) {
+        console.log(`⚠️ [${requestId}] No se encontraron mensajes ni statuses en el webhook`);
       } else {
-        console.log(`⚠️ [${requestId}] No se encontraron mensajes en el webhook`);
+        console.log(`✅ [${requestId}] Procesados ${processedCount} elementos (${errorCount} errores)`);
       }
     } else {
       console.log(`❌ [${requestId}] No es un mensaje de WhatsApp Business Account`);
@@ -85,6 +118,148 @@ export async function POST(request: NextRequest) {
       requestId: requestId,
       duration: duration 
     }, { status: 500 });
+  }
+}
+
+// 🔧 NUEVA FUNCIÓN: Procesar statuses de WhatsApp (errores de delivery)
+async function processWhatsAppStatus(status: any, requestId: string) {
+  const statusStartTime = Date.now();
+  
+  try {
+    const { id, status: statusType, timestamp, recipient_id, errors } = status;
+    
+    console.log(`📊 [${requestId}] Procesando status de WhatsApp:`, {
+      id,
+      status: statusType,
+      recipient_id,
+      timestamp,
+      hasErrors: !!errors
+    });
+
+    // 🔧 NUEVA FUNCIONALIDAD: Manejar errores de engagement
+    if (statusType === 'failed' && errors && Array.isArray(errors)) {
+      for (const error of errors) {
+        if (error.code === 131047 || error.code === 131049) {
+          console.log(`⚠️ [${requestId}] Error de engagement detectado:`, {
+            code: error.code,
+            title: error.title,
+            recipient: recipient_id
+          });
+
+          // 🔧 ACTIVAR ESTRATEGIA DE ACTIVACIÓN MANUAL
+          await handleEngagementError(recipient_id, error, requestId);
+        }
+      }
+    }
+
+    // 🔧 NUEVA FUNCIONALIDAD: Actualizar estado de mensaje en base de datos
+    await updateMessageStatus(id, statusType, recipient_id, timestamp, errors, requestId);
+    
+    const duration = Date.now() - statusStartTime;
+    console.log(`✅ [${requestId}] Status procesado en ${duration}ms`);
+    
+    return { success: true, duration: duration };
+    
+  } catch (error) {
+    const duration = Date.now() - statusStartTime;
+    console.error(`❌ [${requestId}] Error procesando status de WhatsApp:`, error);
+    console.error(`💥 [${requestId}] Status falló en ${duration}ms`);
+    
+    return { success: false, error: error instanceof Error ? error.message : 'Error desconocido' };
+  }
+}
+
+// 🔧 NUEVA FUNCIÓN: Manejar errores de engagement
+async function handleEngagementError(recipientId: string, error: any, requestId: string) {
+  try {
+    console.log(`🔄 [${requestId}] Activando estrategia de activación manual para ${recipientId}`);
+    
+    // Buscar pedidos pendientes para este número
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    // Buscar pedidos pendientes
+    const { data: pendingOrders, error: pendingError } = await supabase
+      .from('pending_orders')
+      .select('*')
+      .eq('provider_phone', recipientId)
+      .eq('status', 'pending_confirmation')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (pendingError) {
+      console.error(`❌ [${requestId}] Error buscando pedidos pendientes:`, pendingError);
+      return;
+    }
+
+    if (pendingOrders && pendingOrders.length > 0) {
+      const pendingOrder = pendingOrders[0];
+      
+      // Actualizar estado a "requiere activación manual"
+      const { error: updateError } = await supabase
+        .from('pending_orders')
+        .update({ 
+          status: 'manual_activation_required',
+          notes: `Error de engagement (${error.code}): ${error.title}. El proveedor debe iniciar contacto.`
+        })
+        .eq('id', pendingOrder.id);
+
+      if (updateError) {
+        console.error(`❌ [${requestId}] Error actualizando pedido pendiente:`, updateError);
+      } else {
+        console.log(`✅ [${requestId}] Pedido ${pendingOrder.order_id} marcado como "requiere activación manual"`);
+      }
+    } else {
+      console.log(`ℹ️ [${requestId}] No se encontraron pedidos pendientes para ${recipientId}`);
+    }
+
+  } catch (error) {
+    console.error(`❌ [${requestId}] Error manejando error de engagement:`, error);
+  }
+}
+
+// 🔧 NUEVA FUNCIÓN: Actualizar estado de mensaje en base de datos
+async function updateMessageStatus(
+  messageId: string, 
+  status: string, 
+  recipientId: string, 
+  timestamp: string, 
+  errors?: any[], 
+  requestId?: string
+) {
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    const updateData: any = {
+      status: status,
+      updated_at: new Date().toISOString()
+    };
+
+    // Agregar información de errores si existen
+    if (errors && errors.length > 0) {
+      updateData.error_details = JSON.stringify(errors);
+    }
+
+    const { error } = await supabase
+      .from('whatsapp_messages')
+      .update(updateData)
+      .eq('message_sid', messageId);
+
+    if (error) {
+      console.error(`❌ [${requestId}] Error actualizando estado de mensaje:`, error);
+    } else {
+      console.log(`✅ [${requestId}] Estado de mensaje ${messageId} actualizado a ${status}`);
+    }
+
+  } catch (error) {
+    console.error(`❌ [${requestId}] Error en updateMessageStatus:`, error);
   }
 }
 

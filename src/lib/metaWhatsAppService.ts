@@ -1,4 +1,5 @@
 import { supabase } from './supabase/client';
+import { WhatsAppErrorHandler, WhatsAppError } from './whatsappErrorHandler';
 
 interface MetaConfig {
   accessToken: string;
@@ -202,6 +203,70 @@ export class MetaWhatsAppService {
 
         if (!response.ok) {
           const errorText = await response.text();
+          
+          // 🔧 NUEVA FUNCIONALIDAD: Manejo inteligente de errores de WhatsApp
+          try {
+            const errorData = JSON.parse(errorText);
+            
+            // Verificar si es un error de WhatsApp Business API
+            if (errorData.error && errorData.error.code) {
+              const whatsappError: WhatsAppError = {
+                code: errorData.error.code,
+                title: errorData.error.title || 'WhatsApp API Error',
+                message: errorData.error.message || errorData.error.error_user_msg || 'Error desconocido',
+                error_data: errorData.error.error_data
+              };
+              
+              // Usar el manejador de errores inteligente
+              const errorResult = WhatsAppErrorHandler.handleError(whatsappError, {
+                phoneNumber: normalizedPhone,
+                messageType: 'text',
+                attempt: 1,
+                maxRetries: 3
+              });
+              
+              // Registrar el error para análisis
+              await WhatsAppErrorHandler.logError(whatsappError, {
+                phoneNumber: normalizedPhone,
+                messageType: 'text',
+                attempt: 1
+              });
+              
+              // Logs de error solo en desarrollo
+              if (process.env.NODE_ENV === 'development') {
+                console.error('🔍 [ERROR_HANDLER] Error de WhatsApp detectado:', {
+                  code: whatsappError.code,
+                  title: whatsappError.title,
+                  shouldRetry: errorResult.shouldRetry,
+                  userMessage: errorResult.userMessage
+                });
+              }
+              
+              // Si es un error de engagement, no reintentar
+              if (WhatsAppErrorHandler.isEngagementError(whatsappError)) {
+                console.warn(`⚠️ [TEXT] Error de engagement para ${normalizedPhone}: ${errorResult.userMessage}`);
+                
+                // Guardar mensaje de error en la base de datos
+                await this.saveMessage({
+                  id: `error_${Date.now()}`,
+                  from: this.config.phoneNumberId,
+                  to: normalizedPhone,
+                  content: `[ERROR: ${errorResult.userMessage}]`,
+                  timestamp: new Date(),
+                  status: 'failed',
+                  isAutomated: false,
+                  isSimulated: false,
+                  messageType: 'sent'
+                });
+                
+                throw new Error(errorResult.userMessage);
+              }
+            }
+          } catch (parseError) {
+            // Si no se puede parsear el error, continuar con el manejo original
+            console.error('❌ Error parseando respuesta de WhatsApp:', parseError);
+          }
+          
           // Log de error solo en desarrollo
           if (process.env.NODE_ENV === 'development') {
             console.error('🔍 [DEBUG] Error Response:', errorText);
@@ -301,16 +366,17 @@ export class MetaWhatsAppService {
 
         const messageId = `sim_template_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
-        await this.saveMessage({
-          id: messageId,
-          from: this.config?.phoneNumberId || '123456789',
-          to,
-          content: `[TEMPLATE: ${templateName}]`,
-          timestamp: new Date(),
-          status: 'sent',
-          isAutomated: true,
-          isSimulated: true
-        });
+        // 🔧 CORRECCIÓN: No guardar mensaje aquí - se guarda en el endpoint
+        // await this.saveMessage({
+        //   id: messageId,
+        //   from: this.config?.phoneNumberId || '123456789',
+        //   to,
+        //   content: `[TEMPLATE: ${templateName}]`,
+        //   timestamp: new Date(),
+        //   status: 'sent',
+        //   isAutomated: true,
+        //   isSimulated: true
+        // });
 
         return {
           id: messageId,
@@ -335,7 +401,8 @@ export class MetaWhatsAppService {
           }
         };
 
-        if (components) {
+        // 🔧 CORRECCIÓN: Agregar componentes si están disponibles
+        if (components && components.length > 0) {
           messageData.template.components = components;
         }
 
@@ -357,6 +424,79 @@ export class MetaWhatsAppService {
 
          if (!response.ok) {
            const errorText = await response.text();
+           
+           // 🔧 NUEVA FUNCIONALIDAD: Manejo inteligente de errores de WhatsApp
+           try {
+             const errorData = JSON.parse(errorText);
+             
+             // Verificar si es un error de WhatsApp Business API
+             if (errorData.error && errorData.error.code) {
+               const whatsappError: WhatsAppError = {
+                 code: errorData.error.code,
+                 title: errorData.error.title || 'WhatsApp API Error',
+                 message: errorData.error.message || errorData.error.error_user_msg || 'Error desconocido',
+                 error_data: errorData.error.error_data
+               };
+               
+               // Usar el manejador de errores inteligente
+               const errorResult = WhatsAppErrorHandler.handleError(whatsappError, {
+                 phoneNumber: normalizedPhone,
+                 messageType: 'template',
+                 attempt: retryCount + 1,
+                 maxRetries: 3
+               });
+               
+               // Registrar el error para análisis
+               await WhatsAppErrorHandler.logError(whatsappError, {
+                 phoneNumber: normalizedPhone,
+                 messageType: 'template',
+                 attempt: retryCount + 1
+               });
+               
+               // Logs de error solo en desarrollo
+               if (process.env.NODE_ENV === 'development') {
+                 console.error('🔍 [ERROR_HANDLER] Error de WhatsApp detectado:', {
+                   code: whatsappError.code,
+                   title: whatsappError.title,
+                   shouldRetry: errorResult.shouldRetry,
+                   userMessage: errorResult.userMessage
+                 });
+               }
+               
+               // Si es un error de engagement, no reintentar
+               if (WhatsAppErrorHandler.isEngagementError(whatsappError)) {
+                 console.warn(`⚠️ [TEMPLATE] Error de engagement para ${normalizedPhone}: ${errorResult.userMessage}`);
+                 
+                 // 🔧 CORRECCIÓN: No guardar mensaje de error aquí - se maneja en el endpoint
+                 // await this.saveMessage({
+                 //   id: `error_${Date.now()}`,
+                 //   from: this.config.phoneNumberId,
+                 //   to: normalizedPhone,
+                 //   content: `[ERROR: ${errorResult.userMessage}]`,
+                 //   timestamp: new Date(),
+                 //   status: 'failed',
+                 //   isAutomated: true,
+                 //   isSimulated: false,
+                 //   messageType: 'sent'
+                 // });
+                 
+                 throw new Error(errorResult.userMessage);
+               }
+               
+               // Si es recuperable, reintentar con delay
+               if (errorResult.shouldRetry && retryCount < 2) {
+                 const delay = errorResult.retryDelay || 5000;
+                 console.log(`🔄 [TEMPLATE] Reintentando en ${delay}ms para ${normalizedPhone} (intento ${retryCount + 2})`);
+                 
+                 await new Promise(resolve => setTimeout(resolve, delay));
+                 return this.sendTemplateMessage(to, templateName, language, components, retryCount + 1);
+               }
+             }
+           } catch (parseError) {
+             // Si no se puede parsear el error, continuar con el manejo original
+             console.error('❌ Error parseando respuesta de WhatsApp:', parseError);
+           }
+           
            // Logs de error solo en desarrollo
            if (process.env.NODE_ENV === 'development') {
              console.error('❌ [DEBUG] Error Response:', errorText);
@@ -374,16 +514,17 @@ export class MetaWhatsAppService {
         }
         }
 
-        await this.saveMessage({
-          id: result.messages?.[0]?.id || `template_${Date.now()}`,
-          from: this.config.phoneNumberId,
-          to: normalizedPhone,
-          content: `[TEMPLATE: ${templateName}]`,
-          timestamp: new Date(),
-          status: 'sent',
-          isAutomated: true,
-          isSimulated: false
-        });
+        // 🔧 CORRECCIÓN: No guardar mensaje aquí - se guarda en el endpoint
+        // await this.saveMessage({
+        //   id: result.messages?.[0]?.id || `template_${Date.now()}`,
+        //   from: this.config.phoneNumberId,
+        //   to: normalizedPhone,
+        //   content: `[TEMPLATE: ${templateName}]`,
+        //   timestamp: new Date(),
+        //   status: 'sent',
+        //   isAutomated: true,
+        //   isSimulated: false
+        // });
 
         return result;
       }
@@ -827,6 +968,304 @@ export class MetaWhatsAppService {
     };
   }
 
+  /**
+   * 🔧 NUEVO MÉTODO: Enviar template con variables de forma robusta
+   * Maneja tanto templates con componentes como templates estáticos
+   */
+  async sendTemplateWithVariables(
+    to: string, 
+    templateName: string, 
+    language: string = 'es_AR', 
+    variables?: Record<string, string>,
+    components?: any[]
+  ): Promise<any> {
+    await this.initializeIfConfigured();
+
+    if (!this.isServiceEnabled()) {
+      console.log('Meta WhatsApp Service: Servicio deshabilitado');
+      return null;
+    }
+
+    try {
+      if (this.isSimulationMode) {
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📤 [SIMULACIÓN] Enviando template con variables:', {
+            to,
+            templateName,
+            language,
+            variables,
+            hasComponents: !!components
+          });
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const messageId = `sim_template_vars_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        return {
+          id: messageId,
+          status: 'sent',
+          simulated: true
+        };
+      } else {
+        let normalizedPhone = to.replace(/[\s\-\(\)]/g, '');
+        if (!normalizedPhone.startsWith('+')) {
+          normalizedPhone = `+${normalizedPhone}`;
+        }
+
+        const messageData: any = {
+          messaging_product: 'whatsapp',
+          to: normalizedPhone,
+          type: 'template',
+          template: {
+            name: templateName,
+            language: {
+              code: language
+            }
+          }
+        };
+
+        // 🔧 MEJORA: Agregar componentes solo si están disponibles y son válidos
+        if (components && Array.isArray(components) && components.length > 0) {
+          messageData.template.components = components;
+          
+          // Logs de debug solo en desarrollo
+          if (process.env.NODE_ENV === 'development') {
+            console.log('🔍 [DEBUG] Template con componentes dinámicos:', {
+              templateName,
+              componentsCount: components.length,
+              components: components
+            });
+          }
+        } else {
+          // Logs de debug solo en desarrollo
+          if (process.env.NODE_ENV === 'development') {
+            console.log('🔍 [DEBUG] Template estático (sin componentes):', {
+              templateName,
+              variables
+            });
+          }
+        }
+
+        // Logs de debug solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔍 [DEBUG] Enviando template a Meta API...');
+          console.log('🔍 [DEBUG] URL:', `${this.baseUrl}/${this.config.phoneNumberId}/messages`);
+          console.log('🔍 [DEBUG] Template data:', JSON.stringify(messageData, null, 2));
+        }
+         
+        const response = await fetch(`${this.baseUrl}/${this.config.phoneNumberId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.config.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(messageData),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          
+          // 🔧 MEJORA: Manejo inteligente de errores
+          try {
+            const errorData = JSON.parse(errorText);
+            
+            if (errorData.error && errorData.error.code) {
+              const whatsappError: WhatsAppError = {
+                code: errorData.error.code,
+                title: errorData.error.title || 'WhatsApp API Error',
+                message: errorData.error.message || errorData.error.error_user_msg || 'Error desconocido',
+                error_data: errorData.error.error_data
+              };
+              
+              // Usar el manejador de errores inteligente
+              const errorResult = WhatsAppErrorHandler.handleError(whatsappError, {
+                phoneNumber: normalizedPhone,
+                messageType: 'template',
+                attempt: 1,
+                maxRetries: 3
+              });
+              
+              console.error('❌ Error de WhatsApp API:', {
+                code: whatsappError.code,
+                title: whatsappError.title,
+                message: errorResult.userMessage
+              });
+              
+              throw new Error(errorResult.userMessage);
+            }
+          } catch (parseError) {
+            console.error('❌ Error parseando respuesta de WhatsApp:', parseError);
+          }
+          
+          console.error('❌ Error enviando template:', response.status, response.statusText);
+          console.error('❌ Error details:', errorText);
+          
+          throw new Error(`Error enviando template: ${errorText}`);
+        }
+
+        const result = await response.json();
+        
+        // Logs de debug solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ Template enviado exitosamente:', result);
+        }
+
+        return {
+          id: result.messages?.[0]?.id || `template_${Date.now()}`,
+          status: 'sent',
+          simulated: false
+        };
+      }
+    } catch (error) {
+      console.error('❌ Error en sendTemplateWithVariables:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Enviar template con variables personalizadas
+   * 🔧 CORRECCIÓN: Template evio_orden no requiere componentes dinámicos
+   */
+  async sendTemplateMessageWithVariables(
+    to: string, 
+    templateName: string, 
+    language: string = 'es_AR', 
+    variables: Record<string, string>
+  ): Promise<any> {
+    await this.initializeIfConfigured();
+
+    if (!this.isServiceEnabled()) {
+      console.log('Meta WhatsApp Service: Servicio deshabilitado');
+      return null;
+    }
+
+    try {
+      if (this.isSimulationMode) {
+        // Log solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📤 [SIMULACIÓN] Enviando template con variables:', {
+            to,
+            templateName,
+            language,
+            variables
+          });
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const messageId = `sim_template_vars_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        await this.saveMessage({
+          id: messageId,
+          from: this.config?.phoneNumberId || '123456789',
+          to,
+          content: `[TEMPLATE: ${templateName} con variables: ${JSON.stringify(variables)}]`,
+          timestamp: new Date(),
+          status: 'sent',
+          isAutomated: true,
+          isSimulated: true
+        });
+
+        return {
+          id: messageId,
+          status: 'sent',
+          simulated: true
+        };
+      } else {
+        let normalizedPhone = to.replace(/[\s\-\(\)]/g, '');
+        if (!normalizedPhone.startsWith('+')) {
+          normalizedPhone = `+${normalizedPhone}`;
+        }
+
+        // 🔧 CORRECCIÓN: Template evio_orden no requiere componentes dinámicos
+        // Las variables están configuradas estáticamente en el template de Meta
+        const messageData: any = {
+          messaging_product: 'whatsapp',
+          to: normalizedPhone,
+          type: 'template',
+          template: {
+            name: templateName,
+            language: {
+              code: language
+            }
+            // 🔧 CORRECCIÓN: No enviar components si no son necesarios
+          }
+        };
+
+        // Logs de debug solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔍 [DEBUG] Enviando template a Meta API...');
+          console.log('🔍 [DEBUG] URL:', `${this.baseUrl}/${this.config.phoneNumberId}/messages`);
+          console.log('🔍 [DEBUG] Template data:', JSON.stringify(messageData, null, 2));
+        }
+         
+        const response = await fetch(`${this.baseUrl}/${this.config.phoneNumberId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.config.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(messageData),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('❌ Error enviando template:', response.status, response.statusText);
+          console.error('❌ Error details:', errorText);
+          
+          // Guardar mensaje de error en la base de datos
+          await this.saveMessage({
+            id: `error_${Date.now()}`,
+            from: this.config.phoneNumberId,
+            to: normalizedPhone,
+            content: `[ERROR: ${errorText}]`,
+            timestamp: new Date(),
+            status: 'failed',
+            isAutomated: true,
+            isSimulated: false,
+            messageType: 'sent'
+          });
+          
+          throw new Error(`Error enviando template: ${errorText}`);
+        }
+
+        const result = await response.json();
+        
+        // Logs de debug solo en desarrollo
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ Template enviado exitosamente:', result);
+        }
+
+        // Guardar mensaje exitoso en la base de datos
+        await this.saveMessage({
+          id: result.messages?.[0]?.id || `template_${Date.now()}`,
+          from: this.config.phoneNumberId,
+          to: normalizedPhone,
+          content: `[TEMPLATE: ${templateName}]`,
+          timestamp: new Date(),
+          status: 'sent',
+          isAutomated: true,
+          isSimulated: false,
+          messageType: 'sent'
+        });
+
+        // Dispatch event para el frontend
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('whatsappMessage', {
+            detail: { messageId: result.messages?.[0]?.id, to, content: templateName }
+          }));
+        }
+
+        return result;
+      }
+    } catch (error) {
+      console.error('❌ Error enviando template:', error);
+      throw error;
+    }
+  }
+
   // Obtener plantillas disponibles
   async getTemplates(): Promise<any[]> {
     await this.initializeIfConfigured();
@@ -867,6 +1306,21 @@ export class MetaWhatsAppService {
               {
                 type: 'BODY',
                 text: 'Hola, hemos iniciado una nueva conversación. ¿En qué podemos ayudarte?'
+              }
+            ]
+          },
+          {
+            name: 'evio_orden',
+            language: 'es',
+            category: 'UTILITY',
+            components: [
+              {
+                type: 'HEADER',
+                text: 'Nueva orden {{Proveedor}}'
+              },
+              {
+                type: 'BODY',
+                text: 'Buen dia {{Nombre Proveedor}}! Espero que andes bien! En cuanto me confirmes, paso el pedido de esta semana'
               }
             ]
           }

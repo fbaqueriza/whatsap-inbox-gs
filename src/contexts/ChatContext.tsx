@@ -187,18 +187,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           return hasNewMessages ? updatedMessages : prev;
         });
         
-        // 🔧 LOGGING INFORMATIVO: Mostrar estadísticas completas (solo en desarrollo y cuando hay cambios)
+        // 🔧 OPTIMIZACIÓN: Logs reducidos para evitar spam
         if (process.env.NODE_ENV === 'development' && transformedMessages.length > 0) {
-          const receivedMessages = transformedMessages.filter((m: any) => m.type === 'received');
-          const sentMessages = transformedMessages.filter((m: any) => m.type === 'sent');
-          const argentineMessages = transformedMessages.filter((m: any) => 
-            m.contact_id.includes('+549')
-          );
-          
-          // 🔧 OPTIMIZACIÓN: Solo loggear si hay mensajes nuevos o cambios significativos
           const currentCount = transformedMessages.length;
-          if (lastMessageCount !== currentCount) {
-            console.log(`📱 Chat: ${transformedMessages.length} mensajes totales (${receivedMessages.length} recibidos, ${sentMessages.length} enviados, ${argentineMessages.length} argentinos)`);
+          if (lastMessageCount !== currentCount && currentCount % 5 === 0) { // Solo cada 5 mensajes
+            const receivedMessages = transformedMessages.filter((m: any) => m.type === 'received');
+            const sentMessages = transformedMessages.filter((m: any) => m.type === 'sent');
+            console.log(`📱 Chat: ${transformedMessages.length} mensajes totales (${receivedMessages.length} recibidos, ${sentMessages.length} enviados)`);
             setLastMessageCount(currentCount);
           }
         }

@@ -244,9 +244,30 @@ bb46663 - FIX: Corregir nombre de campo contactName en variables de template
 59d1833 - FIX: Corregir nombres de variables para template evio_orden según Meta Business Manager
 ```
 
+## 🔧 CORRECCIÓN FINAL - NOMBRES DE VARIABLES SEGÚN DOCUMENTACIÓN
+
+**Problema identificado**: Error `(#100) Invalid parameter - Parameter name is missing or empty`
+**Causa raíz**: Variables enviadas con nombres incorrectos según documentación oficial de WhatsApp
+
+**Variables corregidas según documentación oficial:**
+```javascript
+// ❌ ANTES (nombres descriptivos)
+{ 'Proveedor': "L'igiene", 'Nombre Proveedor': "L'igiene" }
+
+// ✅ DESPUÉS (nombres específicos según documentación)
+{ 'provider_name': "L'igiene", 'contact_name': "L'igiene" }
+```
+
+**Solución**: Usar nombres específicos exactos según documentación oficial de WhatsApp API
+
+**Commit aplicado:**
+```
+c829a33 - FIX: Corregir nombres de variables para template evio_orden según documentación oficial
+```
+
 **Estado actual:** 🟢 **CORRECCIÓN DESPLEGADA EN PRODUCCIÓN**
 
-**Próximo paso**: Probar el envío de una nueva orden para verificar que el template se envía correctamente con los nombres de variables correctos.
+**Próximo paso**: Probar el envío de una nueva orden para verificar que el template se envía correctamente con los nombres de variables según documentación oficial.
 
 **Documentación relacionada:**
 - [WhatsApp Template Components](https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates/components#encabezados-de-texto)

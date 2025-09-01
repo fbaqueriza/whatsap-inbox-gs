@@ -110,8 +110,8 @@ export async function POST(request: NextRequest) {
 function generateTemplateContent(templateName: string, variables?: Record<string, string>): string {
   switch (templateName) {
     case 'evio_orden':
-      const providerName = variables?.['Proveedor'] || 'Proveedor';
-      const contactName = variables?.['Nombre Proveedor'] || 'Contacto';
+      const providerName = variables?.['provider_name'] || 'Proveedor';
+      const contactName = variables?.['contact_name'] || 'Contacto';
       return `🛒 *NUEVA ORDEN - ${providerName}*
 
 Buen día ${contactName}! En cuanto me confirmes, paso el pedido de esta semana`;

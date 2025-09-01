@@ -611,31 +611,31 @@ export class MetaWhatsAppService {
         if (templateName === 'evio_orden' && variables) {
           const components: any[] = [];
           
-          // 🔧 MEJORA: Según la documentación, evio_orden espera 2 parámetros:
-          // 1. Header: provider_name (nombre del proveedor)
-          // 2. Body: contact_name (nombre del contacto)
-          if (variables.provider_name) {
+          // 🔧 MEJORA: Según Meta Business Manager, evio_orden usa nombres descriptivos:
+          // 1. Header: "Proveedor" (nombre del proveedor)
+          // 2. Body: "Nombre Proveedor" (nombre de contacto del proveedor)
+          if (variables['Proveedor']) {
             // Componente HEADER
             const headerComponent: any = {
               type: 'header',
               parameters: [
                 {
                   type: 'text',
-                  text: variables.provider_name
+                  text: variables['Proveedor']
                 }
               ]
             };
             components.push(headerComponent);
           }
           
-          if (variables.contact_name) {
+          if (variables['Nombre Proveedor']) {
             // Componente BODY
             const bodyComponent: any = {
               type: 'body',
               parameters: [
                 {
                   type: 'text',
-                  text: variables.contact_name
+                  text: variables['Nombre Proveedor']
                 }
               ]
             };
@@ -1335,20 +1335,20 @@ export class MetaWhatsAppService {
   } {
     switch (templateName) {
       case 'evio_orden':
-        if (!variables.provider_name) {
+        if (!variables['Proveedor']) {
           return {
             isValid: false,
-            error: 'evio_orden requiere provider_name para el header'
+            error: 'evio_orden requiere "Proveedor" para el header'
           };
         }
-        if (!variables.contact_name) {
+        if (!variables['Nombre Proveedor']) {
           return {
             isValid: false,
-            error: 'evio_orden requiere contact_name para el body'
+            error: 'evio_orden requiere "Nombre Proveedor" para el body'
           };
         }
         // Verificar que no se envíen parámetros extra
-        const extraParams = Object.keys(variables).filter(key => key !== 'provider_name' && key !== 'contact_name');
+        const extraParams = Object.keys(variables).filter(key => key !== 'Proveedor' && key !== 'Nombre Proveedor');
         if (extraParams.length > 0) {
           return {
             isValid: false,

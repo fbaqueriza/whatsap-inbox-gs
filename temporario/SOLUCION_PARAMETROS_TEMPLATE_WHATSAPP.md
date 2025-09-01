@@ -207,6 +207,24 @@ e066dcc - FIX: Corregir envío de template evio_orden con parámetros correctos
 
 **Estado actual:** 🟢 **CÓDIGO ACTUALIZADO EN PRODUCCIÓN**
 
+## 🔧 CORRECCIÓN FINAL APLICADA
+
+**Problema identificado**: Variables enviadas con nombres incorrectos
+```
+❌ Variables enviadas: { Proveedor: "L'igiene", 'Nombre Proveedor': "L'igiene" }
+✅ Variables esperadas: { provider_name: "L'igiene", contact_name: "L'igiene" }
+```
+
+**Causa raíz**: Campo `contactName` en la estructura de Provider (camelCase)
+**Solución**: Corregir mapeo de variables en `orderNotificationService.ts`
+
+**Commit aplicado:**
+```
+bb46663 - FIX: Corregir nombre de campo contactName en variables de template
+```
+
+**Estado actual:** 🟢 **CORRECCIÓN DESPLEGADA EN PRODUCCIÓN**
+
 **Próximo paso**: Probar el envío de una nueva orden para verificar que el template se envía correctamente con los 2 parámetros.
 
 **Documentación relacionada:**

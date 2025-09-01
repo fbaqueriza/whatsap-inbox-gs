@@ -183,12 +183,12 @@ export class OrderNotificationService {
 
       try {
               // 🔧 CORRECCIÓN: Preparar variables para el template evio_orden
-      // Según la documentación, evio_orden espera 2 parámetros:
-      // 1. Header: provider_name (nombre del proveedor)
-      // 2. Body: contact_name (nombre del contacto)
+      // Según Meta Business Manager, evio_orden usa nombres descriptivos:
+      // 1. Header: "Proveedor" (nombre del proveedor)
+      // 2. Body: "Nombre Proveedor" (nombre de contacto del proveedor)
       const templateVariables = {
-        provider_name: provider?.name || 'Proveedor',
-        contact_name: provider?.contactName || provider?.name || 'Contacto'
+        'Proveedor': provider?.name || 'Proveedor',
+        'Nombre Proveedor': provider?.contactName || provider?.name || 'Contacto'
       };
       
       console.log('🔧 Variables preparadas para template:', templateVariables);

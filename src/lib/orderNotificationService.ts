@@ -188,16 +188,23 @@ export class OrderNotificationService {
       // 2. Body: "contact_name" (nombre de contacto del proveedor)
       const templateVariables = {
         'provider_name': provider?.name || 'Proveedor',
-        'contact_name': provider?.contactName || provider?.name || 'Contacto'
+        'contact_name': provider?.contact_name || provider?.name || 'Contacto'
       };
       
       // 🔧 MEJORA: Log detallado para verificar qué valor se usa para contact_name
       if (process.env.NODE_ENV === 'development') {
         console.log('🔧 Variables preparadas para template:', templateVariables);
-        if (provider?.contactName) {
-          console.log('✅ Usando contactName del proveedor:', provider.contactName);
+        console.log('🔧 Datos del proveedor:', {
+          id: provider?.id,
+          name: provider?.name,
+          contact_name: provider?.contact_name,
+          hasContactName: !!provider?.contact_name,
+          contactNameType: typeof provider?.contact_name
+        });
+        if (provider?.contact_name) {
+          console.log('✅ Usando contact_name del proveedor:', provider.contact_name);
         } else {
-          console.log('⚠️ No hay contactName configurado, usando name del proveedor:', provider?.name);
+          console.log('⚠️ No hay contact_name configurado, usando name del proveedor:', provider?.name);
         }
       }
         

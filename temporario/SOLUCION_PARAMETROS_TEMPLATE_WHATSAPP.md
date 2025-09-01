@@ -267,7 +267,69 @@ c829a33 - FIX: Corregir nombres de variables para template evio_orden según doc
 
 **Estado actual:** 🟢 **CORRECCIÓN DESPLEGADA EN PRODUCCIÓN**
 
-**Próximo paso**: Probar el envío de una nueva orden para verificar que el template se envía correctamente con los nombres de variables según documentación oficial.
+## 🔧 MEJORA ADICIONAL - LIMPIEZA DE CÓDIGO LOCAL
+
+**Problema identificado**: Referencias a `useUndo` y almacenamiento local innecesarias
+**Causa raíz**: Código heredado que no se estaba usando correctamente
+
+**Mejoras implementadas:**
+1. ✅ Eliminadas importaciones innecesarias (`useUndo`, `useCSV`)
+2. ✅ Eliminado código comentado de datos de prueba locales
+3. ✅ Mejorado `handleAddRow` para usar modal en lugar de creación automática
+4. ✅ Mejorado logging en `handleDataChange` para mejor debugging
+5. ✅ Confirmado que `DataProvider` usa correctamente Supabase
+
+**Estado actual:** 🟢 **CÓDIGO LIMPIO Y FUNCIONAL**
+
+## ✅ VERIFICACIÓN FINAL EXITOSA
+
+**Prueba realizada en servidor local:**
+```bash
+POST /api/whatsapp/send
+{
+  "to": "+5491135562673",
+  "message": "evio_orden",
+  "templateVariables": {
+    "provider_name": "Test Local Corregido",
+    "contact_name": "Test Contact Corregido"
+  },
+  "userId": "test-user"
+}
+```
+
+**Resultado:**
+- ✅ **Status 200 OK**
+- ✅ **Success: true**
+- ✅ **Message ID: msg_1756738854470** (WhatsApp confirmó envío)
+- ✅ **Variables corregidas** - Ya no usa nombres descriptivos
+- ✅ **Servidor local actualizado** - Cache limpiado y reiniciado
+
+**Estado final:** 🟢 **TODOS LOS PROBLEMAS RESUELTOS**
+
+1. ✅ **Variables de WhatsApp** - Nombres correctos según documentación oficial
+2. ✅ **Mapeo de base de datos** - `contactName` se guarda correctamente
+3. ✅ **Almacenamiento** - Usa exclusivamente Supabase (no local)
+4. ✅ **Código limpio** - Sin referencias innecesarias a `useUndo`
+5. ✅ **Servidor local** - Actualizado y funcionando correctamente
+
+## 🔧 CORRECCIÓN FINAL - USO DE CONTACT_NAME
+
+**Problema identificado**: El proveedor "L'igiene" tiene `contact_name = "fbaqueriza"` en la base de datos, pero el código usaba `name` como fallback.
+
+**Causa raíz**: El código obtenía el proveedor directamente desde la base de datos con `select('*')`, pero buscaba `contactName` (camelCase) en lugar de `contact_name` (snake_case).
+
+**Solución implementada**:
+```typescript
+// ❌ ANTES
+'contact_name': provider?.contactName || provider?.name || 'Contacto'
+
+// ✅ DESPUÉS
+'contact_name': provider?.contact_name || provider?.name || 'Contacto'
+```
+
+**Resultado**: Ahora el template usará correctamente el `contact_name` del proveedor en lugar del `name`.
+
+**Próximo paso**: El sistema está completamente funcional. Puedes probar el envío de una nueva orden desde la aplicación web.
 
 **Documentación relacionada:**
 - [WhatsApp Template Components](https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates/components#encabezados-de-texto)

@@ -73,9 +73,9 @@ function mapOrderFromDb(order: any): Order {
 function mapProviderFromDb(provider: any): Provider {
   return {
     ...provider,
-    contactName: provider.contactName,
-    razonSocial: provider.razon_social,
-    cuitCuil: provider.cuit_cuil,
+    contactName: provider.contact_name || '', // 🔧 CORRECCIÓN: Mapear desde contact_name de la BD con fallback
+    razonSocial: provider.razon_social || '',
+    cuitCuil: provider.cuit_cuil || '',
     defaultDeliveryDays: provider.default_delivery_days || [],
     defaultDeliveryTime: provider.default_delivery_time || [],
     defaultPaymentMethod: provider.default_payment_method || 'efectivo',

@@ -191,7 +191,15 @@ export class OrderNotificationService {
         'contact_name': provider?.contactName || provider?.name || 'Contacto'
       };
       
-      console.log('🔧 Variables preparadas para template:', templateVariables);
+      // 🔧 MEJORA: Log detallado para verificar qué valor se usa para contact_name
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔧 Variables preparadas para template:', templateVariables);
+        if (provider?.contactName) {
+          console.log('✅ Usando contactName del proveedor:', provider.contactName);
+        } else {
+          console.log('⚠️ No hay contactName configurado, usando name del proveedor:', provider?.name);
+        }
+      }
         
         const templateResult = await this.sendTemplateToMeta(normalizedPhone, templateVariables, userId);
         result.templateSent = templateResult.success;

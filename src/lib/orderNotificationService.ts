@@ -182,25 +182,43 @@ export class OrderNotificationService {
       const baseUrl = this.buildBaseUrl();
 
       try {
-        const templateResult = await this.sendTemplateToMeta(normalizedPhone, baseUrl, order, provider, userId);
+              // 🔧 CORRECCIÓN: Preparar variables para el template evio_orden
+      // Según la documentación, evio_orden espera 2 parámetros:
+      // 1. Header: provider_name (nombre del proveedor)
+      // 2. Body: contact_name (nombre del contacto)
+      const templateVariables = {
+        provider_name: provider?.name || 'Proveedor',
+        contact_name: provider?.contact_name || 'Contacto'
+      };
+        
+        const templateResult = await this.sendTemplateToMeta(normalizedPhone, templateVariables, userId);
         result.templateSent = templateResult.success;
+        
         if (!templateResult.success) {
-          // 🔧 MEJORA: Clasificar errores para mejor manejo
-          if (templateResult.error?.includes('activación manual')) {
-            result.errors.push(`⚠️ ${templateResult.error}`);
+          const errorMessage = templateResult.error || 'Error desconocido';
+          
+          // 🔧 MEJORA: Manejo específico de errores de conexión
+          if (errorMessage.includes('conexión') || errorMessage.includes('red')) {
+            result.errors.push(`⚠️ ${errorMessage} - El pedido se guardará como pendiente`);
+            console.warn('⚠️ Error de conexión detectado - El pedido se guardará como pendiente');
+          } else if (errorMessage.includes('activación manual')) {
+            result.errors.push(`⚠️ ${errorMessage}`);
             console.log('⚠️ Número requiere activación manual - guardando pedido pendiente');
           } else {
-            result.errors.push(`Template: ${templateResult.error}`);
+            result.errors.push(`Template: ${errorMessage}`);
           }
         }
-        // 🔧 MEJORA: Reducir logging excesivo
+        
         if (process.env.NODE_ENV === 'development') {
           console.log('📱 Template:', templateResult.success ? '✅ Enviado' : '❌ Falló');
         }
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+        const errorMsg = this.formatErrorMessage(error);
         result.errors.push(`Template: ${errorMsg}`);
-        console.error('❌ Error enviando template:', error);
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.error('❌ Error enviando template:', errorMsg);
+        }
       }
 
       // PASO 3: Guardar pedido pendiente de confirmación
@@ -247,31 +265,25 @@ export class OrderNotificationService {
   }
 
   /**
-   * 🔧 ESTRATEGIA DE ACTIVACIÓN: Maneja números bloqueados por WhatsApp
-   * 1. Intenta enviar template primero
-   * 2. Si falla por engagement, proporciona instrucciones de activación
-   * 3. Guarda el pedido como pendiente para envío manual
+   * Envía template a Meta WhatsApp API
+   */
+  /**
+   * Envía template a Meta WhatsApp API con manejo robusto de errores
    */
   private static async sendTemplateToMeta(
     phone: string, 
-    baseUrl: string,
-    order?: Order,
-    provider?: Provider,
-    userId?: string
+    templateVariables: Record<string, string>, 
+    userId: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      // Preparar variables del template
-      const templateVariables = {
-        Proveedor: provider?.name || 'Proveedor',
-        'Nombre Proveedor': provider?.contactName || provider?.name || 'Proveedor'
-      };
+      // 🔧 CORRECCIÓN: Detectar URL base automáticamente
+      const baseUrl = this.detectBaseUrl();
       
-      console.log('📋 Variables del template:', templateVariables);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📱 Enviando template evio_orden a Meta API...');
+      }
       
-      // PASO 1: Intentar enviar template evio_orden (template correcto)
-      console.log('📤 Intentando enviar template evio_orden...');
-      
-      const templateResponse = await fetch(`${baseUrl}/api/whatsapp/send`, {
+      const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -284,74 +296,72 @@ export class OrderNotificationService {
         }),
       });
 
-       const templateResult = await templateResponse.json();
-
-       if (templateResponse.ok && templateResult.success) {
-         console.log('✅ Template evio_orden enviado exitosamente a Meta API');
-         return { success: true };
-       }
-
-       // PASO 1.5: Si falla evio_orden, intentar con envio_de_orden como fallback
-       console.log('⚠️ Template evio_orden falló, intentando con envio_de_orden...');
-       
-       const fallbackResponse = await fetch(`${baseUrl}/api/whatsapp/send`, {
-         method: 'POST',
-         headers: {
-           'Content-Type': 'application/json',
-         },
-         body: JSON.stringify({
-           to: phone,
-           message: 'envio_de_orden',
-           templateVariables: templateVariables,
-           userId: userId
-         }),
-       });
-
-       const fallbackResult = await fallbackResponse.json();
-
-       if (fallbackResponse.ok && fallbackResult.success) {
-         console.log('✅ Template envio_de_orden enviado exitosamente como fallback');
-         return { success: true };
-       }
-
-             // PASO 2: Verificar si es error de engagement/bloqueo
-       const isEngagementError = templateResult.error?.includes('engagement') || 
-                                templateResult.error?.includes('131049') ||
-                                templateResult.error?.includes('131047') ||
-                                templateResult.error?.includes('blocked') ||
-                                fallbackResult.error?.includes('engagement') ||
-                                fallbackResult.error?.includes('131049') ||
-                                fallbackResult.error?.includes('131047') ||
-                                fallbackResult.error?.includes('blocked');
-
-      if (isEngagementError) {
-        console.log('⚠️ Número bloqueado por WhatsApp - requiere activación manual');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        const errorMessage = errorData.error || `HTTP ${response.status}`;
         
-        // PASO 3: Proporcionar instrucciones de activación
-        const activationInstructions = this.generateActivationInstructions(phone, provider, order);
-        console.log('📋 Instrucciones de activación:', activationInstructions);
-        
-        // PASO 4: Guardar pedido como "requiere activación manual"
-        if (order && provider && userId) {
-          await this.saveManualActivationOrder(order, provider, phone, userId);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('❌ Error enviando template:', errorMessage);
         }
         
-        return { 
-          success: false, 
-          error: `Número ${phone} requiere activación manual. ${activationInstructions}` 
-        };
+        return { success: false, error: errorMessage };
       }
 
-             // Si no es error de engagement, retornar el error original
-       console.error('❌ Error enviando template (no engagement):', templateResult);
-       console.error('❌ Error fallback (no engagement):', fallbackResult);
-       return { success: false, error: templateResult.error || fallbackResult.error || 'Error enviando template' };
+      const result = await response.json();
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Template enviado exitosamente');
+      }
+      
+      return { success: true };
 
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
-      console.error('❌ Error en sendTemplateToMeta:', error);
-      return { success: false, error: errorMsg };
+      const errorMessage = this.formatErrorMessage(error);
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Error en sendTemplateToMeta:', errorMessage);
+      }
+      
+      return { success: false, error: errorMessage };
     }
+  }
+
+  /**
+   * Detecta automáticamente la URL base correcta
+   */
+  private static detectBaseUrl(): string {
+    // 🔧 MEJORA: Detección inteligente de URL base
+    if (typeof window !== 'undefined') {
+      // Cliente: usar la URL actual
+      return window.location.origin;
+    }
+    
+    // Servidor: usar variables de entorno o detectar puerto
+    const envUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (envUrl) {
+      return envUrl;
+    }
+    
+    // 🔧 CORRECCIÓN: Usar puerto 3001 en desarrollo
+    const port = process.env.PORT || '3001';
+    return `http://localhost:${port}`;
+  }
+
+  /**
+   * Formatea mensajes de error de forma consistente
+   */
+  private static formatErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      // 🔧 MEJORA: Manejo específico de errores de red
+      if (error.message.includes('ECONNREFUSED')) {
+        return 'Error de conexión: No se pudo conectar al servidor';
+      }
+      if (error.message.includes('fetch failed')) {
+        return 'Error de red: Fallo en la comunicación con el servidor';
+      }
+      return error.message;
+    }
+    return 'Error desconocido';
   }
 
   /**

@@ -188,8 +188,10 @@ export class OrderNotificationService {
       // 2. Body: contact_name (nombre del contacto)
       const templateVariables = {
         provider_name: provider?.name || 'Proveedor',
-        contact_name: provider?.contact_name || 'Contacto'
+        contact_name: provider?.contactName || provider?.name || 'Contacto'
       };
+      
+      console.log('🔧 Variables preparadas para template:', templateVariables);
         
         const templateResult = await this.sendTemplateToMeta(normalizedPhone, templateVariables, userId);
         result.templateSent = templateResult.success;

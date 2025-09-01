@@ -611,37 +611,39 @@ export class MetaWhatsAppService {
           if (templateName === 'evio_orden' && variables) {
             const components: any[] = [];
             
-            // 🔧 MEJORA: Según la documentación oficial de WhatsApp, los templates usan índices numéricos
-            // Template evio_orden debe estar configurado como:
-            // Header: "Nueva orden {{1}}"
-            // Body: "Buen día {{2}}! En cuanto me confirmes, paso el pedido de esta semana"
-            if (variables['provider_name']) {
-              // Componente HEADER - usar índice {{1}}
-              const headerComponent: any = {
-                type: 'header',
-                parameters: [
-                  {
-                    type: 'text',
-                    text: variables['provider_name']
-                  }
-                ]
-              };
-              components.push(headerComponent);
-            }
-            
-            if (variables['contact_name']) {
-              // Componente BODY - usar índice {{2}}
-              const bodyComponent: any = {
-                type: 'body',
-                parameters: [
-                  {
-                    type: 'text',
-                    text: variables['contact_name']
-                  }
-                ]
-              };
-              components.push(bodyComponent);
-            }
+                         // 🔧 MEJORA: Según la documentación oficial de Meta, los parámetros necesitan parameter_name
+             // Template evio_orden debe estar configurado como:
+             // Header: "Nueva orden {{provider_name}}"
+             // Body: "Buen día {{contact_name}}! En cuanto me confirmes, paso el pedido de esta semana"
+             if (variables['provider_name']) {
+               // Componente HEADER
+               const headerComponent: any = {
+                 type: 'header',
+                 parameters: [
+                   {
+                     type: 'text',
+                     parameter_name: 'provider_name',
+                     text: variables['provider_name']
+                   }
+                 ]
+               };
+               components.push(headerComponent);
+             }
+             
+             if (variables['contact_name']) {
+               // Componente BODY
+               const bodyComponent: any = {
+                 type: 'body',
+                 parameters: [
+                   {
+                     type: 'text',
+                     parameter_name: 'contact_name',
+                     text: variables['contact_name']
+                   }
+                 ]
+               };
+               components.push(bodyComponent);
+             }
 
             if (components.length > 0) {
               messageData.template.components = components;

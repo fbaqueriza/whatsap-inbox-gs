@@ -223,9 +223,30 @@ e066dcc - FIX: Corregir envío de template evio_orden con parámetros correctos
 bb46663 - FIX: Corregir nombre de campo contactName en variables de template
 ```
 
+## 🔧 CORRECCIÓN FINAL - NOMBRES DE VARIABLES
+
+**Problema identificado**: Error `(#100) Invalid parameter - Parameter name is missing or empty`
+**Causa raíz**: Variables enviadas con nombres incorrectos según Meta Business Manager
+
+**Variables corregidas:**
+```javascript
+// ❌ ANTES
+{ provider_name: "L'igiene", contact_name: "L'igiene" }
+
+// ✅ DESPUÉS  
+{ 'Proveedor': "L'igiene", 'Nombre Proveedor': "L'igiene" }
+```
+
+**Solución**: Usar nombres descriptivos exactos configurados en Meta Business Manager
+
+**Commit aplicado:**
+```
+59d1833 - FIX: Corregir nombres de variables para template evio_orden según Meta Business Manager
+```
+
 **Estado actual:** 🟢 **CORRECCIÓN DESPLEGADA EN PRODUCCIÓN**
 
-**Próximo paso**: Probar el envío de una nueva orden para verificar que el template se envía correctamente con los 2 parámetros.
+**Próximo paso**: Probar el envío de una nueva orden para verificar que el template se envía correctamente con los nombres de variables correctos.
 
 **Documentación relacionada:**
 - [WhatsApp Template Components](https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates/components#encabezados-de-texto)

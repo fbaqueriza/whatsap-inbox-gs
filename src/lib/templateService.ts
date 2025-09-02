@@ -71,6 +71,22 @@ Se ha recibido un nuevo pedido para procesar.
 
 _Por favor confirma la recepción de este pedido y proporciona los detalles solicitados._`,
       'inicializador_de_conv': '👋 ¡Hola! Iniciando conversación para coordinar pedidos.',
+      'evio_orden': `🛒 *NUEVA ORDEN*
+
+Se ha recibido una nueva orden para procesar. 
+
+*Detalles de la orden:*
+• Fecha: ${new Date().toLocaleDateString('es-AR')}
+• Estado: Pendiente de confirmación
+• Tipo: Orden automática
+
+*Acciones requeridas:*
+1. Revisar los productos solicitados
+2. Confirmar disponibilidad
+3. Proporcionar precio final
+4. Confirmar fecha de entrega
+
+_Por favor confirma la recepción de esta orden y proporciona los detalles solicitados._`,
       'notificacion_pedido': '📋 Notificación de nuevo pedido recibido.',
       'confirmacion_pedido': '✅ Pedido confirmado y en proceso.',
       'recordatorio_pedido': '⏰ Recordatorio: Pedido pendiente de confirmación.',

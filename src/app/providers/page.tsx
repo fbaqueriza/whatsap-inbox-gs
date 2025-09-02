@@ -5,8 +5,6 @@ import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import SpreadsheetGrid from '../../components/DataGrid';
 import { Provider } from '../../types';
 import { Plus, Upload, Download, FileText, Eye, CreditCard, Edit } from 'lucide-react';
-import { useUndo } from '../../hooks/useUndo';
-import { useCSV } from '../../hooks/useCSV';
 import {
   createNewProvider,
   processProviderData,
@@ -295,102 +293,15 @@ function ProvidersPage() {
     },
   ];
 
-  // Undo functionality
-  // Remove this block:
-  // const { data: providers, setData: setProviders, pushUndo, undo, canUndo } = useUndo<Provider>(isSeedUser ? [
-  //   {
-  //     id: '1',
-  //     name: 'Distribuidora Gastronómica S.A.',
-  //     email: 'pedidos@distgastronomica.com',
-  //     phone: '+54 11 4567-8901',
-  //     address: 'Av. Corrientes 1234, CABA, Buenos Aires',
-  //     categories: ['Proveeduría General', 'Lácteos', 'Frescos'],
-  //     tags: ['confiable', 'entrega rápida'],
-  //     notes: 'Proveedor principal con amplio catálogo y entrega en 24h',
-  //     cbu: 'ES9121000418450200051332',
-  //     alias: 'DISTGASTRO',
-  //     cuitCuil: '30-12345678-9',
-  //     razonSocial: 'Distribuidora Gastronómica S.A.',
-  //     catalogs: [],
-  //     createdAt: new Date(),
-  //     updatedAt: new Date(),
-  //   },
-  //   {
-  //     id: '2',
-  //     name: 'Carnes Premium del Sur',
-  //     email: 'ventas@carnespremium.com',
-  //     phone: '+54 11 3456-7890',
-  //     address: 'Ruta 2 Km 45, La Plata, Buenos Aires',
-  //     categories: ['Carnes', 'Proteínas', 'Premium'],
-  //     tags: ['premium', 'calidad superior'],
-  //     notes: 'Especialistas en carnes premium y cortes especiales',
-  //     cbu: 'ES9121000418450200051333',
-  //     alias: 'CARNESUR',
-  //     cuitCuil: '30-98765432-1',
-  //     razonSocial: 'Carnes Premium del Sur S.R.L.',
-  //     catalogs: [],
-  //     createdAt: new Date(),
-  //     updatedAt: new Date(),
-  //   },
-  //   {
-  //     id: '3',
-  //     name: 'Pescados Frescos Mar del Plata',
-  //     email: 'pedidos@pescadosfrescos.com',
-  //     phone: '+54 223 456-7890',
-  //     address: 'Puerto de Mar del Plata, Buenos Aires',
-  //     categories: ['Pescados', 'Mariscos', 'Frescos'],
-  //     tags: ['fresco', 'directo del mar'],
-  //     notes: 'Pescados y mariscos frescos directo del puerto',
-  //     cbu: 'ES9121000418450200051334',
-  //     alias: 'PESCADOSMP',
-  //     cuitCuil: '30-45678912-3',
-  //     razonSocial: 'Pescados Frescos MDP S.A.',
-  //     catalogs: [],
-  //     createdAt: new Date(),
-  //     updatedAt: new Date(),
-  //   },
-  //   {
-  //     id: '4',
-  //     name: 'Verduras Orgánicas La Huerta',
-  //     email: 'info@lahuertaorganica.com',
-  //     phone: '+54 11 2345-6789',
-  //     address: 'Ruta 8 Km 32, San Vicente, Buenos Aires',
-  //     categories: ['Verduras', 'Orgánicas', 'Frescos'],
-  //     tags: ['orgánico', 'sustentable'],
-  //     notes: 'Verduras orgánicas de producción propia',
-  //     cbu: 'ES9121000418450200051335',
-  //     alias: 'HUERTAORG',
-  //     cuitCuil: '30-78912345-6',
-  //     razonSocial: 'La Huerta Orgánica S.R.L.',
-  //     catalogs: [],
-  //     createdAt: new Date(),
-  //     updatedAt: new Date(),
-  //   },
-  //   {
-  //     id: '5',
-  //     name: 'Lácteos Artesanales El Tambo',
-  //     email: 'ventas@eltambo.com',
-  //     phone: '+54 11 1234-5678',
-  //     address: 'Ruta 6 Km 78, Cañuelas, Buenos Aires',
-  //     categories: ['Lácteos', 'Artesanal', 'Quesos'],
-  //     tags: ['artesanal', 'tradicional'],
-  //     notes: 'Lácteos artesanales y quesos de autor',
-  //     cbu: 'ES9121000418450200051336',
-  //     alias: 'ELTAMBO',
-  //     cuitCuil: '30-32165498-7',
-  //     razonSocial: 'El Tambo Artesanal S.A.',
-  //     catalogs: [],
-  //     createdAt: new Date(),
-  //     updatedAt: new Date(),
-  //   },
-  // ] : []);
+  // 🔧 MEJORA: Eliminadas referencias a useUndo y datos de prueba locales
+  // Ahora usa exclusivamente la base de datos Supabase a través del DataProvider
 
   const handleDataChange = useCallback(
     async (newData: any[]) => {
       if (!user) return;
-      console.log('handleDataChange called with:', newData);
+      console.log('🔧 handleDataChange called with:', newData);
       
-      // Solo actualizar si hay cambios reales
+      // 🔧 MEJORA: Solo actualizar si hay cambios reales
       const changedProviders = newData.filter((provider) => {
         const originalProvider = providers.find(p => p.id === provider.id);
         if (!originalProvider) {
@@ -412,12 +323,14 @@ function ProvidersPage() {
         );
       });
       
-
+      console.log('🔧 Proveedores modificados:', changedProviders.length);
       
-      // Actualizar solo los proveedores modificados
+      // 🔧 MEJORA: Actualizar solo los proveedores modificados
       for (const provider of changedProviders) {
         try {
+          console.log('🔧 Actualizando proveedor:', provider.id, provider.name);
           await updateProvider(provider);
+          console.log('✅ Proveedor actualizado exitosamente:', provider.id);
         } catch (error) {
           console.error('❌ Error updating provider:', provider.id, error);
         }
@@ -432,23 +345,9 @@ function ProvidersPage() {
       return;
     }
     
-    setAddingProvider(true);
-    const newProvider = createNewProvider();
-    newProvider.user_id = user.id;
-    
-    // Forzar actualización inmediata del estado
-    addProvider(newProvider, user.id).then(() => {
-
-      setAddingProvider(false);
-      // Forzar re-render del DataGrid
-      setTimeout(() => {
-        fetchAll();
-      }, 100);
-    }).catch(error => {
-      console.error('Error adding provider:', error);
-      setAddingProvider(false);
-    });
-  }, [user, addProvider, addingProvider, fetchAll]);
+    // 🔧 MEJORA: Abrir modal para agregar proveedor en lugar de crear uno automáticamente
+    handleOpenModal(null, false);
+  }, [user, addingProvider, handleOpenModal]);
 
   const handleDeleteRows = useCallback(
     async (rowsToDelete: Provider[]) => {
@@ -722,7 +621,7 @@ function ProvidersPage() {
         // Map camelCase to snake_case for DB
         const safeProviderSnake = {
           ...safeProvider,
-          contactName: safeProvider.contactName,
+          contact_name: safeProvider.contactName, // 🔧 CORRECCIÓN: Mapear correctamente a contact_name
           razon_social: safeProvider.razonSocial,
           cuit_cuil: safeProvider.cuitCuil,
           created_at: safeProvider.createdAt,
@@ -802,20 +701,20 @@ function ProvidersPage() {
               completa tus datos y luego "Import" para cargarlos de manera masiva.
             </p>
           </div>
-          <SpreadsheetGrid
-              key={`providers-${providers.length}`} // Solo usar providers.length, no Date.now()
-              columns={columns}
-              data={providers}
-              onDataChange={handleDataChange}
-              onAddRow={() => handleOpenModal(null, false)}
-              onDeleteRows={handleDeleteRows}
-              onExport={handleExport}
-              onImport={handleImport}
-              searchable={true}
-              selectable={true}
-              loading={loading || addingProvider}
-              disabledRowIds={providers.map(p => p.id)} // Bloquear todas las filas para edición directa
-            />
+                     <SpreadsheetGrid
+               key={`providers-${providers.length}`} // Solo usar providers.length, no Date.now()
+               columns={columns}
+               data={providers}
+               onDataChange={handleDataChange}
+               onAddRow={() => handleOpenModal(null, false)}
+               onDeleteRows={handleDeleteRows}
+               onExport={handleExport}
+               onImport={handleImport}
+               searchable={true}
+               selectable={true}
+               loading={loading || addingProvider}
+               disabledRowIds={providers.map(p => p.id)} // 🔧 MEJORA: Bloquear todas las filas para edición directa, usar modal
+             />
         </div>
 
         {/* Instructions */}

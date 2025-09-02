@@ -2,114 +2,149 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
-import SuggestedOrders from '../../components/SuggestedOrders';
-import CreateOrderModal from '../../components/CreateOrderModal';
-import EditOrderModal from '../../components/EditOrderModal';
-import ComprobanteButton from '../../components/ComprobanteButton';
-import UnifiedOrderList from '../../components/UnifiedOrderList';
-
-import { useChat } from '../../contexts/ChatContext';
-import { useGlobalChat } from '../../contexts/GlobalChatContext';
+import { useRouter } from 'next/navigation';
+import { Order, Provider, StockItem } from '../../types';
+import { DataProvider, useData } from '../../components/DataProvider';
 import { ChatProvider } from '../../contexts/ChatContext';
 import { GlobalChatProvider } from '../../contexts/GlobalChatContext';
 import GlobalChatWrapper from '../../components/GlobalChatWrapper';
-import { Order, Provider, StockItem, OrderFile } from '../../types';
+import { useOrdersFlowRealtime } from '../../hooks/useSupabaseRealtime';
+
+// Lazy load components to reduce bundle size
+const SuggestedOrders = React.lazy(() => import('../../components/SuggestedOrders'));
+const CreateOrderModal = React.lazy(() => import('../../components/CreateOrderModal'));
+const EditOrderModal = React.lazy(() => import('../../components/EditOrderModal'));
+const OrdersModule = React.lazy(() => import('../../components/OrdersModule'));
+
+// Icons import
 import {
   Plus,
   ShoppingCart,
   Send,
   MessageSquare,
   FileText,
-  Upload,
   CheckCircle,
   Clock,
   AlertCircle,
   X,
-  Clipboard,
-  Check,
-  Download,
-  ChevronDown,
   Edit,
   Search,
-  Filter,
 } from 'lucide-react';
-import { DataProvider, useData } from '../../components/DataProvider';
-import { useRouter } from 'next/navigation';
-import { OrderNotificationService } from '../../lib/orderNotificationService';
-import { Menu } from '@headlessui/react';
-import es from '../../locales/es';
-import { useOrdersFlowRealtime } from '../../hooks/useSupabaseRealtime';
 
+// Error boundary component
+const ErrorBoundary = ({ children }: { children: React.ReactNode }) => {
+  const [hasError, setHasError] = useState(false);
 
+  if (hasError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">
+            Error al cargar la página
+          </h2>
+          <p className="text-gray-600 mb-4">
+            Ha ocurrido un error inesperado. Por favor, recarga la página.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Recargar página
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <React.Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Cargando componentes...</p>
+        </div>
+      </div>
+    }>
+      {children}
+    </React.Suspense>
+  );
+};
+
+// Main wrapper component
 export default function OrdersPageWrapper() {
   const { user, loading: authLoading } = useSupabaseAuth();
   const router = useRouter();
+
+  // Handle authentication
   if (!authLoading && !user) {
-    if (typeof window !== 'undefined') router.push('/auth/login');
+    if (typeof window !== 'undefined') {
+      router.push('/auth/login');
+    }
     return null;
   }
+
   if (authLoading) {
-    return <div className="min-h-screen flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div><p className="mt-4 text-gray-600">Cargando...</p></div></div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Cargando...</p>
+        </div>
+      </div>
+    );
   }
+
   return (
-    <ChatProvider>
-      <GlobalChatProvider>
-        <DataProvider userEmail={user?.email ?? undefined} userId={user?.id}>
+    <ErrorBoundary>
+      <ChatProvider>
+        <GlobalChatProvider>
+          <DataProvider userEmail={user?.email ?? undefined} userId={user?.id}>
             {user && <OrdersPage user={user} />}
           </DataProvider>
-        <GlobalChatWrapper />
-      </GlobalChatProvider>
-    </ChatProvider>
+          <GlobalChatWrapper />
+        </GlobalChatProvider>
+      </ChatProvider>
+    </ErrorBoundary>
   );
 }
 
+// Main orders page component
 type OrdersPageProps = { user: any };
+
 function OrdersPage({ user }: OrdersPageProps) {
-  const { orders, providers, stockItems, addOrder, updateOrder, deleteOrder, fetchAll } = useData();
+  const { orders, providers, stockItems, addOrder, updateOrder, fetchAll } = useData();
   const [localOrders, setLocalOrders] = useState<Order[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [suggestedOrder, setSuggestedOrder] = useState<any>(null);
-  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [providerSearchTerm, setProviderSearchTerm] = useState('');
 
-  // 🔧 OPTIMIZACIÓN: SINCRONIZAR ÓRDENES LOCALES CON DATOS GLOBALES
+  // Sync local orders with global data
   useEffect(() => {
-    // console.log('🔄 Sincronizando órdenes locales con datos globales:', orders.length);
     setLocalOrders(orders);
   }, [orders]);
 
-  // 🔧 MEJORA: REFRESH PERIÓDICO COMO FALLBACK
+  // Periodic refresh as fallback
   useEffect(() => {
     const refreshInterval = setInterval(() => {
-      // console.log('🔄 Refresh periódico de órdenes (fallback)');
       fetchAll();
-    }, 30000); // Cada 30 segundos
+    }, 30000);
 
     return () => clearInterval(refreshInterval);
   }, [fetchAll]);
 
-  // Estados para filtros y búsqueda
-  const [providerSearchTerm, setProviderSearchTerm] = useState('');
-  
-  // Chat context
-  const { openChat } = useChat();
-  const { openGlobalChat } = useGlobalChat();
-  
-  // 🔧 OPTIMIZACIÓN: HANDLERS REALTIME MEJORADOS
+  // Realtime handlers
   const handleNewOrder = useCallback((payload: any) => {
     const newOrder = payload.new;
     if (newOrder) {
-      console.log('🆕 Nueva orden recibida en tiempo real:', newOrder.id, 'Estado:', newOrder.status);
-      // Actualizar inmediatamente sin esperar fetchAll
       setLocalOrders((prevOrders: Order[]) => {
         const existingOrder = prevOrders.find((o: Order) => o.id === newOrder.id);
         if (existingOrder) {
-          console.log('🔄 Actualizando orden existente:', newOrder.id);
           return prevOrders.map((o: Order) => o.id === newOrder.id ? { ...o, ...newOrder } : o);
         } else {
-          console.log('➕ Agregando nueva orden a la lista:', newOrder.id);
           return [newOrder, ...prevOrders];
         }
       });
@@ -119,8 +154,6 @@ function OrdersPage({ user }: OrdersPageProps) {
   const handleOrderUpdate = useCallback((payload: any) => {
     const updatedOrder = payload.new;
     if (updatedOrder) {
-      console.log('🔄 Orden actualizada en tiempo real:', updatedOrder.id, 'Estado:', updatedOrder.status);
-      // Actualizar inmediatamente
       setLocalOrders((prevOrders: Order[]) => 
         prevOrders.map((o: Order) => o.id === updatedOrder.id ? { ...o, ...updatedOrder } : o)
       );
@@ -130,82 +163,44 @@ function OrdersPage({ user }: OrdersPageProps) {
   const handleOrderDelete = useCallback((payload: any) => {
     const deletedOrder = payload.old;
     if (deletedOrder) {
-      console.log('🗑️ Orden eliminada en tiempo real:', deletedOrder.id);
-      // Remover inmediatamente
       setLocalOrders((prevOrders: Order[]) => prevOrders.filter((o: Order) => o.id !== deletedOrder.id));
     }
   }, []);
 
-  // 🔧 OPTIMIZACIÓN: SUSCRIPCIÓN REALTIME COMPLETA
-  const { isSubscribed, ordersSubscribed, connectionStatus } = useOrdersFlowRealtime(
+  // Realtime subscription
+  const { isSubscribed, connectionStatus } = useOrdersFlowRealtime(
     handleNewOrder,
     handleOrderUpdate,
     handleOrderDelete
   );
 
-  // 🔧 OPTIMIZACIÓN: SISTEMA DE FALLBACK PARA REALTIME
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
-
-  // 🔧 OPTIMIZACIÓN: INDICADOR VISUAL DE ESTADO REALTIME
-  const getRealtimeStatus = () => {
-    if (connectionStatus === 'connected' && isSubscribed) {
-      return { status: 'connected', text: 'Tiempo Real Activo', color: 'text-green-600' };
-    } else if (connectionStatus === 'connecting') {
-      return { status: 'connecting', text: 'Conectando...', color: 'text-yellow-600' };
-    } else if (connectionStatus === 'error') {
-      return { status: 'error', text: 'Error de Conexión', color: 'text-red-600' };
-    } else {
-      return { status: 'disconnected', text: 'Realtime Desconectado', color: 'text-gray-500' };
-    }
-  };
-
-  const realtimeStatus = getRealtimeStatus();
-
   // Helper functions
   const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return <Clock className="h-4 w-4 text-yellow-500" />;
-      case 'pending_confirmation':
-        return <AlertCircle className="h-4 w-4 text-orange-500" />;
-      case 'confirmed':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'enviado':
-        return <Send className="h-4 w-4 text-blue-500" />;
-      case 'factura_recibida':
-        return <FileText className="h-4 w-4 text-purple-500" />;
-      case 'pagado':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'finalizado':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'cancelled':
-        return <X className="h-4 w-4 text-red-500" />;
-      default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
-    }
+    const statusIcons = {
+      pending: <Clock className="h-4 w-4 text-yellow-500" />,
+      pending_confirmation: <AlertCircle className="h-4 w-4 text-orange-500" />,
+      confirmed: <CheckCircle className="h-4 w-4 text-green-500" />,
+      enviado: <Send className="h-4 w-4 text-blue-500" />,
+      factura_recibida: <FileText className="h-4 w-4 text-purple-500" />,
+      pagado: <CheckCircle className="h-4 w-4 text-green-500" />,
+      finalizado: <CheckCircle className="h-4 w-4 text-green-500" />,
+      cancelled: <X className="h-4 w-4 text-red-500" />,
+    };
+    return statusIcons[status as keyof typeof statusIcons] || <Clock className="h-4 w-4 text-gray-500" />;
   };
 
   const getStatusBadgeClass = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'pending_confirmation':
-        return 'bg-orange-100 text-orange-800';
-      case 'confirmed':
-        return 'bg-green-100 text-green-800';
-      case 'enviado':
-        return 'bg-blue-100 text-blue-800';
-      case 'factura_recibida':
-        return 'bg-purple-100 text-purple-800';
-      case 'pagado':
-        return 'bg-green-100 text-green-800';
-      case 'finalizado':
-        return 'bg-green-100 text-green-800';
-      case 'cancelled':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
+    const statusClasses = {
+      pending: 'bg-yellow-100 text-yellow-800',
+      pending_confirmation: 'bg-orange-100 text-orange-800',
+      confirmed: 'bg-green-100 text-green-800',
+      enviado: 'bg-blue-100 text-blue-800',
+      factura_recibida: 'bg-purple-100 text-purple-800',
+      pagado: 'bg-green-100 text-green-800',
+      finalizado: 'bg-green-100 text-green-800',
+      cancelled: 'bg-red-100 text-red-800',
+    };
+    return statusClasses[status as keyof typeof statusClasses] || 'bg-gray-100 text-gray-800';
   };
 
   const getProviderName = (providerId: string) => {
@@ -227,25 +222,7 @@ function OrdersPage({ user }: OrdersPageProps) {
     });
   };
 
-  const openReceipt = (receiptUrl: string | undefined) => {
-    if (!receiptUrl) return;
-    if (receiptUrl.startsWith('data:')) {
-      const byteString = atob(receiptUrl.split(',')[1]);
-      const mimeString = receiptUrl.split(',')[0].split(':')[1].split(';')[0];
-      const ab = new ArrayBuffer(byteString.length);
-      const ia = new Uint8Array(ab);
-      for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-      }
-      const blob = new Blob([ab], { type: mimeString });
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-    } else {
-      window.open(receiptUrl, '_blank');
-    }
-  };
-
-  // Ordenar y filtrar órdenes
+  // Filter and sort orders
   const sortedOrders = [...localOrders].sort((a, b) => {
     const dateA = new Date(a.createdAt || a.orderDate || 0);
     const dateB = new Date(b.createdAt || b.orderDate || 0);
@@ -256,70 +233,30 @@ function OrdersPage({ user }: OrdersPageProps) {
     !['finalizado', 'cancelled', 'delivered'].includes(order.status)
   );
 
-  const finishedOrders = sortedOrders.filter(order => 
-    ['finalizado', 'delivered'].includes(order.status)
-  );
-
-  // Filtrar proveedores por búsqueda
   const filteredProviders = providers.filter(provider =>
     provider.name.toLowerCase().includes(providerSearchTerm.toLowerCase())
   );
 
-
-
-  // Handlers
-  const handleOrderClick = (order: Order) => {
-    const provider = providers.find(p => p.id === order.providerId);
-    if (provider) {
-      let normalizedPhone = provider.phone || '';
-      normalizedPhone = normalizedPhone.replace(/[\s\-\(\)]/g, '');
-      if (!normalizedPhone.startsWith('+')) {
-        normalizedPhone = `+${normalizedPhone}`;
-      }
-      
-      const contact = {
-        id: provider.id,
-        name: provider.name,
-        phone: normalizedPhone,
-        providerId: provider.id,
-        lastMessage: '',
-        lastMessageTime: new Date(),
-        unreadCount: 0
-      };
-      
-      openGlobalChat(contact);
-    }
-  };
-
+  // Event handlers
   const handleCreateOrder = async (orderData: any) => {
     try {
       setIsLoading(true);
       const newOrder = await addOrder(orderData, user.id);
       
       if (newOrder) {
-        console.log('✅ Pedido creado:', newOrder.id);
-        
-        // 🔧 OPTIMIZACIÓN: Cerrar modal inmediatamente para mejor UX
         setIsCreateModalOpen(false);
         setSuggestedOrder(null);
         
-        // Enviar notificación automática desde el servidor (en segundo plano)
+        // Send notification in background
         try {
           const response = await fetch('/api/orders/send-notification', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              order: newOrder,
-              userId: user.id
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order: newOrder, userId: user.id }),
           });
           
           if (!response.ok) {
             console.error('Error enviando notificación:', await response.text());
-          } else {
-            console.log('✅ Notificación enviada exitosamente');
           }
         } catch (error) {
           console.error('Error enviando notificación:', error);
@@ -327,7 +264,6 @@ function OrdersPage({ user }: OrdersPageProps) {
       }
     } catch (error) {
       console.error('Error creando pedido:', error);
-      // 🔧 OPTIMIZACIÓN: Mantener modal abierto si hay error
       setIsCreateModalOpen(true);
     } finally {
       setIsLoading(false);
@@ -344,12 +280,7 @@ function OrdersPage({ user }: OrdersPageProps) {
       const order = localOrders.find(o => o.id === orderId);
       if (!order) return;
       
-      const updatedOrder = {
-        ...order,
-        ...updates,
-        updatedAt: new Date(),
-      };
-      
+      const updatedOrder = { ...order, ...updates, updatedAt: new Date() };
       await updateOrder(updatedOrder);
       setIsEditModalOpen(false);
       setEditingOrder(null);
@@ -371,18 +302,6 @@ function OrdersPage({ user }: OrdersPageProps) {
     }
   };
 
-  const toggleOrderExpansion = (orderId: string) => {
-    setExpandedOrders(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(orderId)) {
-        newSet.delete(orderId);
-    } else {
-        newSet.add(orderId);
-      }
-      return newSet;
-    });
-  };
-
   return (
     <div className="min-h-screen bg-gray-50">
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
@@ -390,11 +309,9 @@ function OrdersPage({ user }: OrdersPageProps) {
         <div className="px-4 py-6 sm:px-0">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-semibold text-gray-900">
-                {es.orders.title}
-              </h1>
+              <h1 className="text-2xl font-semibold text-gray-900">Órdenes</h1>
               <p className="mt-1 text-sm text-gray-500">
-                {es.orders.description}
+                Gestión de pedidos y órdenes
               </p>
             </div>
             <div className="flex items-center space-x-3">
@@ -403,7 +320,7 @@ function OrdersPage({ user }: OrdersPageProps) {
                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
               >
                 <Plus className="h-4 w-4 mr-2" />
-                {es.orders.newOrder}
+                Nueva Orden
               </button>
             </div>
           </div>
@@ -426,8 +343,8 @@ function OrdersPage({ user }: OrdersPageProps) {
                     value={providerSearchTerm}
                     onChange={(e) => setProviderSearchTerm(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
+                  />
+                </div>
               </div>
               <div className="max-h-96 overflow-y-auto">
                 {filteredProviders.map((provider) => (
@@ -440,34 +357,12 @@ function OrdersPage({ user }: OrdersPageProps) {
                           </span>
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-gray-900">
-                            {provider.name}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {provider.phone}
-                          </p>
+                          <p className="text-sm font-medium text-gray-900">{provider.name}</p>
+                          <p className="text-xs text-gray-500">{provider.phone}</p>
                         </div>
-                        </div>
+                      </div>
                       <div className="flex space-x-1">
-                         <button
-                          onClick={() => {
-                            const contact = {
-                              id: provider.id,
-                              name: provider.name,
-                              phone: provider.phone,
-                              providerId: provider.id,
-                              lastMessage: '',
-                              lastMessageTime: new Date(),
-                              unreadCount: 0
-                            };
-                            openGlobalChat(contact);
-                          }}
-                          className="p-1 text-gray-400 hover:text-blue-600"
-                          title="Chat"
-                         >
-                           <MessageSquare className="h-4 w-4" />
-                         </button>
-                         <button
+                        <button
                           onClick={() => {
                             setSuggestedOrder({
                               providerId: provider.id,
@@ -479,107 +374,48 @@ function OrdersPage({ user }: OrdersPageProps) {
                           title="Crear pedido"
                         >
                           <Plus className="h-4 w-4" />
-                         </button>
+                        </button>
                       </div>
                     </div>
-            </div>
+                  </div>
                 ))}
-                </div>
               </div>
-
-            
-                        </div>
-
-                     {/* Contenido principal */}
-           <div className="flex-1 min-w-0">
-                           {/* Órdenes sugeridas arriba */}
-              <div className="bg-white shadow rounded-lg mb-6">
-                <div className="px-6 py-4 border-b border-gray-200">
-                  <h2 className="text-xl font-semibold text-gray-900">
-                    Órdenes Sugeridas
-                  </h2>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Productos recomendados para reabastecer
-                  </p>
-                        </div>
-                <div className="p-4">
-                  <SuggestedOrders 
-                    providers={providers}
-                    stockItems={stockItems}
-                    onCreateOrder={(orderData) => {
-                      setSuggestedOrder(orderData);
-                      setIsCreateModalOpen(true);
-                    }}
-                  />
-                      </div>
-                    </div>
-                    
-             {/* Órdenes actuales */}
-             <div className="bg-white shadow rounded-lg mb-6">
-               <div className="px-6 py-4 border-b border-gray-200">
-                 <h2 className="text-xl font-semibold text-gray-900">
-                   Órdenes Actuales ({currentOrders.length})
-                 </h2>
-                 <p className="text-sm text-gray-500 mt-1">
-                   Pedidos en proceso y pendientes de confirmación
-                 </p>
-                            </div>
-               <div className="divide-y divide-gray-200">
-                 {currentOrders.length === 0 ? (
-                   <div className="px-6 py-8 text-center">
-                     <ShoppingCart className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                     <p className="text-gray-500">No hay órdenes actuales</p>
-                          </div>
-                 ) : (
-                   currentOrders.map((order) => (
-                     <div key={order.id} className="px-6 py-4 hover:bg-gray-50">
-                       <div className="flex items-center justify-between">
-                         <div className="flex items-center space-x-3">
-                           {getStatusIcon(order.status)}
-                          <div>
-                             <div className="flex items-center space-x-2">
-                               <span className="font-medium text-gray-900">
-                                 {order.orderNumber}
-                               </span>
-                               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(order.status)}`}>
-                                 {order.status === 'pending' ? 'Pendiente' :
-                                  order.status === 'pending_confirmation' ? 'Pendiente de Confirmación' :
-                                  order.status === 'confirmed' ? 'Confirmado' :
-                                  order.status === 'enviado' ? 'Enviado' :
-                                  order.status === 'factura_recibida' ? 'Factura Recibida' :
-                                  order.status === 'pagado' ? 'Pagado' :
-                                  order.status}
-                               </span>
-                            </div>
-                             <p className="text-sm text-gray-500">
-                               {getProviderName(order.providerId)} • {order.items.length} ítems • {formatDate(order.orderDate)}
-                             </p>
-                          </div>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                           <button
-                             onClick={() => handleOrderClick(order)}
-                             className="p-2 text-gray-400 hover:text-blue-600"
-                             title="Chat con proveedor"
-                           >
-                             <MessageSquare className="h-4 w-4" />
-                           </button>
-                           <button
-                             onClick={() => handleEditOrder(order)}
-                             className="p-2 text-gray-400 hover:text-blue-600"
-                             title="Editar orden"
-                           >
-                             <Edit className="h-4 w-4" />
-                           </button>
-                                    </div>
-                                  </div>
-                              </div>
-                   ))
-                 )}
+            </div>
           </div>
-        </div>
 
-        
+          {/* Contenido principal */}
+          <div className="flex-1 min-w-0">
+            {/* Órdenes sugeridas */}
+            <div className="bg-white shadow rounded-lg mb-6">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <h2 className="text-xl font-semibold text-gray-900">Órdenes Sugeridas</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Productos recomendados para reabastecer
+                </p>
+              </div>
+              <div className="p-4">
+                <SuggestedOrders 
+                  providers={providers}
+                  stockItems={stockItems}
+                  onCreateOrder={(orderData) => {
+                    setSuggestedOrder(orderData);
+                    setIsCreateModalOpen(true);
+                  }}
+                />
+              </div>
+            </div>
+            
+            {/* Órdenes actuales */}
+            <OrdersModule
+              orders={currentOrders}
+              providers={providers}
+              onEditOrder={handleEditOrder}
+              onCreateOrder={() => setIsCreateModalOpen(true)}
+              showCreateButton={true}
+              maxOrders={10}
+              title="Órdenes Actuales"
+              className="mb-6"
+            />
 
             {/* Tabla completa de todas las órdenes */}
             <div className="mt-8 bg-white shadow rounded-lg">
@@ -589,107 +425,66 @@ function OrdersPage({ user }: OrdersPageProps) {
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
                   Vista detallada de todos los pedidos con sus archivos y documentos
-              </p>
-            </div>
-            <div className="overflow-x-auto -mx-6 sm:mx-0">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Fecha
-                    </th>
+                </p>
+              </div>
+              <div className="overflow-x-auto -mx-6 sm:mx-0">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Fecha
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Número
                       </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Proveedor
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Estado
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Monto
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Factura
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Comprobante
-                    </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Proveedor
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Estado
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Monto
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Acciones
                       </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {sortedOrders.map((order) => (
-                    <tr key={order.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {formatDate(order.orderDate)}
-                      </td>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {sortedOrders.map((order) => (
+                      <tr key={order.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {formatDate(order.orderDate)}
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                           {order.orderNumber}
                         </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {getProviderName(order.providerId)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          {getStatusIcon(order.status)}
-                          <span className="ml-2 text-sm text-gray-900">
-                            {order.status === 'pending' && 'Pendiente'}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {getProviderName(order.providerId)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center">
+                            {getStatusIcon(order.status)}
+                            <span className="ml-2 text-sm text-gray-900">
+                              {order.status === 'pending' && 'Pendiente'}
                               {order.status === 'pending_confirmation' && 'Pendiente de Confirmación'}
                               {order.status === 'confirmed' && 'Confirmado'}
-                            {order.status === 'enviado' && 'Enviado'}
-                            {order.status === 'factura_recibida' && 'Factura Recibida'}
-                            {order.status === 'pagado' && 'Pagado'}
-                            {order.status === 'finalizado' && 'Finalizado'}
+                              {order.status === 'enviado' && 'Enviado'}
+                              {order.status === 'factura_recibida' && 'Factura Recibida'}
+                              {order.status === 'pagado' && 'Pagado'}
+                              {order.status === 'finalizado' && 'Finalizado'}
                               {order.status === 'cancelled' && 'Cancelado'}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {['factura_recibida','pagado','enviado','finalizado'].includes(order.status) 
                             ? `${order.totalAmount} ${order.currency}` 
                             : '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {order.invoiceNumber ? (
-                          <a
-                            href="/mock-factura.pdf"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:text-blue-800 underline"
-                          >
-                            Descargar
-                          </a>
-                        ) : (
-                          <span className="text-gray-400">No disponible</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {order.receiptUrl ? (
-                          <a
-                            href={order.receiptUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:text-blue-800 underline"
-                          >
-                            Ver
-                          </a>
-                        ) : (
-                          <span className="text-gray-400">No disponible</span>
-                        )}
-                      </td>
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex items-center space-x-2">
-                            <button
-                              onClick={() => handleOrderClick(order)}
-                              className="p-1 text-gray-400 hover:text-blue-600"
-                              title="Chat con proveedor"
-                            >
-                              <MessageSquare className="h-4 w-4" />
-                            </button>
                             <button
                               onClick={() => handleEditOrder(order)}
                               className="p-1 text-gray-400 hover:text-blue-600"
@@ -699,43 +494,41 @@ function OrdersPage({ user }: OrdersPageProps) {
                             </button>
                           </div>
                         </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
-              </div>
 
         {/* Modales */}
-      <CreateOrderModal
-        isOpen={isCreateModalOpen}
+        <CreateOrderModal
+          isOpen={isCreateModalOpen}
           onClose={() => {
             setIsCreateModalOpen(false);
             setSuggestedOrder(null);
           }}
           onSubmit={handleCreateOrder}
           suggestedOrder={suggestedOrder}
-        providers={providers}
-        stockItems={stockItems}
-        isLoading={isLoading}
-      />
+          providers={providers}
+          stockItems={stockItems}
+          isLoading={isLoading}
+        />
 
-       <EditOrderModal
-         isOpen={isEditModalOpen}
-         onClose={() => {
-           setIsEditModalOpen(false);
-           setEditingOrder(null);
-         }}
+        <EditOrderModal
+          isOpen={isEditModalOpen}
+          onClose={() => {
+            setIsEditModalOpen(false);
+            setEditingOrder(null);
+          }}
           onSave={handleSaveOrderEdit}
           onCancel={handleCancelOrder}
-         order={editingOrder}
-         providers={providers}
-                />
-
-
-       </main>
-     </div>
-   );
- }
+          order={editingOrder}
+          providers={providers}
+        />
+      </main>
+    </div>
+  );
+}

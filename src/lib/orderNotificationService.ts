@@ -121,7 +121,7 @@ export class OrderNotificationService {
   /**
    * 🔧 FLUJO OPTIMIZADO: Envía notificación automática de nuevo pedido al proveedor
    * 1. Orden se crea como 'pending'
-   * 2. Se envía template envio_de_orden con detalles completos
+   * 2. Se envía template evio_orden con variables personalizadas
    * 3. Se guarda como 'pending_confirmation'
    * 4. Cuando el proveedor responde, se actualiza automáticamente
    */
@@ -178,23 +178,64 @@ export class OrderNotificationService {
         }
        }
 
-      // 🔧 PASO 2: Enviar template envio_de_orden con detalles completos
+      // 🔧 PASO 2: Enviar template evio_orden con variables personalizadas
       const baseUrl = this.buildBaseUrl();
 
       try {
-        const templateResult = await this.sendTemplateToMeta(normalizedPhone, baseUrl, order, provider, userId);
-        result.templateSent = templateResult.success;
-        if (!templateResult.success) {
-          result.errors.push(`Template: ${templateResult.error}`);
+              // 🔧 CORRECCIÓN: Preparar variables para el template evio_orden
+      // Según Meta Business Manager, evio_orden usa nombres específicos:
+      // 1. Header: "provider_name" (nombre del proveedor)
+      // 2. Body: "contact_name" (nombre de contacto del proveedor)
+      const templateVariables = {
+        'provider_name': provider?.name || 'Proveedor',
+        'contact_name': provider?.contact_name || provider?.name || 'Contacto'
+      };
+      
+      // 🔧 MEJORA: Log detallado para verificar qué valor se usa para contact_name
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔧 Variables preparadas para template:', templateVariables);
+        console.log('🔧 Datos del proveedor:', {
+          id: provider?.id,
+          name: provider?.name,
+          contact_name: provider?.contact_name,
+          hasContactName: !!provider?.contact_name,
+          contactNameType: typeof provider?.contact_name
+        });
+        if (provider?.contact_name) {
+          console.log('✅ Usando contact_name del proveedor:', provider.contact_name);
+        } else {
+          console.log('⚠️ No hay contact_name configurado, usando name del proveedor:', provider?.name);
         }
-        // 🔧 MEJORA: Reducir logging excesivo
+      }
+        
+        const templateResult = await this.sendTemplateToMeta(normalizedPhone, templateVariables, userId);
+        result.templateSent = templateResult.success;
+        
+        if (!templateResult.success) {
+          const errorMessage = templateResult.error || 'Error desconocido';
+          
+          // 🔧 MEJORA: Manejo específico de errores de conexión
+          if (errorMessage.includes('conexión') || errorMessage.includes('red')) {
+            result.errors.push(`⚠️ ${errorMessage} - El pedido se guardará como pendiente`);
+            console.warn('⚠️ Error de conexión detectado - El pedido se guardará como pendiente');
+          } else if (errorMessage.includes('activación manual')) {
+            result.errors.push(`⚠️ ${errorMessage}`);
+            console.log('⚠️ Número requiere activación manual - guardando pedido pendiente');
+          } else {
+            result.errors.push(`Template: ${errorMessage}`);
+          }
+        }
+        
         if (process.env.NODE_ENV === 'development') {
           console.log('📱 Template:', templateResult.success ? '✅ Enviado' : '❌ Falló');
         }
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+        const errorMsg = this.formatErrorMessage(error);
         result.errors.push(`Template: ${errorMsg}`);
-        console.error('❌ Error enviando template:', error);
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.error('❌ Error enviando template:', errorMsg);
+        }
       }
 
       // PASO 3: Guardar pedido pendiente de confirmación
@@ -215,11 +256,17 @@ export class OrderNotificationService {
       }
 
       // DETERMINAR ÉXITO GENERAL
+      // 🔧 MEJORA: Considerar éxito si se guardó el pedido pendiente, incluso si el template falló
       result.success = result.templateSent || result.pendingOrderSaved;
       
              // Log solo si hay errores o éxito completo
        if (result.errors.length > 0) {
          console.log('❌ Errores en notificación:', result.errors.length);
+         // 🔧 MEJORA: Log específico para errores de activación
+         const activationErrors = result.errors.filter(e => e.includes('activación manual'));
+         if (activationErrors.length > 0) {
+           console.log('⚠️ Errores de activación manual detectados:', activationErrors.length);
+         }
        } else if (result.success) {
          console.log('✅ Notificación completada');
        }
@@ -235,50 +282,153 @@ export class OrderNotificationService {
   }
 
   /**
-   * 🔧 OPTIMIZADO: Envía template a Meta API con detalles completos del pedido
+   * Envía template a Meta WhatsApp API
+   */
+  /**
+   * Envía template a Meta WhatsApp API con manejo robusto de errores
    */
   private static async sendTemplateToMeta(
     phone: string, 
-    baseUrl: string,
-    order?: Order,
-    provider?: Provider,
-    userId?: string
+    templateVariables: Record<string, string>, 
+    userId: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      // 🔧 CORRECCIÓN: Usar template disparador simple como funcionaba antes
-      const messageContent = 'envio_de_orden';
+      // 🔧 CORRECCIÓN: Detectar URL base automáticamente
+      const baseUrl = this.detectBaseUrl();
       
-             const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
-         method: 'POST',
-         headers: {
-           'Content-Type': 'application/json',
-         },
-         body: JSON.stringify({
-           to: phone,
-           message: messageContent,
-           userId: userId // 🔧 MEJORA: Pasar userId para guardar el mensaje
-         }),
-       });
-
-      const result = await response.json();
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📱 Enviando template evio_orden a Meta API...');
+      }
+      
+      const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to: phone,
+          message: 'evio_orden',
+          templateVariables: templateVariables,
+          userId: userId
+        }),
+      });
 
       if (!response.ok) {
-        console.error('❌ Error enviando template:', result);
-        return { success: false, error: result.error || 'Error enviando template' };
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        const errorMessage = errorData.error || `HTTP ${response.status}`;
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.error('❌ Error enviando template:', errorMessage);
+        }
+        
+        return { success: false, error: errorMessage };
       }
 
-      if (!result.success) {
-        console.error('❌ Template falló:', result);
-        return { success: false, error: result.error || 'Template falló' };
+      const result = await response.json();
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Template enviado exitosamente');
       }
-
-      console.log('✅ Template enviado exitosamente a Meta API');
+      
       return { success: true };
 
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
-      console.error('❌ Error enviando template:', error);
-      return { success: false, error: errorMsg };
+      const errorMessage = this.formatErrorMessage(error);
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Error en sendTemplateToMeta:', errorMessage);
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Detecta automáticamente la URL base correcta
+   */
+  private static detectBaseUrl(): string {
+    // 🔧 MEJORA: Detección inteligente de URL base
+    if (typeof window !== 'undefined') {
+      // Cliente: usar la URL actual
+      return window.location.origin;
+    }
+    
+    // Servidor: usar variables de entorno o detectar puerto
+    const envUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (envUrl) {
+      return envUrl;
+    }
+    
+    // 🔧 CORRECCIÓN: Usar puerto 3001 en desarrollo
+    const port = process.env.PORT || '3001';
+    return `http://localhost:${port}`;
+  }
+
+  /**
+   * Formatea mensajes de error de forma consistente
+   */
+  private static formatErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      // 🔧 MEJORA: Manejo específico de errores de red
+      if (error.message.includes('ECONNREFUSED')) {
+        return 'Error de conexión: No se pudo conectar al servidor';
+      }
+      if (error.message.includes('fetch failed')) {
+        return 'Error de red: Fallo en la comunicación con el servidor';
+      }
+      return error.message;
+    }
+    return 'Error desconocido';
+  }
+
+  /**
+   * Genera instrucciones claras para activar un número bloqueado
+   */
+  private static generateActivationInstructions(phone: string, provider?: Provider, order?: Order): string {
+    const providerName = provider?.name || 'Proveedor';
+    const orderNumber = order?.orderNumber || order?.id || 'N/A';
+    
+        return `Para activar el número ${phone} (${providerName}):
+
+1. El proveedor debe enviar un mensaje a nuestro WhatsApp Business: +5491141780300
+2. El mensaje debe contener: "Hola, soy ${providerName}"
+3. Una vez activado, podremos enviar notificaciones automáticas
+4. Pedido ${orderNumber} esperando confirmación manual
+
+NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última respuesta del proveedor. Es necesario que el proveedor inicie una nueva conversación.`;
+  }
+
+  /**
+   * Guarda pedido que requiere activación manual
+   */
+  private static async saveManualActivationOrder(
+    order: Order, 
+    provider: Provider, 
+    phone: string, 
+    userId: string
+  ): Promise<void> {
+    try {
+      const supabase = await this.getSupabaseClient();
+      
+      const { error } = await supabase
+        .from('pending_orders')
+        .insert([{
+          order_id: order?.id,
+          provider_id: provider?.id,
+          provider_phone: phone,
+          user_id: userId,
+          status: 'manual_activation_required',
+          notes: `Número ${phone} requiere activación manual en WhatsApp`,
+          created_at: new Date().toISOString()
+        }]);
+
+      if (error) {
+        console.error('❌ Error guardando pedido de activación manual:', error);
+      } else {
+        console.log('✅ Pedido guardado como "requiere activación manual"');
+      }
+    } catch (error) {
+      console.error('❌ Error en saveManualActivationOrder:', error);
     }
   }
 
@@ -371,14 +521,30 @@ export class OrderNotificationService {
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
+      // 🔧 DEBUG: Verificar normalización del número
+      const normalizedProviderPhone = this.normalizePhoneNumber(providerPhone);
+      console.log(`🔧 DEBUG - Normalización de número:`, {
+        original: providerPhone,
+        normalized: normalizedProviderPhone,
+        match: providerPhone === normalizedProviderPhone ? 'SÍ' : 'NO'
+      });
+
       // 🔧 CORRECCIÓN: Buscar pedidos pendientes con cualquier estado de pending
       const { data: pendingOrders, error: pendingError } = await supabase
         .from('pending_orders')
         .select('*')
-        .eq('provider_phone', providerPhone)
+        .eq('provider_phone', normalizedProviderPhone || providerPhone)
         .or('status.eq.pending,status.eq.pending_confirmation')
         .order('created_at', { ascending: false })
         .limit(1);
+
+      console.log(`🔧 DEBUG - Búsqueda de pedidos pendientes:`, {
+        providerPhone,
+        normalizedProviderPhone,
+        searchQuery: normalizedProviderPhone || providerPhone,
+        pendingOrdersCount: pendingOrders?.length || 0,
+        error: pendingError
+      });
 
       if (pendingError) {
         console.error(`❌ [${requestId}] Error buscando pedidos pendientes:`, pendingError);
@@ -398,24 +564,62 @@ export class OrderNotificationService {
         created_at: pendingOrder.created_at
       });
 
-      // Buscar orden completa
-      const { data: orders, error: orderError } = await supabase
+      // 🔧 CORRECCIÓN: Buscar orden completa con información del proveedor
+      console.log(`🔧 DEBUG - Buscando orden con ID: ${pendingOrder.order_id}`);
+      
+      // 🔧 CORRECCIÓN: Primero obtener la orden básica
+      const { data: orderBasic, error: orderBasicError } = await supabase
         .from('orders')
         .select('*')
         .eq('id', pendingOrder.order_id)
         .single();
 
-      if (orderError || !orders) {
-        console.error(`❌ [${requestId}] Error buscando orden:`, orderError);
+      if (orderBasicError || !orderBasic) {
+        console.error(`❌ [${requestId}] Error buscando orden básica:`, orderBasicError);
         return false;
       }
 
-      const orderData = orders;
+      // 🔧 CORRECCIÓN: Luego obtener información del proveedor por separado
+      const { data: provider, error: providerError } = await supabase
+        .from('providers')
+        .select('id, name, contact_name, phone, notes, default_payment_method')
+        .eq('id', orderBasic.provider_id)
+        .single();
+
+      console.log(`🔧 DEBUG - Resultado de consultas:`, {
+        orderBasic: {
+          id: orderBasic.id,
+          provider_id: orderBasic.provider_id,
+          order_number: orderBasic.order_number
+        },
+        provider: {
+          id: provider?.id,
+          name: provider?.name,
+          contact_name: provider?.contact_name,
+          notes: provider?.notes,
+          default_payment_method: provider?.default_payment_method
+        },
+        providerError: providerError
+      });
+
+      // 🔧 CORRECCIÓN: Combinar los datos
+      const orderData = {
+        ...orderBasic,
+        providers: provider
+      };
+
+      console.log(`🔧 DEBUG - Resultado de consulta:`, {
+        data: orderData,
+        hasProviders: orderData?.providers ? 'SÍ' : 'NO'
+      });
       console.log(`📦 [${requestId}] Orden encontrada:`, {
         id: orderData.id,
         order_number: orderData.order_number,
         status: orderData.status,
-        user_id: orderData.user_id
+        user_id: orderData.user_id,
+        providers: orderData.providers,
+        order_date: orderData.order_date,
+        notes: orderData.notes
       });
 
       // Actualizar estado de la orden
@@ -432,6 +636,17 @@ export class OrderNotificationService {
       console.log(`✅ [${requestId}] Estado de orden actualizado a confirmado`);
 
       // Enviar detalles del pedido
+      console.log(`🔧 DEBUG - Antes de generar detalles del pedido:`, {
+        orderDataKeys: Object.keys(orderData),
+        providers: orderData.providers,
+        providerName: orderData.providers?.name,
+        providerId: orderData.providers?.id,
+        providerNotes: orderData.providers?.notes,
+        orderDate: orderData.order_date,
+        orderNotes: orderData.notes,
+        fullOrderData: JSON.stringify(orderData, null, 2)
+      });
+      
       const orderDetails = this.generateOrderDetailsMessage(orderData);
       console.log(`📤 [${requestId}] Enviando detalles del pedido:`, orderDetails.substring(0, 100) + '...');
 
@@ -549,45 +764,149 @@ export class OrderNotificationService {
        // Validación robusta de datos
        if (!orderData) {
          console.error('❌ orderData es undefined en generateOrderDetailsMessage');
-         return '📋 Detalles del pedido confirmado. Gracias.';
+         return '📋 Detalles del pedido confirmado.';
        }
+
+       // 🔧 DEBUG: Log detallado de los datos recibidos
+       console.log('🔧 DEBUG - Datos completos de orderData:', {
+         id: orderData.id,
+         order_number: orderData.order_number,
+         providers: orderData.providers,
+         providerName: orderData.providers?.name,
+         providerId: orderData.providers?.id,
+         providerNotes: orderData.providers?.notes,
+         order_date: orderData.order_date,
+         notes: orderData.notes,
+         items: orderData.items,
+         total_amount: orderData.total_amount,
+         currency: orderData.currency,
+         fullData: JSON.stringify(orderData, null, 2)
+       });
 
        const items = Array.isArray(orderData.items) ? orderData.items : [];
        const totalItems = items.length;
        const orderNumber = orderData.order_number || orderData.id || 'N/A';
        
-       // Validación específica del proveedor
+       // 🔧 CORRECCIÓN: Obtener nombre del proveedor desde la relación con fallback robusto
        let providerName = 'Proveedor';
-       if (orderData.providers && typeof orderData.providers === 'object') {
-         providerName = orderData.providers.name || 'Proveedor';
+       console.log('🔧 DEBUG - Estructura de providers:', {
+         providers: orderData.providers,
+         type: typeof orderData.providers,
+         hasName: orderData.providers?.name,
+         hasId: orderData.providers?.id,
+         fullProviders: JSON.stringify(orderData.providers)
+       });
+       
+       if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.name) {
+         providerName = orderData.providers.name;
+         console.log('🔧 DEBUG - Nombre del proveedor encontrado:', providerName);
+       } else if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.id) {
+         // Si no hay nombre pero sí ID, usar un identificador más descriptivo
+         providerName = `Proveedor ID: ${orderData.providers.id}`;
+         console.log('🔧 DEBUG - Usando ID del proveedor como nombre:', providerName);
+       } else {
+         console.log('🔧 DEBUG - No se encontró información del proveedor, usando valor por defecto');
+         providerName = 'Proveedor';
        }
        
-       let message = `📋 *DETALLES DEL PEDIDO CONFIRMADO*\n\n`;
+       // 🔧 CORRECCIÓN: Formatear fecha de entrega usando campo correcto (order_date) con fallback robusto
+       let deliveryDate = 'No especificada';
+       if (orderData.order_date) {
+         try {
+           const date = new Date(orderData.order_date);
+           if (!isNaN(date.getTime())) {
+             deliveryDate = date.toLocaleDateString('es-AR', {
+               weekday: 'long',
+               year: 'numeric',
+               month: 'long',
+               day: 'numeric'
+             });
+             console.log('🔧 DEBUG - Fecha de entrega formateada:', deliveryDate);
+           } else {
+             console.warn('⚠️ Fecha de orden inválida:', orderData.order_date);
+             deliveryDate = 'Fecha inválida';
+           }
+         } catch (error) {
+           console.warn('⚠️ Error formateando fecha de entrega:', error);
+           deliveryDate = 'Error en fecha';
+         }
+       } else {
+         console.log('🔧 DEBUG - No hay fecha de orden disponible');
+       }
+       
+       // �� MEJORA: Obtener método de pago
+       // 🔧 CORRECCIÓN: Obtener método de pago con traducción
+       const getPaymentMethodText = (method: string): string => {
+         const paymentMethods: { [key: string]: string } = {
+           'efectivo': 'Efectivo',
+           'transferencia': 'Transferencia',
+           'tarjeta': 'Tarjeta',
+           'cheque': 'Cheque'
+         };
+         return paymentMethods[method] || method || 'No especificado';
+       };
+       
+       // 🔧 CORRECCIÓN: Usar valor por defecto ya que payment_method no existe en BD
+       // 🔧 MEJORA: Intentar obtener método de pago del proveedor si está disponible
+       let paymentMethod = 'Efectivo'; // Valor por defecto hasta que se agregue la columna
+       if (orderData.providers?.default_payment_method) {
+         paymentMethod = getPaymentMethodText(orderData.providers.default_payment_method);
+         console.log('🔧 DEBUG - Método de pago del proveedor:', paymentMethod);
+       } else {
+         console.log('🔧 DEBUG - Usando método de pago por defecto:', paymentMethod);
+       }
+       
+       // 🔧 CORRECCIÓN: Obtener notas del proveedor por defecto con fallback inteligente
+       let notes = '';
+       if (orderData.providers?.notes && orderData.providers.notes.trim()) {
+         notes = orderData.providers.notes;
+       } else if (orderData.notes && orderData.notes.trim()) {
+         notes = orderData.notes;
+       } else {
+         notes = 'Sin notas adicionales';
+       }
+       
+       let message = `📋 *DETALLES DEL PEDIDO*\n\n`;
        message += `*Orden:* ${orderNumber}\n`;
        message += `*Proveedor:* ${providerName}\n`;
        message += `*Total de items:* ${totalItems}\n`;
-       message += `*Fecha de confirmación:* ${new Date().toLocaleDateString('es-AR')}\n\n`;
+       message += `*Fecha de entrega:* ${deliveryDate}\n`;
+       message += `*Método de pago:* ${paymentMethod}\n`;
+       
+       // 🔧 MEJORA: Agregar notas solo si existen
+       if (notes && notes.trim()) {
+         message += `*Notas:* ${notes}\n`;
+       }
+       
+       message += `\n`;
        
        if (items.length > 0) {
-         message += `*Items confirmados:*\n`;
+         message += `*Items del pedido:*\n`;
          items.forEach((item: any, index: number) => {
            if (item && typeof item === 'object') {
              const quantity = item.quantity || 1;
              const unit = item.unit || 'un';
              const name = item.productName || item.name || item.product_name || 'Producto';
-             message += `${index + 1}. ${name} - ${quantity} ${unit}\n`;
+             const price = item.price || item.total || '';
+             
+             if (price) {
+               message += `${index + 1}. ${name} - ${quantity} ${unit} - $${price}\n`;
+             } else {
+               message += `${index + 1}. ${name} - ${quantity} ${unit}\n`;
+             }
            }
          });
        }
        
-       message += `\n*Estado:* ✅ Confirmado y procesando\n`;
-       message += `*Próximo paso:* Preparación y envío\n\n`;
-       message += `Gracias por confirmar. Su pedido está siendo procesado.`;
+       // 🔧 MEJORA: Agregar total si está disponible
+       if (orderData.total_amount) {
+         message += `\n*Total:* $${orderData.total_amount} ${orderData.currency || 'ARS'}`;
+       }
        
        return message;
      } catch (error) {
        console.error('❌ Error generando mensaje de detalles:', error);
-       return '📋 Detalles del pedido confirmado. Gracias.';
+       return '📋 Detalles del pedido confirmado.';
      }
    }
 

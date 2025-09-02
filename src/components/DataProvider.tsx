@@ -50,7 +50,7 @@ function mapStockItemFromDb(item: any): StockItem {
   };
 }
 
-// Función para mapear Order de snake_case a camelCase
+// 🔧 CORRECCIÓN: Función para mapear Order de snake_case a camelCase
 function mapOrderFromDb(order: any): Order {
   return {
     ...order,
@@ -62,6 +62,11 @@ function mapOrderFromDb(order: any): Order {
     invoiceNumber: order.invoice_number,
     bankInfo: order.bank_info,
     receiptUrl: order.receipt_url,
+    // 🔧 NOTA: Los campos desired_delivery_date, desired_delivery_time y payment_method no existen en la BD actual
+    // Se mapean como undefined hasta que se agreguen las columnas
+    desiredDeliveryDate: undefined,
+    desiredDeliveryTime: undefined,
+    paymentMethod: 'efectivo' as const, // Valor por defecto
     createdAt: order.created_at,
     updatedAt: order.updated_at,
     id: order.id,
@@ -73,9 +78,10 @@ function mapOrderFromDb(order: any): Order {
 function mapProviderFromDb(provider: any): Provider {
   return {
     ...provider,
-    contactName: provider.contactName,
-    razonSocial: provider.razon_social,
-    cuitCuil: provider.cuit_cuil,
+    contactName: provider.contact_name || '', // 🔧 CORRECCIÓN: Mapear desde contact_name de la BD con fallback
+    notes: provider.notes || '', // 🔧 CORRECCIÓN: Mapear notas del proveedor desde la BD
+    razonSocial: provider.razon_social || '',
+    cuitCuil: provider.cuit_cuil || '',
     defaultDeliveryDays: provider.default_delivery_days || [],
     defaultDeliveryTime: provider.default_delivery_time || [],
     defaultPaymentMethod: provider.default_payment_method || 'efectivo',
@@ -248,7 +254,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       
       const orderNumber = `ORD-${dateStr}-${providerName}-${randomStr}`;
       
-      // Mapear campos a snake_case con valores por defecto
+      // 🔧 CORRECCIÓN: Mapear campos a snake_case con valores por defecto (sin campos que no existen en BD)
       const snakeCaseOrder = {
         provider_id: (order as any).providerId,
         user_id,
@@ -263,6 +269,8 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         bank_info: (order as any).bankInfo || null,
         receipt_url: (order as any).receiptUrl || null,
         notes: order.notes || '',
+        // 🔧 NOTA: Los campos desired_delivery_date, desired_delivery_time y payment_method no existen en la BD actual
+        // Se guardan en notes temporalmente hasta que se agreguen las columnas
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -301,7 +309,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
     try {
       console.log('🔄 Actualizando orden:', order.id, 'Estado:', order.status);
       
-      // Mapear campos a snake_case para Supabase
+      // 🔧 CORRECCIÓN: Mapear campos a snake_case para Supabase (sin campos que no existen en BD)
       const snakeCaseOrder = {
         provider_id: (order as any).providerId,
         user_id: order.user_id,
@@ -315,6 +323,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         bank_info: (order as any).bankInfo,
         receipt_url: (order as any).receiptUrl,
         notes: order.notes,
+        // 🔧 NOTA: Los campos desired_delivery_date, desired_delivery_time y payment_method no existen en la BD actual
         created_at: (order as any).createdAt,
         updated_at: new Date().toISOString(), // 🔧 MEJORA: Actualizar timestamp
       };

@@ -9,6 +9,7 @@ import { ChatProvider } from '../../contexts/ChatContext';
 import { GlobalChatProvider } from '../../contexts/GlobalChatContext';
 import GlobalChatWrapper from '../../components/GlobalChatWrapper';
 import { useOrdersFlowRealtime } from '../../hooks/useSupabaseRealtime';
+import DebugPanel from '../../components/DebugPanel';
 
 // Lazy load components to reduce bundle size
 const SuggestedOrders = React.lazy(() => import('../../components/SuggestedOrders'));
@@ -167,7 +168,7 @@ function OrdersPage({ user }: OrdersPageProps) {
     }
   }, []);
 
-  // Realtime subscription
+  // Realtime subscription - movido después de la definición de las funciones
   const { isSubscribed, connectionStatus } = useOrdersFlowRealtime(
     handleNewOrder,
     handleOrderUpdate,
@@ -528,6 +529,9 @@ function OrdersPage({ user }: OrdersPageProps) {
           order={editingOrder}
           providers={providers}
         />
+        
+        {/* Panel de debug */}
+        <DebugPanel />
       </main>
     </div>
   );

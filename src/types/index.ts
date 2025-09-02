@@ -68,6 +68,7 @@ export interface Order {
   dueDate?: Date;
   // Nuevos campos para fecha de entrega y forma de pago
   desiredDeliveryDate?: Date;
+  desiredDeliveryTime?: string[]; // ['14:00-16:00', '09:00-11:00']
   paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
   invoiceNumber?: string;
   bankInfo?: {

@@ -17,6 +17,19 @@ const nextConfig = {
   experimental: {
     optimizeCss: true,
   },
+  
+  // Configuración de webpack para evitar errores de módulos
+  webpack: (config, { isServer }) => {
+    // Configuración para evitar errores de módulos
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      fs: false,
+      net: false,
+      tls: false,
+    };
+    
+    return config;
+  },
 };
 
 module.exports = nextConfig;

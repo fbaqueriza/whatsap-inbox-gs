@@ -297,17 +297,17 @@ export function useTemplatesRealtime(
     // 🔧 MEJORA: Verificar si Realtime está habilitado
     const isRealtimeEnabled = process.env.NEXT_PUBLIC_REALTIME_ENABLED !== 'false';
 
-      // 🔧 OPTIMIZACIÓN: Reducir logging para evitar spam y múltiples inicializaciones
-  const [hasLogged, setHasLogged] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
-  
-  useEffect(() => {
-    if (!hasLogged && !isInitialized) {
-      // console.log('🔧 useOrdersFlowRealtime: Inicializando...', { isRealtimeEnabled });
-      setHasLogged(true);
-      setIsInitialized(true);
-    }
-  }, [hasLogged, isRealtimeEnabled, isInitialized]);
+    // 🔧 OPTIMIZACIÓN: Reducir logging para evitar spam y múltiples inicializaciones
+    const [hasLogged, setHasLogged] = useState(false);
+    const [isInitialized, setIsInitialized] = useState(false);
+    
+    useEffect(() => {
+      if (!hasLogged && !isInitialized) {
+        // console.log('🔧 useOrdersFlowRealtime: Inicializando...', { isRealtimeEnabled });
+        setHasLogged(true);
+        setIsInitialized(true);
+      }
+    }, [hasLogged, isRealtimeEnabled, isInitialized]);
 
     if (!isRealtimeEnabled) {
       // Retornar un hook simulado si Realtime está deshabilitado

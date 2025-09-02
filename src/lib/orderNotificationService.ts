@@ -582,7 +582,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       // 🔧 CORRECCIÓN: Luego obtener información del proveedor por separado
       const { data: provider, error: providerError } = await supabase
         .from('providers')
-        .select('id, name, contact_name, phone, notes, default_payment_method')
+        .select('id, name, contact_name, phone, notes, default_payment_method, default_delivery_time')
         .eq('id', orderBasic.provider_id)
         .single();
 
@@ -650,7 +650,12 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       const orderDetails = this.generateOrderDetailsMessage(orderData);
       console.log(`📤 [${requestId}] Enviando detalles del pedido:`, orderDetails.substring(0, 100) + '...');
 
-      const sendResult = await this.sendOrderDetails(providerPhone, orderDetails, orderData.user_id);
+      // 🔧 CORRECCIÓN: Enviar mensaje directamente usando MetaWhatsAppService
+      const { MetaWhatsAppService } = await import('./metaWhatsAppService');
+      const metaService = new MetaWhatsAppService();
+      const result = await metaService.sendMessage(providerPhone, orderDetails);
+      
+      const sendResult = { success: !!result, error: result ? null : 'Error enviando mensaje' };
       
       if (sendResult.success) {
         console.log(`✅ [${requestId}] Detalles del pedido enviados exitosamente`);
@@ -780,11 +785,17 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          items: orderData.items,
          total_amount: orderData.total_amount,
          currency: orderData.currency,
+         // 🔧 NUEVO: Log específico de los datos del modal
+         modalData: {
+           desired_delivery_date: orderData.desired_delivery_date,
+           desired_delivery_time: orderData.desired_delivery_time,
+           payment_method: orderData.payment_method,
+           notes: orderData.notes
+         },
          fullData: JSON.stringify(orderData, null, 2)
        });
 
        const items = Array.isArray(orderData.items) ? orderData.items : [];
-       const totalItems = items.length;
        const orderNumber = orderData.order_number || orderData.id || 'N/A';
        
        // 🔧 CORRECCIÓN: Obtener nombre del proveedor desde la relación con fallback robusto
@@ -809,32 +820,57 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          providerName = 'Proveedor';
        }
        
-       // 🔧 CORRECCIÓN: Formatear fecha de entrega usando campo correcto (order_date) con fallback robusto
-       let deliveryDate = 'No especificada';
-       if (orderData.order_date) {
-         try {
-           const date = new Date(orderData.order_date);
-           if (!isNaN(date.getTime())) {
-             deliveryDate = date.toLocaleDateString('es-AR', {
-               weekday: 'long',
-               year: 'numeric',
-               month: 'long',
-               day: 'numeric'
-             });
-             console.log('🔧 DEBUG - Fecha de entrega formateada:', deliveryDate);
-           } else {
-             console.warn('⚠️ Fecha de orden inválida:', orderData.order_date);
-             deliveryDate = 'Fecha inválida';
-           }
-         } catch (error) {
-           console.warn('⚠️ Error formateando fecha de entrega:', error);
-           deliveryDate = 'Error en fecha';
-         }
-       } else {
-         console.log('🔧 DEBUG - No hay fecha de orden disponible');
-       }
+               // 🔧 CORRECCIÓN: Formatear fecha de entrega usando campo correcto (order_date) con fallback robusto
+        let deliveryDate = 'No especificada';
+        if (orderData.order_date) {
+          try {
+            const date = new Date(orderData.order_date);
+            if (!isNaN(date.getTime())) {
+              deliveryDate = date.toLocaleDateString('es-AR', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+              });
+              console.log('🔧 DEBUG - Fecha de orden formateada:', deliveryDate);
+            } else {
+              console.warn('⚠️ Fecha de orden inválida:', orderData.order_date);
+              deliveryDate = 'Fecha inválida';
+            }
+          } catch (error) {
+            console.warn('⚠️ Error formateando fecha de orden:', error);
+            deliveryDate = 'Error en fecha';
+          }
+        } else {
+          console.log('🔧 DEBUG - No hay fecha de orden disponible');
+        }
+        
+        // 🔧 NUEVO: Formatear fecha de entrega DESEADA del modal
+        let desiredDeliveryDate = 'No especificada';
+        if (orderData.desired_delivery_date) {
+          try {
+            const date = new Date(orderData.desired_delivery_date);
+            if (!isNaN(date.getTime())) {
+              desiredDeliveryDate = date.toLocaleDateString('es-AR', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+              });
+              console.log('🔧 DEBUG - Fecha de entrega deseada formateada:', desiredDeliveryDate);
+            } else {
+              console.warn('⚠️ Fecha de entrega deseada inválida:', orderData.desired_delivery_date);
+              desiredDeliveryDate = 'Fecha inválida';
+            }
+          } catch (error) {
+            console.warn('⚠️ Error formateando fecha de entrega deseada:', error);
+            desiredDeliveryDate = 'Error en fecha';
+          }
+        } else {
+          console.log('🔧 DEBUG - No hay fecha de entrega deseada disponible');
+        }
        
-       // �� MEJORA: Obtener método de pago
+       // 🔧 MEJORA: Obtener método de pago
        // 🔧 CORRECCIÓN: Obtener método de pago con traducción
        const getPaymentMethodText = (method: string): string => {
          const paymentMethods: { [key: string]: string } = {
@@ -846,32 +882,68 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return paymentMethods[method] || method || 'No especificado';
        };
        
-       // 🔧 CORRECCIÓN: Usar valor por defecto ya que payment_method no existe en BD
-       // 🔧 MEJORA: Intentar obtener método de pago del proveedor si está disponible
-       let paymentMethod = 'Efectivo'; // Valor por defecto hasta que se agregue la columna
-       if (orderData.providers?.default_payment_method) {
-         paymentMethod = getPaymentMethodText(orderData.providers.default_payment_method);
-         console.log('🔧 DEBUG - Método de pago del proveedor:', paymentMethod);
-       } else {
-         console.log('🔧 DEBUG - Usando método de pago por defecto:', paymentMethod);
-       }
+               // 🔧 CORRECCIÓN: Obtener método de pago del modal primero, luego del proveedor como fallback
+        let paymentMethod = 'Efectivo'; // Valor por defecto
+        if (orderData.payment_method) {
+          paymentMethod = getPaymentMethodText(orderData.payment_method);
+          console.log('🔧 DEBUG - Método de pago del modal:', paymentMethod);
+        } else if (orderData.providers?.default_payment_method) {
+          paymentMethod = getPaymentMethodText(orderData.providers.default_payment_method);
+          console.log('🔧 DEBUG - Método de pago del proveedor:', paymentMethod);
+        } else {
+          console.log('🔧 DEBUG - Usando método de pago por defecto:', paymentMethod);
+        }
        
-       // 🔧 CORRECCIÓN: Obtener notas del proveedor por defecto con fallback inteligente
+       // 🔧 CORRECCIÓN: Obtener notas del modal primero, luego del proveedor como fallback
        let notes = '';
-       if (orderData.providers?.notes && orderData.providers.notes.trim()) {
-         notes = orderData.providers.notes;
-       } else if (orderData.notes && orderData.notes.trim()) {
+       if (orderData.notes && orderData.notes.trim()) {
          notes = orderData.notes;
+         console.log('🔧 DEBUG - Notas del modal agregadas:', notes);
+       } else if (orderData.providers?.notes && orderData.providers.notes.trim()) {
+         notes = orderData.providers.notes;
+         console.log('🔧 DEBUG - Notas del proveedor agregadas:', notes);
        } else {
          notes = 'Sin notas adicionales';
+         console.log('🔧 DEBUG - No hay notas disponibles');
        }
        
-       let message = `📋 *DETALLES DEL PEDIDO*\n\n`;
+       let message = `📋 *${providerName.toUpperCase()}*\n\n`;
        message += `*Orden:* ${orderNumber}\n`;
-       message += `*Proveedor:* ${providerName}\n`;
-       message += `*Total de items:* ${totalItems}\n`;
-       message += `*Fecha de entrega:* ${deliveryDate}\n`;
-       message += `*Método de pago:* ${paymentMethod}\n`;
+       
+       // 🔧 CORRECCIÓN: Usar fecha de entrega DESEADA del modal como fecha principal
+       if (desiredDeliveryDate !== 'No especificada') {
+         message += `*📅 Fecha de entrega:* ${desiredDeliveryDate}\n`;
+       } else {
+         // Fallback a fecha de creación si no hay fecha deseada
+         message += `*📅 Fecha de entrega:* ${deliveryDate}\n`;
+       }
+       
+       // 🔧 NUEVO: Agregar horarios de entrega DESEADOS del modal
+       if (orderData.desired_delivery_time && orderData.desired_delivery_time.length > 0) {
+         const desiredTimes = orderData.desired_delivery_time;
+         if (desiredTimes.length === 1) {
+           message += `*⏰ Horario de entrega DESEADO:* ${desiredTimes[0]}\n`;
+         } else {
+           message += `*⏰ Horarios de entrega DESEADOS:* ${desiredTimes.join(', ')}\n`;
+         }
+         console.log('🔧 DEBUG - Horarios de entrega deseados agregados:', desiredTimes);
+       } else {
+         // 🔧 FALLBACK: Usar horarios del proveedor si no hay del modal
+         if (orderData.providers?.default_delivery_time && orderData.providers.default_delivery_time.length > 0) {
+           const deliveryTimes = orderData.providers.default_delivery_time;
+           if (deliveryTimes.length === 1) {
+             message += `*⏰ Horario de entrega:* ${deliveryTimes[0]}\n`;
+           } else {
+             message += `*⏰ Horarios de entrega:* ${deliveryTimes.join(', ')}\n`;
+           }
+           console.log('🔧 DEBUG - Horarios de entrega del proveedor agregados:', deliveryTimes);
+         } else {
+           message += `*⏰ Horario de entrega:* No especificado\n`;
+           console.log('🔧 DEBUG - No hay horarios de entrega disponibles');
+         }
+       }
+       
+       message += `*💳 Método de pago:* ${paymentMethod}\n`;
        
        // 🔧 MEJORA: Agregar notas solo si existen
        if (notes && notes.trim()) {

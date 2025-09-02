@@ -433,13 +433,13 @@ export class WebhookService {
           status: pendingOrder.status
         });
         
-        console.log(`📝 Enviando detalles del pedido para: ${phoneNumber}`);
-        const result = await OrderNotificationService.sendOrderDetails(phoneNumber, messageContent);
+        console.log(`📝 Procesando respuesta del proveedor para: ${phoneNumber}`);
+        const result = await OrderNotificationService.processProviderResponse(phoneNumber, messageContent);
         
         if (result) {
-          console.log(`✅ Detalles del pedido enviados exitosamente para: ${phoneNumber}`);
+          console.log(`✅ Respuesta del proveedor procesada exitosamente para: ${phoneNumber}`);
         } else {
-          console.error(`❌ Error enviando detalles del pedido para: ${phoneNumber}`);
+          console.error(`❌ Error procesando respuesta del proveedor para: ${phoneNumber}`);
         }
       } else {
         console.log(`ℹ️ No hay pedidos pendientes para: ${phoneNumber}`);

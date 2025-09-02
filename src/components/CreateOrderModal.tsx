@@ -165,10 +165,11 @@ export default function CreateOrderModal({
             setDesiredDeliveryTime(defaultTimeRanges);
           } else if (typeof deliveryTime === 'string' && deliveryTime) {
             // Single time string
-            const [hours, minutes] = deliveryTime.split(':');
+            const timeString = deliveryTime as string;
+            const [hours, minutes] = timeString.split(':');
             const startHour = parseInt(hours);
             const endHour = startHour + 2; // 2-hour range by default
-            const timeRange = `${deliveryTime}-${endHour.toString().padStart(2, '0')}:${minutes}`;
+            const timeRange = `${timeString}-${endHour.toString().padStart(2, '0')}:${minutes}`;
             setDesiredDeliveryTime([timeRange]);
           }
         }

@@ -154,10 +154,25 @@ function DashboardPageContent({
     providerId: string;
     items: OrderItem[];
     notes: string;
+    desiredDeliveryDate?: Date;
+    desiredDeliveryTime?: string[];
+    paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
+    additionalFiles?: OrderFile[];
   }) => {
     if (!user) return;
     
     try {
+      // 🔧 DEBUG: Log de los datos recibidos del modal
+      console.log('🔧 DEBUG - Datos recibidos del modal:', {
+        providerId: orderData.providerId,
+        itemsCount: orderData.items.length,
+        notes: orderData.notes,
+        desiredDeliveryDate: orderData.desiredDeliveryDate,
+        desiredDeliveryTime: orderData.desiredDeliveryTime,
+        paymentMethod: orderData.paymentMethod,
+        additionalFilesCount: orderData.additionalFiles?.length || 0
+      });
+      
       // 🔧 MEJORA: Generar número de orden único
       const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
       const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -171,15 +186,32 @@ function DashboardPageContent({
         totalAmount: orderData.items.reduce((sum, item) => sum + (item.total || 0), 0),
         currency: "ARS",
         orderDate: new Date(),
-        dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+        dueDate: orderData.desiredDeliveryDate || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
         invoiceNumber: "",
         bankInfo: {},
         receiptUrl: "",
         notes: orderData.notes,
+        // 🔧 CORRECCIÓN: Incluir todos los campos del modal
+        desiredDeliveryDate: orderData.desiredDeliveryDate,
+        desiredDeliveryTime: orderData.desiredDeliveryTime,
+        paymentMethod: orderData.paymentMethod || 'efectivo',
+        additionalFiles: orderData.additionalFiles || [],
         createdAt: new Date(),
         updatedAt: new Date(),
         user_id: user.id,
       };
+      
+      // 🔧 DEBUG: Log de la orden que se va a crear
+      console.log('🔧 DEBUG - Orden a crear:', {
+        orderNumber: newOrder.orderNumber,
+        providerId: newOrder.providerId,
+        itemsCount: newOrder.items?.length,
+        notes: newOrder.notes,
+        desiredDeliveryDate: newOrder.desiredDeliveryDate,
+        desiredDeliveryTime: newOrder.desiredDeliveryTime,
+        paymentMethod: newOrder.paymentMethod,
+        additionalFilesCount: newOrder.additionalFiles?.length
+      });
       
       // 🔧 MEJORA: Cerrar modal inmediatamente para mejor UX
       setIsCreateModalOpen(false);

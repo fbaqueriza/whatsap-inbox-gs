@@ -50,8 +50,20 @@ function mapStockItemFromDb(item: any): StockItem {
   };
 }
 
-// 🔧 CORRECCIÓN: Función para mapear Order de snake_case a camelCase
+// 🔧 SOLUCIÓN PERMANENTE: Función para mapear Order de snake_case a camelCase
 function mapOrderFromDb(order: any): Order {
+  // 🔧 DEBUG: Log para verificar qué datos llegan desde la BD
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔧 DEBUG - Mapeando orden desde BD:', {
+      id: order.id,
+      provider_id: order.provider_id,
+      desired_delivery_date: order.desired_delivery_date,
+      desired_delivery_time: order.desired_delivery_time,
+      payment_method: order.payment_method,
+      additional_files: order.additional_files
+    });
+  }
+
   return {
     ...order,
     providerId: order.provider_id,
@@ -62,11 +74,11 @@ function mapOrderFromDb(order: any): Order {
     invoiceNumber: order.invoice_number,
     bankInfo: order.bank_info,
     receiptUrl: order.receipt_url,
-    // 🔧 NOTA: Los campos desired_delivery_date, desired_delivery_time y payment_method no existen en la BD actual
-    // Se mapean como undefined hasta que se agreguen las columnas
-    desiredDeliveryDate: undefined,
-    desiredDeliveryTime: undefined,
-    paymentMethod: 'efectivo' as const, // Valor por defecto
+    // 🔧 NUEVAS COLUMNAS NATIVAS: Mapear directamente desde la BD
+    desiredDeliveryDate: order.desired_delivery_date ? new Date(order.desired_delivery_date) : undefined,
+    desiredDeliveryTime: order.desired_delivery_time || undefined,
+    paymentMethod: (order.payment_method as 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque') || 'efectivo',
+    additionalFiles: order.additional_files || undefined,
     createdAt: order.created_at,
     updatedAt: order.updated_at,
     id: order.id,
@@ -93,6 +105,24 @@ function mapProviderFromDb(provider: any): Provider {
   };
 }
 
+// 🔧 FUNCIÓN DE VERIFICACIÓN: Para debug de datos
+function verifyOrderData(order: any, source: string) {
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`🔧 VERIFICACIÓN - ${source}:`, {
+      id: order.id,
+      provider_id: order.provider_id,
+      has_desired_delivery_date: !!order.desired_delivery_date,
+      desired_delivery_date: order.desired_delivery_date,
+      has_desired_delivery_time: !!order.desired_delivery_time,
+      desired_delivery_time: order.desired_delivery_time,
+      has_payment_method: !!order.payment_method,
+      payment_method: order.payment_method,
+      has_additional_files: !!order.additional_files,
+      additional_files: order.additional_files
+    });
+  }
+}
+
 export const DataProvider: React.FC<{ userEmail?: string; userId?: string; children: React.ReactNode }> = ({ userEmail, userId, children }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -102,8 +132,13 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
 
   // Fetch user_id from email if not provided
   useEffect(() => {
-    if (!userEmail && !userId) return;
+    console.log('👤 DEBUG: useEffect de usuario ejecutándose:', { userEmail, userId });
+    if (!userEmail && !userId) {
+      console.log('❌ DEBUG: No hay userEmail ni userId');
+      return;
+    }
     if (userId) {
+      console.log('✅ DEBUG: userId proporcionado directamente:', userId);
       setCurrentUserId(userId);
       return;
     }
@@ -177,26 +212,37 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
   // Fetch all data for the user con optimización para items del proveedor
   const fetchAll = useCallback(async () => {
     if (!currentUserId) {
+      console.log('🚨 DEBUG: currentUserId es null, no ejecutando fetchAll');
       return;
     }
     setLoading(true);
     setErrorMsg(null);
+    
+    console.log('🚀 DEBUG: Iniciando fetchAll para usuario:', currentUserId);
+    
     try {
-      // console.log('🔄 Iniciando fetchAll para usuario:', currentUserId);
-      
       // 🔧 OPTIMIZACIÓN: Cargar datos con información completa de items
+      console.log('📡 DEBUG: Ejecutando SELECT de órdenes...');
       const [{ data: provs, error: provError }, { data: ords, error: ordError }, { data: stocks, error: stockError }] = await Promise.all([
         supabase.from('providers').select('*').eq('user_id', currentUserId).order('created_at', { ascending: false }),
-        supabase.from('orders').select('*').eq('user_id', currentUserId).order('created_at', { ascending: false }),
+        supabase.from('orders').select(`
+          *,
+          desired_delivery_date,
+          desired_delivery_time,
+          payment_method,
+          additional_files
+        `).eq('user_id', currentUserId).order('created_at', { ascending: false }),
         supabase.from('stock').select(`
           *,
           associated_providers
         `).eq('user_id', currentUserId).order('preferred_provider', { ascending: true }).order('created_at', { ascending: false }),
       ]);
       
-      if (provError) console.error('Error fetching providers:', provError);
-      if (ordError) console.error('Error fetching orders:', ordError);
-      if (stockError) console.error('Error fetching stock:', stockError);
+      if (provError) console.error('❌ Error fetching providers:', provError);
+      if (ordError) console.error('❌ Error fetching orders:', ordError);
+      if (stockError) console.error('❌ Error fetching stock:', stockError);
+      
+      console.log(`📊 DEBUG: fetchAll retornó ${ords?.length || 0} órdenes`);
       
       const mappedProviders = (provs || []).map(mapProviderFromDb);
       
@@ -209,10 +255,43 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       }));
       
       setProviders(mappedProviders);
-      setOrders((ords || []).map(mapOrderFromDb));
+      
+      // 🔧 DEBUG: Verificar datos de órdenes antes del mapeo
+      if (ords && ords.length > 0) {
+        console.log('🔍 DEBUG: Primera orden ANTES del mapeo:', {
+          id: ords[0].id,
+          order_number: ords[0].order_number,
+          desired_delivery_date: ords[0].desired_delivery_date,
+          desired_delivery_time: ords[0].desired_delivery_time,
+          payment_method: ords[0].payment_method,
+          additional_files: ords[0].additional_files
+        });
+        verifyOrderData(ords[0], 'BD antes del mapeo');
+      }
+      
+      console.log('🔄 DEBUG: Aplicando mapOrderFromDb...');
+      const mappedOrders = (ords || []).map(mapOrderFromDb);
+      
+      // 🔧 DEBUG: Verificar datos de órdenes después del mapeo
+      if (mappedOrders && mappedOrders.length > 0) {
+        console.log('🔍 DEBUG: Primera orden DESPUÉS del mapeo:', {
+          id: mappedOrders[0].id,
+          orderNumber: mappedOrders[0].orderNumber,
+          desiredDeliveryDate: mappedOrders[0].desiredDeliveryDate,
+          desiredDeliveryTime: mappedOrders[0].desiredDeliveryTime,
+          paymentMethod: mappedOrders[0].paymentMethod,
+          additionalFiles: mappedOrders[0].additionalFiles
+        });
+        verifyOrderData(mappedOrders[0], 'Después del mapeo');
+      }
+      
+      console.log('💾 DEBUG: Estableciendo órdenes en el estado...');
+      setOrders(mappedOrders);
       setStockItems(validatedStockItems);
+      
+      console.log('✅ DEBUG: fetchAll completado exitosamente');
     } catch (error) {
-      console.error('Error in fetchAll:', error);
+      console.error('❌ Error in fetchAll:', error);
       setErrorMsg('Error al cargar los datos. Por favor, recarga la página.');
     } finally {
       setLoading(false);
@@ -220,8 +299,12 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
   }, [currentUserId]);
 
   useEffect(() => {
+    console.log('🔄 DEBUG: useEffect ejecutándose, currentUserId:', currentUserId);
     if (currentUserId) {
+      console.log('✅ DEBUG: currentUserId válido, ejecutando fetchAll...');
       fetchAll();
+    } else {
+      console.log('❌ DEBUG: currentUserId es null o undefined');
     }
   }, [currentUserId]); // Solo depende de currentUserId, no de fetchAll
 
@@ -254,7 +337,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       
       const orderNumber = `ORD-${dateStr}-${providerName}-${randomStr}`;
       
-      // 🔧 CORRECCIÓN: Mapear campos a snake_case con valores por defecto (sin campos que no existen en BD)
+      // 🔧 SOLUCIÓN PERMANENTE: Mapear campos a snake_case usando columnas nativas
       const snakeCaseOrder = {
         provider_id: (order as any).providerId,
         user_id,
@@ -269,11 +352,25 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         bank_info: (order as any).bankInfo || null,
         receipt_url: (order as any).receiptUrl || null,
         notes: order.notes || '',
-        // 🔧 NOTA: Los campos desired_delivery_date, desired_delivery_time y payment_method no existen en la BD actual
-        // Se guardan en notes temporalmente hasta que se agreguen las columnas
+        // 🔧 NUEVAS COLUMNAS NATIVAS para campos del modal
+        desired_delivery_date: order.desiredDeliveryDate ? order.desiredDeliveryDate.toISOString() : null,
+        desired_delivery_time: order.desiredDeliveryTime && order.desiredDeliveryTime.length > 0 ? order.desiredDeliveryTime : null,
+        payment_method: order.paymentMethod || 'efectivo',
+        additional_files: order.additionalFiles && order.additionalFiles.length > 0 ? order.additionalFiles : null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
+      
+      // 🔧 DEBUG: Log de los datos que se van a insertar
+      console.log('🔧 DEBUG - Datos a insertar en BD:', {
+        provider_id: snakeCaseOrder.provider_id,
+        items_count: snakeCaseOrder.items.length,
+        notes: snakeCaseOrder.notes,
+        desired_delivery_date: snakeCaseOrder.desired_delivery_date,
+        desired_delivery_time: snakeCaseOrder.desired_delivery_time,
+        payment_method: snakeCaseOrder.payment_method,
+        additional_files: snakeCaseOrder.additional_files
+      });
       
       // 🔧 OPTIMIZACIÓN: Logging reducido
       
@@ -289,8 +386,14 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       
       // 🔧 OPTIMIZACIÓN: Actualizar localmente inmediatamente
       if (data && data.length > 0) {
+        // 🔧 DEBUG: Verificar datos antes del mapeo
+        verifyOrderData(data[0], 'BD después de insertar');
+        
         const createdOrder = mapOrderFromDb(data[0]);
         console.log('📋 Orden mapeada:', createdOrder);
+        
+        // 🔧 DEBUG: Verificar datos después del mapeo
+        verifyOrderData(createdOrder, 'Después de mapear orden creada');
         
         // Actualizar el estado local inmediatamente
         setOrders(prevOrders => [createdOrder, ...prevOrders]);
@@ -309,7 +412,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
     try {
       console.log('🔄 Actualizando orden:', order.id, 'Estado:', order.status);
       
-      // 🔧 CORRECCIÓN: Mapear campos a snake_case para Supabase (sin campos que no existen en BD)
+      // 🔧 SOLUCIÓN PERMANENTE: Mapear campos a snake_case usando columnas nativas
       const snakeCaseOrder = {
         provider_id: (order as any).providerId,
         user_id: order.user_id,
@@ -323,7 +426,11 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         bank_info: (order as any).bankInfo,
         receipt_url: (order as any).receiptUrl,
         notes: order.notes,
-        // 🔧 NOTA: Los campos desired_delivery_date, desired_delivery_time y payment_method no existen en la BD actual
+        // 🔧 NUEVAS COLUMNAS NATIVAS para campos del modal
+        desired_delivery_date: order.desiredDeliveryDate ? order.desiredDeliveryDate.toISOString() : null,
+        desired_delivery_time: order.desiredDeliveryTime && order.desiredDeliveryTime.length > 0 ? order.desiredDeliveryTime : null,
+        payment_method: order.paymentMethod || 'efectivo',
+        additional_files: order.additionalFiles && order.additionalFiles.length > 0 ? order.additionalFiles : null,
         created_at: (order as any).createdAt,
         updated_at: new Date().toISOString(), // 🔧 MEJORA: Actualizar timestamp
       };

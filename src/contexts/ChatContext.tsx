@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { supabase } from '../lib/supabase/client';
 import { WhatsAppMessage, Contact } from '../types/whatsapp';
+import { PhoneNumberService } from '../lib/phoneNumberService';
 import { useRealtimeService } from '../services/realtimeService';
 
 // Tipos
@@ -106,10 +107,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       
       const userProviderPhones = userProviders?.map(p => {
         let phone = p.phone as string;
-        if (phone && !phone.startsWith('+')) {
-          phone = `+${phone}`;
-        }
-        return phone;
+        // 🔧 CORRECCIÓN: Usar servicio centralizado de normalización
+        const normalizedPhone = PhoneNumberService.normalizePhoneNumber(phone);
+        return normalizedPhone || phone;
       }) || [];
       
       // Actualizar el estado de proveedores del usuario
@@ -129,25 +129,31 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         // 🔧 OPTIMIZACIÓN: Filtrado inteligente y robusto
         const transformedMessages = data.messages
           .filter((msg: any) => {
-            const contactId = normalizeContactIdentifier(msg.contact_id || msg.from);
-            
-            // Incluir TODOS los mensajes recibidos
-            if (msg.message_type === 'received') {
-              return true;
-            }
-            
-            // Para mensajes enviados, verificar si son de proveedores registrados
-            const isFromRegisteredProvider = userProviderPhones.includes(contactId);
-            
-            // Incluir mensajes enviados del proveedor registrado
-            if (msg.message_type === 'sent' && isFromRegisteredProvider) {
-              return true;
-            }
-            
-            // Para otros mensajes enviados, verificar si son argentinos
-            const isArgentineNumber = contactId.includes('+549');
-            
-            return isArgentineNumber;
+                    const contactId = normalizeContactIdentifier(msg.contact_id || msg.from);
+        
+        // 🔧 CORRECCIÓN: Usar normalización más permisiva para comparaciones
+        const normalizedContactId = PhoneNumberService.normalizePhoneNumber(contactId) || contactId;
+        const normalizedProviderPhones = userProviderPhones.map(phone => 
+          PhoneNumberService.normalizePhoneNumber(phone) || phone
+        );
+        
+        // Incluir TODOS los mensajes recibidos
+        if (msg.message_type === 'received') {
+          return true;
+        }
+        
+        // Para mensajes enviados, verificar si son de proveedores registrados
+        const isFromRegisteredProvider = normalizedProviderPhones.includes(normalizedContactId);
+        
+        // Incluir mensajes enviados del proveedor registrado
+        if (msg.message_type === 'sent' && isFromRegisteredProvider) {
+          return true;
+        }
+        
+        // Para otros mensajes enviados, verificar si son argentinos
+        const isArgentineNumber = normalizedContactId.includes('+54');
+        
+        return isArgentineNumber;
           })
           .map((msg: any) => {
             // 🔧 OPTIMIZACIÓN: Mapeo simplificado y consistente

@@ -1,4 +1,5 @@
 import { Order, OrderItem, Provider } from '../types';
+import { PhoneNumberService } from './phoneNumberService';
 
 interface OrderNotificationData {
   order: Order;
@@ -66,56 +67,10 @@ export class OrderNotificationService {
   }
 
   /**
-   * Normaliza un número de teléfono al formato requerido +54XXXXXXXXXX
+   * 🎯 USAR SERVICIO CENTRALIZADO: Normaliza un número de teléfono al formato requerido +54XXXXXXXXXX
    */
   private static normalizePhoneNumber(phone: string): string | null {
-    if (!phone) return null;
-    
-    // Remover espacios, guiones, paréntesis y otros caracteres
-    let normalized = phone.replace(/[\s\-\(\)]/g, '');
-    
-    // Si ya empieza con +54, verificar que tenga el formato correcto
-    if (normalized.startsWith('+54')) {
-      if (normalized.length >= 12 && normalized.length <= 14) {
-        return normalized;
-      }
-    }
-    
-    // Si empieza con 54 (sin +), agregar +
-    if (normalized.startsWith('54')) {
-      normalized = '+' + normalized;
-      if (normalized.length >= 12 && normalized.length <= 14) {
-        return normalized;
-      }
-    }
-    
-    // Si empieza con 9 (número argentino), agregar +54
-    if (normalized.startsWith('9') && normalized.length === 10) {
-      return '+54' + normalized;
-    }
-    
-    // Si empieza con 11 (código de área), agregar +549
-    if (normalized.startsWith('11') && normalized.length === 10) {
-      return '+54' + normalized;
-    }
-    
-    // Si tiene 10 dígitos y empieza con 15, agregar +54
-    if (normalized.startsWith('15') && normalized.length === 10) {
-      return '+54' + normalized;
-    }
-    
-    // Si tiene 9 dígitos y empieza con 9, agregar +549
-    if (normalized.startsWith('9') && normalized.length === 9) {
-      return '+549' + normalized;
-    }
-    
-    // Si tiene 8 dígitos y empieza con 9, agregar +549
-    if (normalized.startsWith('9') && normalized.length === 8) {
-      return '+549' + normalized;
-    }
-    
-    console.warn('⚠️ No se pudo normalizar el número:', phone);
-    return null;
+    return PhoneNumberService.normalizePhoneNumber(phone);
   }
 
   /**
@@ -521,22 +476,58 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      // 🔧 DEBUG: Verificar normalización del número
-      const normalizedProviderPhone = this.normalizePhoneNumber(providerPhone);
+      // 🔧 DEBUG: Verificar normalización del número usando servicio centralizado
+      const normalizedProviderPhone = PhoneNumberService.normalizePhoneNumber(providerPhone);
       console.log(`🔧 DEBUG - Normalización de número:`, {
         original: providerPhone,
         normalized: normalizedProviderPhone,
         match: providerPhone === normalizedProviderPhone ? 'SÍ' : 'NO'
       });
 
-      // 🔧 CORRECCIÓN: Buscar pedidos pendientes con cualquier estado de pending
-      const { data: pendingOrders, error: pendingError } = await supabase
+      // 🔧 CORRECCIÓN: Usar normalización más permisiva para búsquedas
+      const searchVariants = PhoneNumberService.normalizeForSearch(providerPhone);
+      console.log(`🔍 DEBUG - Variantes de búsqueda para ${providerPhone}:`, searchVariants);
+      
+      let pendingOrdersQuery = supabase
         .from('pending_orders')
         .select('*')
-        .eq('provider_phone', normalizedProviderPhone || providerPhone)
         .or('status.eq.pending,status.eq.pending_confirmation')
         .order('created_at', { ascending: false })
         .limit(1);
+      
+      // 🔧 MEJORA: Buscar con todas las variantes del número usando OR dinámico
+      if (searchVariants.length > 0) {
+        // 🔧 CORRECCIÓN: Construir query OR correctamente para Supabase
+        // Supabase requiere que .or() se llame con la sintaxis correcta
+        const orConditions = searchVariants.map(variant => `provider_phone.eq.${variant}`);
+        console.log(`🔍 DEBUG - Variantes para búsqueda:`, orConditions);
+        
+        // 🔧 MEJORA: Usar .or() con la sintaxis correcta de Supabase
+        // Construir la query paso a paso para evitar problemas de sintaxis
+        let finalQuery = supabase
+          .from('pending_orders')
+          .select('*')
+          .or('status.eq.pending,status.eq.pending_confirmation')
+          .order('created_at', { ascending: false })
+          .limit(1);
+        
+        // 🔧 CORRECCIÓN: Aplicar OR para las variantes del número
+        if (orConditions.length === 1) {
+          finalQuery = finalQuery.eq('provider_phone', orConditions[0]);
+        } else if (orConditions.length > 1) {
+          // Para múltiples variantes, usar .or() con la sintaxis correcta
+          const orString = orConditions.map(condition => `provider_phone.eq.${condition}`).join(',');
+          finalQuery = finalQuery.or(orString);
+        }
+        
+        pendingOrdersQuery = finalQuery;
+      } else {
+        // 🔧 FALLBACK: Búsqueda básica si no se puede normalizar
+        console.log(`⚠️ DEBUG - Usando búsqueda básica con:`, normalizedProviderPhone || providerPhone);
+        pendingOrdersQuery = pendingOrdersQuery.eq('provider_phone', normalizedProviderPhone || providerPhone);
+      }
+      
+      const { data: pendingOrders, error: pendingError } = await pendingOrdersQuery;
 
       console.log(`🔧 DEBUG - Búsqueda de pedidos pendientes:`, {
         providerPhone,
@@ -707,8 +698,8 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      // Normalizar el número de teléfono
-      const normalizedPhone = this.normalizePhoneNumber(providerPhone);
+      // 🔧 MEJORA: Usar servicio centralizado de normalización
+      const normalizedPhone = PhoneNumberService.normalizePhoneNumber(providerPhone);
       if (!normalizedPhone) {
         console.error('❌ No se pudo normalizar el número de teléfono:', providerPhone);
         return null;
@@ -716,15 +707,38 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       
       console.log('✅ Buscando con número normalizado:', providerPhone, '->', normalizedPhone);
       
-      // Buscar directamente con el número normalizado
-      const { data, error } = await supabase
+      // 🔧 MEJORA: Usar normalización más permisiva para búsquedas
+      const searchVariants = PhoneNumberService.normalizeForSearch(providerPhone);
+      console.log('🔍 Variantes de búsqueda:', searchVariants);
+      
+      let query = supabase
         .from('pending_orders')
         .select('*')
-        .eq('provider_phone', normalizedPhone)
         .eq('status', 'pending_confirmation')
         .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
+      
+      // 🔧 MEJORA: Buscar con todas las variantes del número usando OR dinámico
+      if (searchVariants.length > 0) {
+        // 🔧 CORRECCIÓN: Construir query OR correctamente para Supabase
+        const orConditions = searchVariants.map(variant => `provider_phone.eq.${variant}`);
+        console.log('🔍 Variantes para búsqueda:', orConditions);
+        
+        // 🔧 CORRECCIÓN: Aplicar OR para las variantes del número
+        if (orConditions.length === 1) {
+          query = query.eq('provider_phone', orConditions[0]);
+        } else if (orConditions.length > 1) {
+          // Para múltiples variantes, usar .or() con la sintaxis correcta
+          const orString = orConditions.map(condition => `provider_phone.eq.${condition}`).join(',');
+          query = query.or(orString);
+        }
+      } else {
+        // 🔧 FALLBACK: Búsqueda básica si no se puede normalizar
+        console.log('⚠️ Usando búsqueda básica con:', normalizedPhone);
+        query = query.eq('provider_phone', normalizedPhone);
+      }
+      
+      const { data, error } = await query.single();
 
       console.log(`🔍 Resultado de búsqueda para ${providerPhone}:`, { 
         data: data ? {
@@ -798,27 +812,33 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
        const items = Array.isArray(orderData.items) ? orderData.items : [];
        const orderNumber = orderData.order_number || orderData.id || 'N/A';
        
-       // 🔧 CORRECCIÓN: Obtener nombre del proveedor desde la relación con fallback robusto
-       let providerName = 'Proveedor';
-       console.log('🔧 DEBUG - Estructura de providers:', {
-         providers: orderData.providers,
-         type: typeof orderData.providers,
-         hasName: orderData.providers?.name,
-         hasId: orderData.providers?.id,
-         fullProviders: JSON.stringify(orderData.providers)
-       });
-       
-       if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.name) {
-         providerName = orderData.providers.name;
-         console.log('🔧 DEBUG - Nombre del proveedor encontrado:', providerName);
-       } else if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.id) {
-         // Si no hay nombre pero sí ID, usar un identificador más descriptivo
-         providerName = `Proveedor ID: ${orderData.providers.id}`;
-         console.log('🔧 DEBUG - Usando ID del proveedor como nombre:', providerName);
-       } else {
-         console.log('🔧 DEBUG - No se encontró información del proveedor, usando valor por defecto');
-         providerName = 'Proveedor';
-       }
+               // 🔧 CORRECCIÓN: Obtener nombre del proveedor desde la relación con fallback robusto
+        let providerName = 'Proveedor';
+        console.log('🔧 DEBUG - Estructura de providers:', {
+          providers: orderData.providers,
+          type: typeof orderData.providers,
+          hasName: orderData.providers?.name,
+          hasId: orderData.providers?.id,
+          fullProviders: JSON.stringify(orderData.providers)
+        });
+        
+        if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.name) {
+          providerName = orderData.providers.name;
+          console.log('🔧 DEBUG - Nombre del proveedor encontrado:', providerName);
+        } else if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.id) {
+          // Si no hay nombre pero sí ID, usar un identificador más descriptivo
+          providerName = `Proveedor ID: ${orderData.providers.id}`;
+          console.log('🔧 DEBUG - Usando ID del proveedor como nombre:', providerName);
+        } else {
+          console.log('🔧 DEBUG - No se encontró información del proveedor, usando valor por defecto');
+          providerName = 'Proveedor';
+        }
+        
+        // 🔧 CORRECCIÓN: Validar que providerName no esté vacío
+        if (!providerName || providerName.trim() === '') {
+          providerName = 'Proveedor';
+          console.log('🔧 DEBUG - providerName estaba vacío, usando valor por defecto');
+        }
        
                // 🔧 CORRECCIÓN: Formatear fecha de entrega usando campo correcto (order_date) con fallback robusto
         let deliveryDate = 'No especificada';

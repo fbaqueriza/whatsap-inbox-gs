@@ -8,6 +8,7 @@ import { Order, Provider, StockItem, OrderItem } from '../../types';
 import { useChat } from '../../contexts/ChatContext';
 import { useGlobalChat } from '../../contexts/GlobalChatContext';
 import { OrderNotificationService } from '../../lib/orderNotificationService';
+import { PhoneNumberService } from '../../lib/phoneNumberService';
 import { supabase } from '../../lib/supabase/client';
 import {
   Plus,
@@ -464,21 +465,8 @@ function DashboardPageContent({
     const provider = providers.find(p => p.id === order.providerId);
     
     if (provider) {
-      // Normalizar el número de teléfono usando la función del contexto
-      let normalizedPhone = provider.phone || '';
-      
-      // Remover espacios, guiones y paréntesis
-      normalizedPhone = normalizedPhone.replace(/[\s\-\(\)]/g, '');
-      
-      // Agregar + si no tiene
-      if (!normalizedPhone.startsWith('+')) {
-        normalizedPhone = `+${normalizedPhone}`;
-      }
-      
-      // Asegurar que sea un número argentino válido
-      if (!normalizedPhone.includes('+549')) {
-        normalizedPhone = `+549${normalizedPhone.replace('+', '')}`;
-      }
+      // 🔧 MEJORA: Usar servicio centralizado de normalización
+      const normalizedPhone = PhoneNumberService.normalizePhoneNumber(provider.phone) || provider.phone || '';
       
       // Crear contacto para el chat con el formato correcto
       const contact = {

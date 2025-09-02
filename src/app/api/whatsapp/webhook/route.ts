@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { OrderNotificationService } from '../../../../lib/orderNotificationService';
+import { PhoneNumberService } from '../../../../lib/phoneNumberService';
 
 // Verificar token de webhook (configurado en Meta Developer Console)
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'your_verify_token_here';
@@ -295,12 +296,21 @@ async function processWhatsAppMessage(message: any, requestId: string) {
     if (text?.body) {
       console.log(`🔄 [${requestId}] Iniciando processProviderResponse para:`, normalizedFrom);
       
-      const success = await OrderNotificationService.processProviderResponse(normalizedFrom, text.body);
-      
-      if (success) {
-        console.log(`✅ [${requestId}] Respuesta del proveedor procesada exitosamente`);
-      } else {
-        console.log(`ℹ️ [${requestId}] No se encontró pedido pendiente para este número:`, normalizedFrom);
+      try {
+        console.log(`🔧 [${requestId}] DEBUG - Antes de llamar a processProviderResponse`);
+        const success = await OrderNotificationService.processProviderResponse(normalizedFrom, text.body);
+        console.log(`🔧 [${requestId}] DEBUG - Después de processProviderResponse, resultado:`, success);
+        
+        if (success) {
+          console.log(`✅ [${requestId}] Respuesta del proveedor procesada exitosamente`);
+        } else {
+          console.log(`ℹ️ [${requestId}] No se encontró pedido pendiente para este número:`, normalizedFrom);
+        }
+      } catch (error) {
+        console.error(`❌ [${requestId}] ERROR en processProviderResponse:`, error);
+        if (error instanceof Error) {
+          console.error(`❌ [${requestId}] Stack trace:`, error.stack);
+        }
       }
     } else {
       console.log(`⚠️ [${requestId}] Mensaje sin texto recibido de:`, normalizedFrom);
@@ -339,12 +349,27 @@ async function saveMessageWithUserId(contactId: string, content: string, timesta
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // 🔧 CORRECCIÓN: Buscar usuario de la app que tenga este número como proveedor
-    // Buscar tanto con + como sin + para mayor compatibilidad
-    const { data: providers, error: providersError } = await supabase
+    // 🔧 CORRECCIÓN: Usar normalización más permisiva para búsquedas
+    const searchVariants = PhoneNumberService.normalizeForSearch(contactId);
+    console.log(`🔍 [${requestId}] Variantes de búsqueda para ${contactId}:`, searchVariants);
+    
+    let providersQuery = supabase
       .from('providers')
-      .select('user_id, phone')
-      .or(`phone.eq.${contactId},phone.eq.${contactId.replace('+', '')}`);
+      .select('user_id, phone');
+    
+    // 🔧 MEJORA: Construir query dinámico con todas las variantes usando OR dinámico
+    if (searchVariants.length > 0) {
+      // 🔧 CORRECCIÓN: Construir query OR correctamente para Supabase
+      const orConditions = searchVariants.map(variant => `phone.eq.${variant}`).join(',');
+      console.log(`🔍 [${requestId}] Condiciones OR construidas:`, orConditions);
+      providersQuery = providersQuery.or(orConditions);
+    } else {
+      // 🔧 FALLBACK: Búsqueda básica si no se puede normalizar
+      console.log(`⚠️ [${requestId}] Usando búsqueda básica con:`, contactId);
+      providersQuery = providersQuery.or(`phone.eq.${contactId},phone.eq.${contactId.replace('+', '')}`);
+    }
+    
+    const { data: providers, error: providersError } = await providersQuery;
 
     if (providersError) {
       console.error(`❌ [${requestId}] Error buscando proveedor:`, providersError);

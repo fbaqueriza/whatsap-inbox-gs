@@ -35,7 +35,6 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false });
 
     if (invoicesError) {
-      console.error('Error obteniendo facturas:', invoicesError);
       return NextResponse.json({
         success: false,
         error: 'Error obteniendo facturas',
@@ -64,7 +63,6 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error general:', error);
     return NextResponse.json({
       success: false,
       error: 'Error interno del servidor',

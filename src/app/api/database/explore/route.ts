@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
       }, { status: 500 });
     }
 
-    console.log('🔍 EXPLORANDO BASE DE DATOS SUPABASE COMPLETA...');
+
 
     // TODAS LAS TABLAS IDENTIFICADAS
     const allTables = [
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     
     for (const tableName of allTables) {
       try {
-        console.log(`🔍 Analizando tabla: ${tableName}`);
+
         
         // Obtener datos de ejemplo
         const { data: sampleData, error: sampleError } = await supabase
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
           .limit(3);
 
         if (sampleError) {
-          console.error(`❌ Error consultando ${tableName}:`, sampleError);
+
           tableStructures[tableName] = {
             exists: false,
             error: sampleError.message
@@ -77,10 +77,10 @@ export async function GET(request: NextRequest) {
           exists: true
         };
 
-        console.log(`✅ ${tableName}: ${count || 0} registros, ${columns.length} columnas`);
+
 
       } catch (error) {
-        console.error(`❌ Error procesando ${tableName}:`, error);
+
         tableStructures[tableName] = {
           exists: false,
           error: error instanceof Error ? error.message : 'Error desconocido'
@@ -89,7 +89,6 @@ export async function GET(request: NextRequest) {
     }
 
     // VERIFICAR RELACIONES CLAVE
-    console.log('\n🔗 VERIFICANDO RELACIONES CLAVE...');
     
     // Relación providers -> orders
     if (tableStructures.providers?.exists && tableStructures.orders?.exists) {
@@ -100,13 +99,13 @@ export async function GET(request: NextRequest) {
           .limit(5);
 
         if (!poError && providerOrders) {
-          console.log('✅ Relación providers -> orders verificada');
+
           tableStructures.orders.relationships = {
             providers: 'provider_id -> providers.id'
           };
         }
       } catch (error) {
-        console.log('❌ No se pudo verificar relación providers -> orders');
+
       }
     }
 
@@ -119,13 +118,13 @@ export async function GET(request: NextRequest) {
           .limit(5);
 
         if (!pendingError && pendingData) {
-          console.log('✅ Relación orders -> pending_orders verificada');
+
           tableStructures.pending_orders.relationships = {
             orders: 'order_id -> orders.id'
           };
         }
       } catch (error) {
-        console.log('❌ No se pudo verificar relación orders -> pending_orders');
+
       }
     }
 
@@ -138,10 +137,10 @@ export async function GET(request: NextRequest) {
           .limit(3);
 
         if (!invoiceError && invoiceData) {
-          console.log('✅ Tabla invoice_order_assignment accesible');
+  
         }
       } catch (error) {
-        console.log('❌ No se pudo acceder a invoice_order_assignment');
+
       }
     }
 
@@ -154,10 +153,10 @@ export async function GET(request: NextRequest) {
           .limit(3);
 
         if (!docsError && docsData) {
-          console.log('✅ Tabla documents_with_access accesible');
+  
         }
       } catch (error) {
-        console.log('❌ No se pudo acceder a documents_with_access');
+
       }
     }
 
@@ -179,11 +178,11 @@ export async function GET(request: NextRequest) {
       }
     };
 
-    console.log('✅ Exploración completa finalizada exitosamente');
+
     return NextResponse.json(result);
 
   } catch (error) {
-    console.error('❌ Error general:', error);
+
     return NextResponse.json({
       success: false,
       error: 'Error interno del servidor',

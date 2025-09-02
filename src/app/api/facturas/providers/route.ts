@@ -24,7 +24,6 @@ export async function GET(request: NextRequest) {
       .order('name', { ascending: true });
 
     if (providersError) {
-      console.error('Error obteniendo proveedores:', providersError);
       return NextResponse.json({
         success: false,
         error: 'Error obteniendo proveedores',
@@ -39,7 +38,6 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error general:', error);
     return NextResponse.json({
       success: false,
       error: 'Error interno del servidor',

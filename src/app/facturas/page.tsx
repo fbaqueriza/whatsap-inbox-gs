@@ -80,7 +80,7 @@ export default function FacturasPage() {
         setProviders(providersData.providers);
       }
     } catch (error) {
-      console.error('Error fetching data:', error);
+      // Error fetching data
     } finally {
       setLoading(false);
     }

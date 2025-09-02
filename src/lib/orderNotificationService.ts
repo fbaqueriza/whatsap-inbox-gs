@@ -105,12 +105,8 @@ export class OrderNotificationService {
         return result;
       }
       
-             
-      
       // 🔧 PASO 1: NORMALIZACIÓN AUTOMÁTICA DEL NÚMERO DEL PROVEEDOR
-      console.log('🔧 DEBUG - Iniciando normalización del número:', provider.phone);
       const normalizedPhone = this.normalizePhoneNumber(provider.phone);
-      console.log('🔧 DEBUG - Número normalizado:', normalizedPhone);
       
       if (!normalizedPhone) {
         const error = `No se pudo normalizar el número: ${provider.phone}`;
@@ -128,7 +124,7 @@ export class OrderNotificationService {
         });
       }
 
-      // 🔧 PASO 2: ACTUALIZAR EL NÚMERO DEL PROVEEDOR EN LA BASE DE DATOS
+      // 🔧 CORRECCIÓN: ACTUALIZAR EL NÚMERO DEL PROVEEDOR EN LA BASE DE DATOS
       // Esto asegura que todos los números se almacenen en formato consistente
       if (provider.phone !== normalizedPhone) {
         const { error: updateError } = await supabase
@@ -147,37 +143,32 @@ export class OrderNotificationService {
               numeroNuevo: normalizedPhone
             });
           }
-          // Actualizar el objeto provider localmente
-          provider.phone = normalizedPhone;
+          // 🔧 CORRECCIÓN: NO modificar el objeto provider localmente
+          // Esto evita inconsistencias y race conditions
         }
       }
 
-              // Enviar template evio_orden con variables personalizadas
-        console.log('🔧 DEBUG - Preparando envío de template...');
-        const baseUrl = this.buildBaseUrl();
-        console.log('🔧 DEBUG - URL base detectada:', baseUrl);
+      // 🔧 PASO 2: ENVIAR TEMPLATE CON NÚMERO NORMALIZADO
+      const baseUrl = this.buildBaseUrl();
 
-        try {
-          // Preparar variables para el template evio_orden
-          // Según Meta Business Manager, evio_orden usa nombres específicos:
-          // 1. Header: "provider_name" (nombre del proveedor)
-          // 2. Body: "contact_name" (nombre de contacto del proveedor)
-          const templateVariables = {
-            'provider_name': provider?.name || 'Proveedor',
-            'contact_name': provider?.contact_name || provider?.name || 'Contacto'
-          };
-          
-          console.log('🔧 DEBUG - Variables del template:', templateVariables);
-          console.log('🔧 DEBUG - Número destino:', normalizedPhone);
-          console.log('🔧 DEBUG - Usuario ID:', userId);
+      try {
+        // Preparar variables para el template evio_orden
+        // Según Meta Business Manager, evio_orden usa nombres específicos:
+        // 1. Header: "provider_name" (nombre del proveedor)
+        // 2. Body: "contact_name" (nombre de contacto del proveedor)
+        const templateVariables = {
+          'provider_name': provider?.name || 'Proveedor',
+          'contact_name': provider?.contact_name || provider?.name || 'Contacto'
+        };
         
+
+      
         const templateResult = await this.sendTemplateToMeta(normalizedPhone, templateVariables, userId);
-        console.log('🔧 DEBUG - Resultado del template:', templateResult);
         result.templateSent = templateResult.success;
         
         if (!templateResult.success) {
           const errorMessage = templateResult.error || 'Error desconocido';
-          console.error('❌ DEBUG - Template falló:', errorMessage);
+          console.error('❌ Template falló:', errorMessage);
           
           // Manejo específico de errores de conexión
           if (errorMessage.includes('conexión') || errorMessage.includes('red')) {
@@ -203,8 +194,9 @@ export class OrderNotificationService {
         }
       }
 
-      // PASO 3: Guardar pedido pendiente de confirmación
+      // 🔧 PASO 3: Guardar pedido pendiente de confirmación CON NÚMERO NORMALIZADO
       try {
+        // 🔧 CORRECCIÓN: Usar SIEMPRE el número normalizado, no el del objeto provider
         const saveResult = await this.savePendingOrderAtomic(order, provider, normalizedPhone, userId, baseUrl);
         result.pendingOrderSaved = saveResult.success;
         if (!saveResult.success) {
@@ -224,17 +216,17 @@ export class OrderNotificationService {
       // 🔧 MEJORA: Considerar éxito si se guardó el pedido pendiente, incluso si el template falló
       result.success = result.templateSent || result.pendingOrderSaved;
       
-             // Log solo si hay errores o éxito completo
-       if (result.errors.length > 0) {
-         console.log('❌ Errores en notificación:', result.errors.length);
-         // 🔧 MEJORA: Log específico para errores de activación
-         const activationErrors = result.errors.filter(e => e.includes('activación manual'));
-         if (activationErrors.length > 0) {
-           console.log('⚠️ Errores de activación manual detectados:', activationErrors.length);
-         }
-       } else if (result.success) {
-         console.log('✅ Notificación completada');
-       }
+      // Log solo si hay errores o éxito completo
+      if (result.errors.length > 0) {
+        console.log('❌ Errores en notificación:', result.errors.length);
+        // 🔧 MEJORA: Log específico para errores de activación
+        const activationErrors = result.errors.filter(e => e.includes('activación manual'));
+        if (activationErrors.length > 0) {
+          console.log('⚠️ Errores de activación manual detectados:', activationErrors.length);
+        }
+      } else if (result.success) {
+        console.log('✅ Notificación completada');
+      }
 
       return result;
 
@@ -247,9 +239,6 @@ export class OrderNotificationService {
   }
 
   /**
-   * Envía template a Meta WhatsApp API
-   */
-  /**
    * Envía template a Meta WhatsApp API con manejo robusto de errores
    */
   private static async sendTemplateToMeta(
@@ -258,16 +247,14 @@ export class OrderNotificationService {
     userId: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      // 🔧 CORRECCIÓN: Detectar URL base automáticamente
-      const baseUrl = this.detectBaseUrl();
-      console.log('🔧 DEBUG - URL base para template:', baseUrl);
+      // 🔧 CORRECCIÓN: Usar buildBaseUrl de forma consistente
+      const baseUrl = this.buildBaseUrl();
       
       if (process.env.NODE_ENV === 'development') {
         console.log('📱 Enviando template evio_orden a Meta API...');
       }
       
       const apiUrl = `${baseUrl}/api/whatsapp/send`;
-      console.log('🔧 DEBUG - URL completa de la API:', apiUrl);
       
       const requestBody = {
         to: phone,
@@ -275,7 +262,6 @@ export class OrderNotificationService {
         templateVariables: templateVariables,
         userId: userId
       };
-      console.log('🔧 DEBUG - Cuerpo de la petición:', requestBody);
       
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -283,12 +269,6 @@ export class OrderNotificationService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestBody),
-      });
-
-      console.log('🔧 DEBUG - Respuesta HTTP recibida:', {
-        status: response.status,
-        statusText: response.statusText,
-        ok: response.ok
       });
 
       if (!response.ok) {
@@ -321,39 +301,7 @@ export class OrderNotificationService {
     }
   }
 
-  /**
-   * 🔧 CORRECCIÓN: Detecta automáticamente la URL base correcta
-   * Prioridad: NEXT_PUBLIC_APP_URL > VERCEL_URL > localhost
-   */
-  private static detectBaseUrl(): string {
-    // Cliente (navegador)
-    if (typeof window !== 'undefined') {
-      return window.location.origin;
-    }
-    
-    // Servidor - Prioridad 1: URL de producción configurada
-    if (process.env.NEXT_PUBLIC_APP_URL) {
-      return process.env.NEXT_PUBLIC_APP_URL;
-    }
-    
-    // Servidor - Prioridad 2: URL de Vercel
-    if (process.env.VERCEL_URL) {
-      return `https://${process.env.VERCEL_URL}`;
-    }
-    
-    // Servidor - Prioridad 3: URL de Vercel pública
-    if (process.env.NEXT_PUBLIC_VERCEL_URL) {
-      const vercelUrl = process.env.NEXT_PUBLIC_VERCEL_URL;
-      if (vercelUrl.startsWith('http://') || vercelUrl.startsWith('https://')) {
-        return vercelUrl;
-      }
-      return `https://${vercelUrl}`;
-    }
-    
-    // Fallback: localhost con puerto dinámico
-    const port = process.env.PORT || '3001';
-    return `http://localhost:${port}`;
-  }
+
 
   /**
    * Formatea mensajes de error de forma consistente
@@ -434,7 +382,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
      baseUrl: string
    ): Promise<{ success: boolean; error?: string }> {
      try {
-       // Validar datos antes de enviar
+       // 🔧 MEJORA: Validación simplificada y robusta
        if (!order.id || !provider.id || !normalizedPhone || !userId) {
          const missingData = [];
          if (!order.id) missingData.push('orderId');
@@ -446,22 +394,24 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return { success: false, error: `Datos faltantes: ${missingData.join(', ')}` };
        }
        
-       // 🔧 MEJORA: Verificar que el número esté normalizado
+       // 🔧 MEJORA: Verificación de normalización más robusta
        const expectedNormalized = this.normalizePhoneNumber(normalizedPhone);
-       if (!expectedNormalized || expectedNormalized !== normalizedPhone) {
-         console.error('❌ Número no está normalizado correctamente:', {
-           recibido: normalizedPhone,
-           esperado: expectedNormalized
-         });
-         return { success: false, error: 'Número no está normalizado correctamente' };
+       if (!expectedNormalized) {
+         console.error('❌ No se pudo normalizar el número recibido:', normalizedPhone);
+         return { success: false, error: 'No se pudo normalizar el número del proveedor' };
        }
        
-       console.log('💾 Guardando pedido pendiente con número normalizado:', {
-         orderId: order.id,
-         providerId: provider.id,
-         numeroNormalizado: normalizedPhone,
-         userId: userId
-       });
+       // 🔧 MEJORA: Log solo en desarrollo
+       if (process.env.NODE_ENV === 'development') {
+         console.log('💾 Guardando pedido pendiente:', {
+           orderId: order.id,
+           providerId: provider.id,
+           numeroNormalizado: expectedNormalized
+         });
+       }
+       
+       // 🔧 CORRECCIÓN: Usar el número normalizado validado
+       const finalPhone = expectedNormalized;
        
        const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
          method: 'POST',
@@ -471,7 +421,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          body: JSON.stringify({
            orderId: order.id,
            providerId: provider.id,
-           providerPhone: normalizedPhone, // 🔧 SIEMPRE USAR NÚMERO NORMALIZADO
+           providerPhone: finalPhone, // 🔧 SIEMPRE USAR NÚMERO NORMALIZADO VALIDADO
            userId: userId
          }),
        });
@@ -483,7 +433,12 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return { success: false, error: result.error || 'Error guardando pedido' };
        }
 
-       console.log('✅ Pedido pendiente guardado exitosamente con número normalizado:', normalizedPhone);
+       if (process.env.NODE_ENV === 'development') {
+         console.log('✅ Pedido pendiente guardado exitosamente:', {
+           orderId: order.id,
+           numeroNormalizado: finalPhone
+         });
+       }
        return { success: true };
 
      } catch (error) {
@@ -538,63 +493,51 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       const expectedNormalized = PhoneNumberService.normalizeUnified(providerPhone);
       console.log(`🔍 [${requestId}] Número normalizado esperado:`, expectedNormalized);
       
-      let pendingOrdersQuery = supabase
+      // 🔧 SIMPLIFICACIÓN: Buscar primero con el número exacto, luego con variantes
+      let pendingOrder = null;
+      
+      // 🔧 PASO 1: Búsqueda directa con el número exacto
+      const { data: exactMatch, error: exactError } = await supabase
         .from('pending_orders')
         .select('*')
         .or('status.eq.pending,status.eq.pending_confirmation')
+        .eq('provider_phone', providerPhone)
         .order('created_at', { ascending: false })
-        .limit(1);
-      
-      // 🔧 CORRECCIÓN: Buscar con todas las variantes del número usando OR dinámico
-      if (searchVariants.length > 0) {
-        // Construir query OR correctamente para Supabase
-        const orConditions = searchVariants.map(variant => `provider_phone.eq.${variant}`);
-        
-        console.log(`🔍 [${requestId}] Condiciones OR construidas:`, orConditions);
-        
-        // Usar .or() con la sintaxis correcta de Supabase
-        let finalQuery = supabase
-          .from('pending_orders')
-          .select('*')
-          .or('status.eq.pending,status.eq.pending_confirmation')
-          .order('created_at', { ascending: false })
-          .limit(1);
-        
-        // Aplicar OR para las variantes del número
-        if (orConditions.length === 1) {
-          finalQuery = finalQuery.eq('provider_phone', orConditions[0]);
-        } else if (orConditions.length > 1) {
-          // Para múltiples variantes, usar .or() con la sintaxis correcta
-          const orString = orConditions.map(condition => `provider_phone.eq.${condition}`).join(',');
-          finalQuery = finalQuery.or(orString);
-        }
-        
-        pendingOrdersQuery = finalQuery;
+        .limit(1)
+        .single();
+
+      if (!exactError && exactMatch) {
+        pendingOrder = exactMatch;
+        console.log(`🔍 [${requestId}] Pedido encontrado con búsqueda exacta:`, pendingOrder.id);
       } else {
-        // Búsqueda básica si no se puede normalizar
-        console.log(`⚠️ [${requestId}] Usando búsqueda básica con:`, providerPhone);
-        pendingOrdersQuery = pendingOrdersQuery.eq('provider_phone', providerPhone);
+        // 🔧 PASO 2: Si no hay coincidencia exacta, buscar con variantes
+        console.log(`🔍 [${requestId}] Búsqueda exacta falló, probando con variantes...`);
+        
+        for (const variant of searchVariants) {
+          if (variant === providerPhone) continue; // Ya probamos este
+          
+          const { data: variantMatch, error: variantError } = await supabase
+            .from('pending_orders')
+            .select('*')
+            .or('status.eq.pending,status.eq.pending_confirmation')
+            .eq('provider_phone', variant)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+          if (!variantError && variantMatch) {
+            pendingOrder = variantMatch;
+            console.log(`🔍 [${requestId}] Pedido encontrado con variante ${variant}:`, pendingOrder.id);
+            break;
+          }
+        }
       }
-      
-      console.log(`🔍 [${requestId}] Ejecutando query de búsqueda...`);
-      const { data: pendingOrders, error: pendingError } = await pendingOrdersQuery;
 
-      if (pendingError) {
-        console.error(`❌ [${requestId}] Error buscando pedidos pendientes:`, pendingError);
-        return false;
-      }
-
-      console.log(`🔍 [${requestId}] Resultado de búsqueda:`, {
-        found: pendingOrders?.length || 0,
-        orders: pendingOrders?.map(o => ({ id: o.id, provider_phone: o.provider_phone, status: o.status }))
-      });
-
-      if (!pendingOrders || pendingOrders.length === 0) {
+      if (!pendingOrder) {
         console.log(`⚠️ [${requestId}] No se encontraron pedidos pendientes para:`, providerPhone);
         return false;
       }
 
-      const pendingOrder = pendingOrders[0];
       console.log(`📋 [${requestId}] Pedido pendiente encontrado:`, {
         id: pendingOrder.id,
         order_id: pendingOrder.order_id,
@@ -1101,14 +1044,12 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
     // Cliente (navegador)
     if (typeof window !== 'undefined') {
       baseUrl = window.location.origin;
-      console.log(`[buildBaseUrl] Client-side URL: ${baseUrl}`);
       return baseUrl;
     }
     
     // 🔧 CORRECCIÓN: Priorizar NEXT_PUBLIC_APP_URL (URL de producción)
     if (process.env.NEXT_PUBLIC_APP_URL) {
       baseUrl = process.env.NEXT_PUBLIC_APP_URL;
-      console.log(`[buildBaseUrl] NEXT_PUBLIC_APP_URL: ${baseUrl}`);
       return baseUrl;
     }
     
@@ -1121,20 +1062,17 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       } else {
         baseUrl = `https://${vercelUrl}`;
       }
-      console.log(`[buildBaseUrl] NEXT_PUBLIC_VERCEL_URL: ${baseUrl}`);
       return baseUrl;
     }
     
     // Servidor - Vercel (URL única del deployment) - ÚLTIMA OPCIÓN
     if (process.env.VERCEL_URL) {
       baseUrl = `https://${process.env.VERCEL_URL}`;
-      console.log(`[buildBaseUrl] VERCEL_URL (fallback): ${baseUrl}`);
       return baseUrl;
     }
     
     // Fallback de producción
     baseUrl = 'https://gastronomy-saas.vercel.app';
-    console.warn(`[buildBaseUrl] Fallback URL: ${baseUrl}`);
     return baseUrl;
   }
 }

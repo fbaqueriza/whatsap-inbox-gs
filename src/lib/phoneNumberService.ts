@@ -222,7 +222,54 @@ export class PhoneNumberService {
    * @returns Array de variantes para búsqueda
    */
   static searchVariants(phone: string): string[] {
-    return this.normalizeForSearch(phone);
+    if (!phone || typeof phone !== 'string') {
+      return [];
+    }
+
+    const variants: string[] = [];
+    
+    // 🔧 VARIANTE 1: Número original tal como está
+    variants.push(phone);
+    
+    // 🔧 VARIANTE 2: Número sin el + si lo tiene
+    if (phone.startsWith('+')) {
+      variants.push(phone.substring(1));
+    } else {
+      variants.push(`+${phone}`);
+    }
+    
+    // 🔧 VARIANTE 3: Número normalizado estándar (CONSISTENTE CON LA NORMALIZACIÓN)
+    const normalized = this.normalizeUnified(phone);
+    if (normalized) {
+      variants.push(normalized);
+      
+      // 🔧 VARIANTE 4: Número normalizado sin el +
+      if (normalized.startsWith('+')) {
+        variants.push(normalized.substring(1));
+      }
+    }
+    
+    // 🔧 VARIANTE 5: Si el número original no empieza con +54, agregar variantes con +54
+    if (!phone.startsWith('+54') && !phone.startsWith('54')) {
+      // Agregar formato corto +54XXXXXXXXXX
+      const shortFormat = phone.startsWith('+') ? phone.substring(1) : phone;
+      if (shortFormat.length === 10) {
+        variants.push(`+54${shortFormat}`);
+      }
+    }
+    
+    // 🔧 VARIANTE 6: Si el número original empieza con +54, agregar variantes sin +
+    if (phone.startsWith('+54')) {
+      variants.push(phone.substring(1));
+    }
+    
+    // 🔧 VARIANTE 7: Si el número original empieza con 54, agregar variantes con +
+    if (phone.startsWith('54') && !phone.startsWith('+')) {
+      variants.push(`+${phone}`);
+    }
+    
+    // 🔧 MEJORA: Eliminar duplicados y mantener solo variantes únicas
+    return Array.from(new Set(variants));
   }
 
   /**

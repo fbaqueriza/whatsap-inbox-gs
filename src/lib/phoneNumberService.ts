@@ -24,7 +24,7 @@ export class PhoneNumberService {
     
     // 🔧 PASO 2: Verificar si ya está en formato largo +549XXXXXXXXXX
     if (cleaned.startsWith('+549') && cleaned.length === 13) {
-      return cleaned; // Ya está normalizado
+      return cleaned; // Ya está normalizado correctamente
     }
     
     // 🔧 PASO 3: Remover cualquier prefijo de país existente
@@ -32,6 +32,11 @@ export class PhoneNumberService {
       cleaned = cleaned.substring(3);
     } else if (cleaned.startsWith('54')) {
       cleaned = cleaned.substring(2);
+    }
+    
+    // 🔧 PASO 3.5: Si el número resultante tiene más de 10 dígitos, truncar a los últimos 10
+    if (cleaned.length > 10) {
+      cleaned = cleaned.substring(cleaned.length - 10);
     }
     
     // 🔧 PASO 4: Remover el 0 inicial si existe (código de área)

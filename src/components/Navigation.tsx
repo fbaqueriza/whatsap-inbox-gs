@@ -44,6 +44,7 @@ export default function Navigation() {
     { name: 'Proveedores', href: '/providers' },
     { name: 'Stock', href: '/stock' },
     { name: 'Pedidos', href: '/orders' },
+    { name: 'Facturas', href: '/facturas' },
   ];
 
   // Debug: Log del contador de navegación (solo en desarrollo)

@@ -276,7 +276,7 @@ async function processWhatsAppMessage(message: any, requestId: string) {
       timestamp
     });
 
-    // 🔧 MEJORA: Normalizar número de teléfono
+    // Normalizar número de teléfono
     let normalizedFrom = from;
     if (from && !from.startsWith('+')) {
       normalizedFrom = `+${from}`;
@@ -349,23 +349,20 @@ async function saveMessageWithUserId(contactId: string, content: string, timesta
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // 🔧 CORRECCIÓN: Usar normalización más permisiva para búsquedas
+    // Usar normalización más permisiva para búsquedas
     const searchVariants = PhoneNumberService.normalizeForSearch(contactId);
-    console.log(`🔍 [${requestId}] Variantes de búsqueda para ${contactId}:`, searchVariants);
     
     let providersQuery = supabase
       .from('providers')
       .select('user_id, phone');
     
-    // 🔧 MEJORA: Construir query dinámico con todas las variantes usando OR dinámico
+    // Construir query dinámico con todas las variantes usando OR dinámico
     if (searchVariants.length > 0) {
-      // 🔧 CORRECCIÓN: Construir query OR correctamente para Supabase
+      // Construir query OR correctamente para Supabase
       const orConditions = searchVariants.map(variant => `phone.eq.${variant}`).join(',');
-      console.log(`🔍 [${requestId}] Condiciones OR construidas:`, orConditions);
       providersQuery = providersQuery.or(orConditions);
     } else {
-      // 🔧 FALLBACK: Búsqueda básica si no se puede normalizar
-      console.log(`⚠️ [${requestId}] Usando búsqueda básica con:`, contactId);
+      // Búsqueda básica si no se puede normalizar
       providersQuery = providersQuery.or(`phone.eq.${contactId},phone.eq.${contactId.replace('+', '')}`);
     }
     

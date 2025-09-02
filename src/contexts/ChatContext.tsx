@@ -107,7 +107,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       
       const userProviderPhones = userProviders?.map(p => {
         let phone = p.phone as string;
-        // 🔧 CORRECCIÓN: Usar servicio centralizado de normalización
+        // Usar servicio centralizado de normalización
         const normalizedPhone = PhoneNumberService.normalizePhoneNumber(phone);
         return normalizedPhone || phone;
       }) || [];
@@ -131,7 +131,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           .filter((msg: any) => {
                     const contactId = normalizeContactIdentifier(msg.contact_id || msg.from);
         
-        // 🔧 CORRECCIÓN: Usar normalización más permisiva para comparaciones
+        // Usar normalización más permisiva para comparaciones
         const normalizedContactId = PhoneNumberService.normalizePhoneNumber(contactId) || contactId;
         const normalizedProviderPhones = userProviderPhones.map(phone => 
           PhoneNumberService.normalizePhoneNumber(phone) || phone

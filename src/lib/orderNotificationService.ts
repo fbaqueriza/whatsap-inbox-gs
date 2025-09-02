@@ -117,7 +117,7 @@ export class OrderNotificationService {
       }
       
       // 🔧 MEJORA: Log de normalización para debugging
-      if (provider.phone !== normalizedPhone) {
+      if (provider.phone !== normalizedPhone && process.env.NODE_ENV === 'development') {
         console.log('📱 Número normalizado automáticamente:', {
           original: provider.phone,
           normalizado: normalizedPhone,
@@ -137,11 +137,13 @@ export class OrderNotificationService {
           console.warn('⚠️ No se pudo actualizar el número del proveedor:', updateError);
           // No es crítico, continuar con el proceso
         } else {
-          console.log('✅ Número del proveedor actualizado en BD:', {
-            proveedor: provider.name,
-            numeroAnterior: provider.phone,
-            numeroNuevo: normalizedPhone
-          });
+          if (process.env.NODE_ENV === 'development') {
+            console.log('✅ Número del proveedor actualizado en BD:', {
+              proveedor: provider.name,
+              numeroAnterior: provider.phone,
+              numeroNuevo: normalizedPhone
+            });
+          }
           // Actualizar el objeto provider localmente
           provider.phone = normalizedPhone;
         }

@@ -29,7 +29,9 @@ export async function POST(request: NextRequest) {
     console.log(`🚀 [${requestId}] WEBHOOK INICIADO:`, new Date().toISOString());
     
     const body = await request.json();
-    console.log(`📥 [${requestId}] Webhook recibido:`, JSON.stringify(body, null, 2));
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`📥 [${requestId}] Webhook recibido:`, JSON.stringify(body, null, 2));
+    }
 
     // Verificar que es un mensaje de WhatsApp
     if (body.object === 'whatsapp_business_account') {

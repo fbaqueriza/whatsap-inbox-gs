@@ -9,7 +9,7 @@ import { ChatProvider } from '../../contexts/ChatContext';
 import { GlobalChatProvider } from '../../contexts/GlobalChatContext';
 import GlobalChatWrapper from '../../components/GlobalChatWrapper';
 import { useOrdersFlowRealtime } from '../../hooks/useSupabaseRealtime';
-import DebugPanel from '../../components/DebugPanel';
+
 
 // Lazy load components to reduce bundle size
 const SuggestedOrders = React.lazy(() => import('../../components/SuggestedOrders'));
@@ -530,8 +530,7 @@ function OrdersPage({ user }: OrdersPageProps) {
           providers={providers}
         />
         
-        {/* Panel de debug */}
-        <DebugPanel />
+
       </main>
     </div>
   );

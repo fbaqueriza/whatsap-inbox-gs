@@ -401,18 +401,6 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return { success: false, error: 'No se pudo normalizar el número del proveedor' };
        }
        
-       // 🔧 MEJORA: Log solo en desarrollo
-       if (process.env.NODE_ENV === 'development') {
-         console.log('💾 Guardando pedido pendiente:', {
-           orderId: order.id,
-           providerId: provider.id,
-           numeroNormalizado: expectedNormalized
-         });
-       }
-       
-       // 🔧 CORRECCIÓN: Usar el número normalizado validado
-       const finalPhone = expectedNormalized;
-       
        const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
          method: 'POST',
          headers: {
@@ -421,7 +409,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          body: JSON.stringify({
            orderId: order.id,
            providerId: provider.id,
-           providerPhone: finalPhone, // 🔧 SIEMPRE USAR NÚMERO NORMALIZADO VALIDADO
+           providerPhone: expectedNormalized,
            userId: userId
          }),
        });
@@ -433,12 +421,6 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return { success: false, error: result.error || 'Error guardando pedido' };
        }
 
-       if (process.env.NODE_ENV === 'development') {
-         console.log('✅ Pedido pendiente guardado exitosamente:', {
-           orderId: order.id,
-           numeroNormalizado: finalPhone
-         });
-       }
        return { success: true };
 
      } catch (error) {

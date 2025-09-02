@@ -108,7 +108,10 @@ export class OrderNotificationService {
              
       
       // 🔧 PASO 1: NORMALIZACIÓN AUTOMÁTICA DEL NÚMERO DEL PROVEEDOR
+      console.log('🔧 DEBUG - Iniciando normalización del número:', provider.phone);
       const normalizedPhone = this.normalizePhoneNumber(provider.phone);
+      console.log('🔧 DEBUG - Número normalizado:', normalizedPhone);
+      
       if (!normalizedPhone) {
         const error = `No se pudo normalizar el número: ${provider.phone}`;
         console.error('❌', error);
@@ -150,7 +153,9 @@ export class OrderNotificationService {
       }
 
               // Enviar template evio_orden con variables personalizadas
+        console.log('🔧 DEBUG - Preparando envío de template...');
         const baseUrl = this.buildBaseUrl();
+        console.log('🔧 DEBUG - URL base detectada:', baseUrl);
 
         try {
           // Preparar variables para el template evio_orden
@@ -161,12 +166,18 @@ export class OrderNotificationService {
             'provider_name': provider?.name || 'Proveedor',
             'contact_name': provider?.contact_name || provider?.name || 'Contacto'
           };
+          
+          console.log('🔧 DEBUG - Variables del template:', templateVariables);
+          console.log('🔧 DEBUG - Número destino:', normalizedPhone);
+          console.log('🔧 DEBUG - Usuario ID:', userId);
         
         const templateResult = await this.sendTemplateToMeta(normalizedPhone, templateVariables, userId);
+        console.log('🔧 DEBUG - Resultado del template:', templateResult);
         result.templateSent = templateResult.success;
         
         if (!templateResult.success) {
           const errorMessage = templateResult.error || 'Error desconocido';
+          console.error('❌ DEBUG - Template falló:', errorMessage);
           
           // Manejo específico de errores de conexión
           if (errorMessage.includes('conexión') || errorMessage.includes('red')) {
@@ -249,22 +260,35 @@ export class OrderNotificationService {
     try {
       // 🔧 CORRECCIÓN: Detectar URL base automáticamente
       const baseUrl = this.detectBaseUrl();
+      console.log('🔧 DEBUG - URL base para template:', baseUrl);
       
       if (process.env.NODE_ENV === 'development') {
         console.log('📱 Enviando template evio_orden a Meta API...');
       }
       
-      const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
+      const apiUrl = `${baseUrl}/api/whatsapp/send`;
+      console.log('🔧 DEBUG - URL completa de la API:', apiUrl);
+      
+      const requestBody = {
+        to: phone,
+        message: 'evio_orden',
+        templateVariables: templateVariables,
+        userId: userId
+      };
+      console.log('🔧 DEBUG - Cuerpo de la petición:', requestBody);
+      
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          to: phone,
-          message: 'evio_orden',
-          templateVariables: templateVariables,
-          userId: userId
-        }),
+        body: JSON.stringify(requestBody),
+      });
+
+      console.log('🔧 DEBUG - Respuesta HTTP recibida:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok
       });
 
       if (!response.ok) {
@@ -298,22 +322,35 @@ export class OrderNotificationService {
   }
 
   /**
-   * Detecta automáticamente la URL base correcta
+   * 🔧 CORRECCIÓN: Detecta automáticamente la URL base correcta
+   * Prioridad: NEXT_PUBLIC_APP_URL > VERCEL_URL > localhost
    */
   private static detectBaseUrl(): string {
-    // 🔧 MEJORA: Detección inteligente de URL base
+    // Cliente (navegador)
     if (typeof window !== 'undefined') {
-      // Cliente: usar la URL actual
       return window.location.origin;
     }
     
-    // Servidor: usar variables de entorno o detectar puerto
-    const envUrl = process.env.NEXT_PUBLIC_APP_URL;
-    if (envUrl) {
-      return envUrl;
+    // Servidor - Prioridad 1: URL de producción configurada
+    if (process.env.NEXT_PUBLIC_APP_URL) {
+      return process.env.NEXT_PUBLIC_APP_URL;
     }
     
-    // 🔧 CORRECCIÓN: Usar puerto 3001 en desarrollo
+    // Servidor - Prioridad 2: URL de Vercel
+    if (process.env.VERCEL_URL) {
+      return `https://${process.env.VERCEL_URL}`;
+    }
+    
+    // Servidor - Prioridad 3: URL de Vercel pública
+    if (process.env.NEXT_PUBLIC_VERCEL_URL) {
+      const vercelUrl = process.env.NEXT_PUBLIC_VERCEL_URL;
+      if (vercelUrl.startsWith('http://') || vercelUrl.startsWith('https://')) {
+        return vercelUrl;
+      }
+      return `https://${vercelUrl}`;
+    }
+    
+    // Fallback: localhost con puerto dinámico
     const port = process.env.PORT || '3001';
     return `http://localhost:${port}`;
   }

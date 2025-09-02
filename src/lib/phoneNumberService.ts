@@ -49,10 +49,10 @@ export class PhoneNumberService {
   }
 
   /**
-   * 🔍 NORMALIZACIÓN PARA BÚSQUEDAS: Genera variantes para búsquedas más permisivas
+   * 🔍 NORMALIZACIÓN UNIFICADA PARA BÚSQUEDAS: Genera variantes consistentes con la normalización principal
    * 
-   * Esta función es más permisiva que normalizePhoneNumber y genera múltiples variantes
-   * para asegurar que las búsquedas en la base de datos encuentren coincidencias
+   * Esta función genera variantes que son consistentes con normalizePhoneNumber
+   * para evitar inconsistencias entre guardado y búsqueda
    * 
    * @param phone - Número de teléfono en cualquier formato
    * @returns Array de variantes para búsqueda
@@ -74,7 +74,7 @@ export class PhoneNumberService {
       variants.push(`+${phone}`);
     }
     
-    // 🔧 VARIANTE 3: Número normalizado estándar
+    // 🔧 VARIANTE 3: Número normalizado estándar (CONSISTENTE)
     const normalized = this.normalizePhoneNumber(phone);
     if (normalized) {
       variants.push(normalized);
@@ -94,28 +94,21 @@ export class PhoneNumberService {
       }
     }
     
-    // 🔧 VARIANTE 6: Con 9 inicial (formato argentino común)
+    // 🔧 VARIANTE 6: Formato argentino con 9 inicial (CONSISTENTE con normalizePhoneNumber)
     if (cleaned.length >= 10) {
       const last10 = cleaned.slice(-10);
       if (/^\d{10}$/.test(last10)) {
-        variants.push(`9${last10}`);
-        variants.push(`+9${last10}`);
-      }
-    }
-    
-    // 🔧 VARIANTE 7: Con 54 + 9 + últimos 9 dígitos
-    if (cleaned.length >= 9) {
-      const last9 = cleaned.slice(-9);
-      if (/^\d{9}$/.test(last9)) {
-        variants.push(`549${last9}`);
-        variants.push(`+549${last9}`);
+        // 🔧 CORRECCIÓN: Usar el mismo formato que normalizePhoneNumber
+        // normalizePhoneNumber remueve el 9 inicial, así que NO lo incluimos aquí
+        // Solo incluimos el formato estándar +54XXXXXXXXXX
+        variants.push(`+54${last10}`);
       }
     }
     
     // 🔧 LIMPIEZA: Remover duplicados y valores vacíos
     const uniqueVariants = [...new Set(variants)]
       .filter(variant => variant && variant.trim().length > 0)
-      .slice(0, 10); // Limitar a 10 variantes máximo
+      .slice(0, 8); // Limitar a 8 variantes máximo para eficiencia
     
     return uniqueVariants;
   }
@@ -185,6 +178,145 @@ export class PhoneNumberService {
     
     return normalized;
   }
+
+  /**
+   * 🔧 NORMALIZACIÓN UNIFICADA: Función principal que debe usarse en todo el sistema
+   * 
+   * Esta función asegura consistencia entre guardado y búsqueda
+   * 
+   * @param phone - Número de teléfono en cualquier formato
+   * @returns Número normalizado en formato +54XXXXXXXXXX o null si no es válido
+   */
+  static normalizeUnified(phone: string): string | null {
+    return this.normalizePhoneNumber(phone);
+  }
+
+  /**
+   * 🔧 BÚSQUEDA UNIFICADA: Genera variantes para búsquedas consistentes
+   * 
+   * Esta función genera variantes que son consistentes con la normalización principal
+   * para evitar inconsistencias entre guardado y búsqueda
+   * 
+   * @param phone - Número de teléfono en cualquier formato
+   * @returns Array de variantes para búsqueda
+   */
+  static searchVariants(phone: string): string[] {
+    return this.normalizeForSearch(phone);
+  }
+
+  /**
+   * 🔧 MIGRACIÓN: Normaliza todos los números existentes en la base de datos
+   * 
+   * Esta función se puede ejecutar una vez para normalizar números existentes
+   * y asegurar consistencia en toda la base de datos
+   * 
+   * @param supabase - Cliente de Supabase
+   * @returns Resultado de la migración
+   */
+  static async migrateExistingPhoneNumbers(supabase: any): Promise<{
+    success: boolean;
+    totalProcessed: number;
+    totalNormalized: number;
+    errors: string[];
+  }> {
+    const result = {
+      success: false,
+      totalProcessed: 0,
+      totalNormalized: 0,
+      errors: [] as string[]
+    };
+
+    try {
+      console.log('🔄 Iniciando migración de números de teléfono existentes...');
+
+      // 🔧 PASO 1: Normalizar números en tabla providers
+      const { data: providers, error: providersError } = await supabase
+        .from('providers')
+        .select('id, phone, name');
+
+      if (providersError) {
+        result.errors.push(`Error obteniendo proveedores: ${providersError.message}`);
+        return result;
+      }
+
+      let providersNormalized = 0;
+      for (const provider of providers || []) {
+        if (provider.phone) {
+          const normalized = this.normalizeUnified(provider.phone);
+          if (normalized && normalized !== provider.phone) {
+            try {
+              const { error: updateError } = await supabase
+                .from('providers')
+                .update({ phone: normalized })
+                .eq('id', provider.id);
+
+              if (updateError) {
+                result.errors.push(`Error actualizando proveedor ${provider.name}: ${updateError.message}`);
+              } else {
+                providersNormalized++;
+                console.log(`✅ Proveedor ${provider.name} normalizado: ${provider.phone} → ${normalized}`);
+              }
+            } catch (error) {
+              result.errors.push(`Error procesando proveedor ${provider.name}: ${error}`);
+            }
+          }
+        }
+        result.totalProcessed++;
+      }
+
+      // 🔧 PASO 2: Normalizar números en tabla pending_orders
+      const { data: pendingOrders, error: pendingError } = await supabase
+        .from('pending_orders')
+        .select('id, provider_phone, order_id');
+
+      if (pendingError) {
+        result.errors.push(`Error obteniendo pedidos pendientes: ${pendingError.message}`);
+      } else {
+        let pendingNormalized = 0;
+        for (const order of pendingOrders || []) {
+          if (order.provider_phone) {
+            const normalized = this.normalizeUnified(order.provider_phone);
+            if (normalized && normalized !== order.provider_phone) {
+              try {
+                const { error: updateError } = await supabase
+                  .from('pending_orders')
+                  .update({ provider_phone: normalized })
+                  .eq('id', order.id);
+
+                if (updateError) {
+                  result.errors.push(`Error actualizando pedido pendiente ${order.order_id}: ${updateError.message}`);
+                } else {
+                  pendingNormalized++;
+                  console.log(`✅ Pedido pendiente ${order.order_id} normalizado: ${order.provider_phone} → ${normalized}`);
+                }
+              } catch (error) {
+                result.errors.push(`Error procesando pedido pendiente ${order.order_id}: ${error}`);
+              }
+            }
+          }
+          result.totalProcessed++;
+        }
+        result.totalNormalized += pendingNormalized;
+      }
+
+      result.totalNormalized += providersNormalized;
+      result.success = result.errors.length === 0;
+
+      console.log(`✅ Migración completada:`, {
+        totalProcesados: result.totalProcessed,
+        totalNormalizados: result.totalNormalized,
+        errores: result.errors.length
+      });
+
+      return result;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+      result.errors.push(`Error general en migración: ${errorMsg}`);
+      console.error('❌ Error en migración de números de teléfono:', error);
+      return result;
+    }
+  }
 }
 
 // 🔧 EXPORTAR FUNCIONES INDIVIDUALES PARA USO DIRECTO
@@ -193,3 +325,7 @@ export const normalizeForSearch = PhoneNumberService.normalizeForSearch;
 export const areEquivalent = PhoneNumberService.areEquivalent;
 export const isValidArgentineNumber = PhoneNumberService.isValidArgentineNumber;
 export const toReadableFormat = PhoneNumberService.toReadableFormat;
+
+// 🔧 EXPORTAR FUNCIONES UNIFICADAS (RECOMENDADAS)
+export const normalizeUnified = PhoneNumberService.normalizeUnified;
+export const searchVariants = PhoneNumberService.searchVariants;

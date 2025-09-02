@@ -105,12 +105,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       
-      const userProviderPhones = userProviders?.map(p => {
-        let phone = p.phone as string;
-        // Usar servicio centralizado de normalización
-        const normalizedPhone = PhoneNumberService.normalizePhoneNumber(phone);
-        return normalizedPhone || phone;
-      }) || [];
+              const userProviderPhones = userProviders?.map(p => {
+          let phone = p.phone as string;
+          // 🔧 CORRECCIÓN: Usar servicio centralizado unificado de normalización
+          const normalizedPhone = PhoneNumberService.normalizeUnified(phone);
+          return normalizedPhone || phone;
+        }) || [];
       
       // Actualizar el estado de proveedores del usuario
       setUserProviderPhones(userProviderPhones);

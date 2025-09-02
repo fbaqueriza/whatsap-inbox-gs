@@ -67,10 +67,10 @@ export class OrderNotificationService {
   }
 
   /**
-   * 🎯 USAR SERVICIO CENTRALIZADO: Normaliza un número de teléfono al formato requerido +54XXXXXXXXXX
+   * 🎯 USAR SERVICIO CENTRALIZADO UNIFICADO: Normaliza un número de teléfono al formato requerido +54XXXXXXXXXX
    */
   private static normalizePhoneNumber(phone: string): string | null {
-    return PhoneNumberService.normalizePhoneNumber(phone);
+    return PhoneNumberService.normalizeUnified(phone);
   }
 
   /**
@@ -107,7 +107,7 @@ export class OrderNotificationService {
       
              
       
-      // PASO 1: Normalizar número de teléfono
+      // 🔧 PASO 1: NORMALIZACIÓN AUTOMÁTICA DEL NÚMERO DEL PROVEEDOR
       const normalizedPhone = this.normalizePhoneNumber(provider.phone);
       if (!normalizedPhone) {
         const error = `No se pudo normalizar el número: ${provider.phone}`;
@@ -116,12 +116,36 @@ export class OrderNotificationService {
         return result;
       }
       
-                     // Log solo si hay cambio en la normalización
-        if (provider.phone !== normalizedPhone) {
-          if (process.env.NODE_ENV === 'development') {
-            console.log('📱 Número normalizado:', provider.phone, '→', normalizedPhone);
-          }
+      // 🔧 MEJORA: Log de normalización para debugging
+      if (provider.phone !== normalizedPhone) {
+        console.log('📱 Número normalizado automáticamente:', {
+          original: provider.phone,
+          normalizado: normalizedPhone,
+          proveedor: provider.name
+        });
+      }
+
+      // 🔧 PASO 2: ACTUALIZAR EL NÚMERO DEL PROVEEDOR EN LA BASE DE DATOS
+      // Esto asegura que todos los números se almacenen en formato consistente
+      if (provider.phone !== normalizedPhone) {
+        const { error: updateError } = await supabase
+          .from('providers')
+          .update({ phone: normalizedPhone })
+          .eq('id', provider.id);
+
+        if (updateError) {
+          console.warn('⚠️ No se pudo actualizar el número del proveedor:', updateError);
+          // No es crítico, continuar con el proceso
+        } else {
+          console.log('✅ Número del proveedor actualizado en BD:', {
+            proveedor: provider.name,
+            numeroAnterior: provider.phone,
+            numeroNuevo: normalizedPhone
+          });
+          // Actualizar el objeto provider localmente
+          provider.phone = normalizedPhone;
         }
+      }
 
               // Enviar template evio_orden con variables personalizadas
         const baseUrl = this.buildBaseUrl();
@@ -361,7 +385,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
   }
 
      /**
-    * Guarda pedido pendiente de confirmación de forma atómica
+    * Guarda pedido pendiente de confirmación de forma atómica CON NÚMERO NORMALIZADO
     */
    private static async savePendingOrderAtomic(
      order: Order,
@@ -383,6 +407,23 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return { success: false, error: `Datos faltantes: ${missingData.join(', ')}` };
        }
        
+       // 🔧 MEJORA: Verificar que el número esté normalizado
+       const expectedNormalized = this.normalizePhoneNumber(normalizedPhone);
+       if (!expectedNormalized || expectedNormalized !== normalizedPhone) {
+         console.error('❌ Número no está normalizado correctamente:', {
+           recibido: normalizedPhone,
+           esperado: expectedNormalized
+         });
+         return { success: false, error: 'Número no está normalizado correctamente' };
+       }
+       
+       console.log('💾 Guardando pedido pendiente con número normalizado:', {
+         orderId: order.id,
+         providerId: provider.id,
+         numeroNormalizado: normalizedPhone,
+         userId: userId
+       });
+       
        const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
          method: 'POST',
          headers: {
@@ -391,7 +432,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          body: JSON.stringify({
            orderId: order.id,
            providerId: provider.id,
-           providerPhone: normalizedPhone,
+           providerPhone: normalizedPhone, // 🔧 SIEMPRE USAR NÚMERO NORMALIZADO
            userId: userId
          }),
        });
@@ -403,7 +444,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return { success: false, error: result.error || 'Error guardando pedido' };
        }
 
-       console.log('✅ Pedido pendiente guardado exitosamente');
+       console.log('✅ Pedido pendiente guardado exitosamente con número normalizado:', normalizedPhone);
        return { success: true };
 
      } catch (error) {
@@ -449,10 +490,14 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      // 🔧 CORRECCIÓN: Usar normalización más permisiva para búsquedas
-      const searchVariants = PhoneNumberService.normalizeForSearch(providerPhone);
+      // 🔧 CORRECCIÓN: Usar normalización unificada para búsquedas
+      const searchVariants = PhoneNumberService.searchVariants(providerPhone);
       
       console.log(`🔍 [${requestId}] Variantes de búsqueda para ${providerPhone}:`, searchVariants);
+      
+      // 🔧 MEJORA: Log del número normalizado esperado para debugging
+      const expectedNormalized = PhoneNumberService.normalizeUnified(providerPhone);
+      console.log(`🔍 [${requestId}] Número normalizado esperado:`, expectedNormalized);
       
       let pendingOrdersQuery = supabase
         .from('pending_orders')
@@ -625,8 +670,8 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      // 🔧 MEJORA: Usar servicio centralizado de normalización
-      const normalizedPhone = PhoneNumberService.normalizePhoneNumber(providerPhone);
+      // 🔧 MEJORA: Usar servicio centralizado unificado de normalización
+      const normalizedPhone = PhoneNumberService.normalizeUnified(providerPhone);
       if (!normalizedPhone) {
         console.error('❌ No se pudo normalizar el número de teléfono:', providerPhone);
         return null;
@@ -634,9 +679,12 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       
       console.log('✅ Buscando con número normalizado:', providerPhone, '->', normalizedPhone);
       
-      // 🔧 MEJORA: Usar normalización más permisiva para búsquedas
-      const searchVariants = PhoneNumberService.normalizeForSearch(providerPhone);
+      // 🔧 MEJORA: Usar normalización unificada para búsquedas
+      const searchVariants = PhoneNumberService.searchVariants(providerPhone);
       console.log('🔍 Variantes de búsqueda:', searchVariants);
+      
+      // 🔧 MEJORA: Log del número normalizado esperado para debugging
+      console.log('🔍 Número normalizado esperado para búsqueda:', normalizedPhone);
       
       let query = supabase
         .from('pending_orders')

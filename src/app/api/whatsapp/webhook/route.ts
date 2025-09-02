@@ -349,8 +349,12 @@ async function saveMessageWithUserId(contactId: string, content: string, timesta
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Usar normalización más permisiva para búsquedas
-    const searchVariants = PhoneNumberService.normalizeForSearch(contactId);
+    // 🔧 CORRECCIÓN: Usar normalización unificada para búsquedas
+    const searchVariants = PhoneNumberService.searchVariants(contactId);
+    
+    // 🔧 MEJORA: Log del número normalizado esperado para debugging
+    const expectedNormalized = PhoneNumberService.normalizeUnified(contactId);
+    console.log(`🔍 [${requestId}] Número normalizado esperado para búsqueda:`, expectedNormalized);
     
     let providersQuery = supabase
       .from('providers')

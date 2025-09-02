@@ -170,10 +170,13 @@ export class MetaWhatsAppService {
           console.log('📤 [REAL] Enviando mensaje WhatsApp a:', to);
         }
 
-        // Normalizar número de teléfono
-        let normalizedPhone = to.replace(/[\s\-\(\)]/g, '');
-        if (!normalizedPhone.startsWith('+')) {
-          normalizedPhone = `+${normalizedPhone}`;
+        // 🔧 NORMALIZACIÓN UNIFICADA: Usar el servicio centralizado
+        const { PhoneNumberService } = await import('./phoneNumberService');
+        let normalizedPhone = PhoneNumberService.normalizeUnified(to);
+        
+        if (!normalizedPhone) {
+          console.error('❌ No se pudo normalizar el número de teléfono:', to);
+          return null;
         }
 
         const requestBody = {
@@ -362,9 +365,13 @@ export class MetaWhatsAppService {
           simulated: true
         };
       } else {
-        let normalizedPhone = to.replace(/[\s\-\(\)]/g, '');
-        if (!normalizedPhone.startsWith('+')) {
-          normalizedPhone = `+${normalizedPhone}`;
+        // 🔧 NORMALIZACIÓN UNIFICADA: Usar el servicio centralizado
+        const { PhoneNumberService } = await import('./phoneNumberService');
+        let normalizedPhone = PhoneNumberService.normalizeUnified(to);
+        
+        if (!normalizedPhone) {
+          console.error('❌ No se pudo normalizar el número de teléfono:', to);
+          return null;
         }
 
         // 🔧 CORRECCIÓN: Enviar template con o sin componentes según sea necesario
@@ -588,9 +595,13 @@ export class MetaWhatsAppService {
           simulated: true
         };
       } else {
-        let normalizedPhone = to.replace(/[\s\-\(\)]/g, '');
-        if (!normalizedPhone.startsWith('+')) {
-          normalizedPhone = `+${normalizedPhone}`;
+        // 🔧 NORMALIZACIÓN UNIFICADA: Usar el servicio centralizado
+        const { PhoneNumberService } = await import('./phoneNumberService');
+        let normalizedPhone = PhoneNumberService.normalizeUnified(to);
+        
+        if (!normalizedPhone) {
+          console.error('❌ No se pudo normalizar el número de teléfono:', to);
+          return null;
         }
 
         // 🔧 CORRECCIÓN: Enviar template con componentes dinámicos

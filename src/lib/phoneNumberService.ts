@@ -9,10 +9,10 @@
 
 export class PhoneNumberService {
   /**
-   * 🎯 REGLA PRINCIPAL: Normaliza cualquier número de teléfono al formato +54XXXXXXXXXX
+   * 🎯 REGLA PRINCIPAL: Normaliza cualquier número de teléfono al formato +549XXXXXXXXXX
    * 
    * @param phone - Número de teléfono en cualquier formato
-   * @returns Número normalizado en formato +54XXXXXXXXXX o null si no es válido
+   * @returns Número normalizado en formato +549XXXXXXXXXX o null si no es válido
    */
   static normalizePhoneNumber(phone: string): string | null {
     if (!phone || typeof phone !== 'string') {
@@ -22,30 +22,46 @@ export class PhoneNumberService {
     // 🔧 PASO 1: Limpiar el número (remover espacios, guiones, paréntesis, etc.)
     let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
     
-    // 🔧 PASO 2: Remover cualquier prefijo de país existente
+    // 🔧 PASO 2: Verificar si ya está en formato largo +549XXXXXXXXXX
+    if (cleaned.startsWith('+549') && cleaned.length === 13) {
+      return cleaned; // Ya está normalizado
+    }
+    
+    // 🔧 PASO 3: Remover cualquier prefijo de país existente
     if (cleaned.startsWith('+54')) {
       cleaned = cleaned.substring(3);
     } else if (cleaned.startsWith('54')) {
       cleaned = cleaned.substring(2);
     }
     
-    // 🔧 PASO 3: Remover el 9 inicial si existe (código de área móvil argentino)
-    if (cleaned.startsWith('9')) {
+    // 🔧 PASO 4: Remover el 0 inicial si existe (código de área)
+    if (cleaned.startsWith('0')) {
       cleaned = cleaned.substring(1);
     }
     
-    // 🔧 PASO 4: Verificar que tenga exactamente 10 dígitos
+    // 🔧 PASO 5: Verificar si ya tiene el 9 inicial (formato móvil argentino)
+    if (cleaned.startsWith('9') && cleaned.length === 10) {
+      // Ya tiene el 9 inicial, agregar +54 para formato largo
+      return `+549${cleaned}`;
+    }
+    
+    // 🔧 PASO 6: Si no tiene el 9 inicial, agregarlo
+    if (cleaned.length === 9) {
+      cleaned = `9${cleaned}`;
+    }
+    
+    // 🔧 PASO 7: Verificar que tenga exactamente 10 dígitos
     if (cleaned.length !== 10) {
       return null;
     }
     
-    // 🔧 PASO 5: Verificar que sean solo dígitos
+    // 🔧 PASO 8: Verificar que sean solo dígitos
     if (!/^\d{10}$/.test(cleaned)) {
       return null;
     }
     
-    // 🔧 PASO 6: Retornar en formato +54XXXXXXXXXX
-    return `+54${cleaned}`;
+    // 🔧 PASO 9: Retornar en formato +549XXXXXXXXXX (FORMATO LARGO UNIFICADO)
+    return `+549${cleaned}`;
   }
 
   /**
@@ -106,7 +122,7 @@ export class PhoneNumberService {
     }
     
     // 🔧 LIMPIEZA: Remover duplicados y valores vacíos
-    const uniqueVariants = [...new Set(variants)]
+    const uniqueVariants = Array.from(new Set(variants))
       .filter(variant => variant && variant.trim().length > 0)
       .slice(0, 8); // Limitar a 8 variantes máximo para eficiencia
     
@@ -154,8 +170,8 @@ export class PhoneNumberService {
       return false;
     }
     
-    // Verificar que tenga el formato +54XXXXXXXXXX
-    return /^\+54\d{10}$/.test(normalized);
+    // Verificar que tenga el formato +549XXXXXXXXXX (FORMATO LARGO)
+    return /^\+549\d{10}$/.test(normalized);
   }
 
   /**
@@ -171,9 +187,9 @@ export class PhoneNumberService {
     }
     
     // Formato: +54 9 XX XXXX XXXX
-    const match = normalized.match(/^\+54(\d{1})(\d{2})(\d{4})(\d{4})$/);
+    const match = normalized.match(/^\+549(\d{2})(\d{4})(\d{4})$/);
     if (match) {
-      return `+54 ${match[1]} ${match[2]} ${match[3]} ${match[4]}`;
+      return `+54 9 ${match[1]} ${match[2]} ${match[3]}`;
     }
     
     return normalized;

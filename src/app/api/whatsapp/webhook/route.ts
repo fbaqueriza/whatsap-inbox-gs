@@ -474,6 +474,32 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
     
     console.log(`✅ [${requestId}] Factura asociada exitosamente a orden ${orderToUpdate.order_number}`);
     
+    // 🔧 NUEVA FUNCIONALIDAD: Guardar mensaje de factura en el chat
+    try {
+      const messageSid = `invoice_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      const { error: messageError } = await supabase
+        .from('whatsapp_messages')
+        .insert([{
+          content: `📎 Factura recibida para orden ${orderToUpdate.order_number}`,
+          message_type: 'received',
+          status: 'delivered',
+          contact_id: providerPhone,
+          user_id: null, // Mensaje del proveedor
+          message_sid: messageSid,
+          timestamp: new Date().toISOString(),
+          created_at: new Date().toISOString()
+        }]);
+      
+      if (messageError) {
+        console.error(`❌ [${requestId}] Error guardando mensaje de factura:`, messageError);
+      } else {
+        console.log(`✅ [${requestId}] Mensaje de factura guardado en chat:`, messageSid);
+      }
+    } catch (error) {
+      console.error(`❌ [${requestId}] Error guardando mensaje de factura:`, error);
+    }
+    
     return {
       success: true,
       orderId: orderToUpdate.id,

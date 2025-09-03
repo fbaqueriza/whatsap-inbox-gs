@@ -87,17 +87,31 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       // 🔧 CORRECCIÓN: Para mensajes sin user_id (del proveedor), verificar que el contact_id corresponda a un proveedor del usuario
       if (!newMessage.user_id && currentUserId) {
         try {
-          const { data: provider } = await supabase
+          // 🔧 MEJORA: Búsqueda más flexible para proveedores
+          const { data: providers } = await supabase
             .from('providers')
-            .select('id')
-            .eq('user_id', currentUserId)
-            .eq('phone', newMessage.contact_id)
-            .single();
+            .select('id, phone')
+            .eq('user_id', currentUserId);
           
-          if (!provider) {
-            return; // No es un proveedor del usuario actual
+          if (providers && providers.length > 0) {
+            // 🔧 MEJORA: Verificar si el contact_id coincide con algún proveedor del usuario
+            const isProvider = providers.some(provider => {
+              const normalizedProviderPhone = provider.phone.replace(/\D/g, '');
+              const normalizedContactId = newMessage.contact_id.replace(/\D/g, '');
+              return normalizedProviderPhone.includes(normalizedContactId.slice(-8)) || 
+                     normalizedContactId.includes(normalizedProviderPhone.slice(-8));
+            });
+            
+            if (!isProvider) {
+              console.log(`🔍 [RealtimeService] Contacto ${newMessage.contact_id} no es proveedor del usuario ${currentUserId}`);
+              return; // No es un proveedor del usuario actual
+            }
+          } else {
+            console.log(`🔍 [RealtimeService] Usuario ${currentUserId} no tiene proveedores`);
+            return;
           }
         } catch (error) {
+          console.error('Error verificando proveedores:', error);
           return; // Error o no es un proveedor del usuario actual
         }
       }

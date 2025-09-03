@@ -119,10 +119,39 @@ export default function FacturasPage() {
   };
 
   // 🔧 NUEVA FUNCIÓN: Abrir modal de subida
-  const openUploadModal = (order: PendingOrder) => {
-    setSelectedOrder(order);
-    setShowUploadModal(true);
-    setUploadMessage('');
+  const openUploadModal = (order: PendingOrder | any) => {
+    // 🔧 CORRECCIÓN: Manejar tanto órdenes pendientes como facturas ya procesadas
+    if (order.provider_id === 'unknown') {
+      // Es una factura ya procesada, buscar la orden real
+      fetch(`/api/facturas/invoices`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.invoices) {
+            const realOrder = data.invoices.find((inv: any) => inv.id === order.id);
+            if (realOrder) {
+              setSelectedOrder({
+                id: realOrder.id,
+                order_number: realOrder.order_number,
+                provider_name: realOrder.provider_name,
+                total_amount: realOrder.total_amount,
+                currency: realOrder.currency,
+                status: realOrder.status,
+                created_at: realOrder.created_at,
+                desired_delivery_date: realOrder.due_date,
+                provider_id: realOrder.provider_id || 'unknown'
+              });
+              setShowUploadModal(true);
+              setUploadMessage('');
+            }
+          }
+        })
+        .catch(console.error);
+    } else {
+      // Es una orden pendiente normal
+      setSelectedOrder(order);
+      setShowUploadModal(true);
+      setUploadMessage('');
+    }
   };
 
   // 🔧 NUEVA FUNCIÓN: Cerrar modal
@@ -468,6 +497,23 @@ export default function FacturasPage() {
                   <p className="text-sm text-gray-600">
                     <strong>Monto:</strong> {selectedOrder.currency} {selectedOrder.total_amount?.toLocaleString()}
                   </p>
+                  <p className="text-sm text-gray-600">
+                    <strong>Estado:</strong> {selectedOrder.status}
+                  </p>
+                  
+                  {/* 🔧 NUEVO: Mostrar enlace a factura si ya está procesada */}
+                  {selectedOrder.provider_id === 'unknown' && (
+                    <div className="mt-2 pt-2 border-t border-gray-200">
+                      <p className="text-xs text-gray-500 mb-2">Esta factura ya fue procesada por WhatsApp</p>
+                      <a 
+                        href={`/api/facturas/invoices`}
+                        target="_blank"
+                        className="inline-flex items-center px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full hover:bg-green-200 transition-colors"
+                      >
+                        📋 Ver Detalles Completos
+                      </a>
+                    </div>
+                  )}
                 </div>
               )}
 

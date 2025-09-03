@@ -738,6 +738,37 @@ export default function IntegratedChatPanel({
                          )}
                          <div className="whitespace-pre-wrap">
                            {message.content}
+                           
+                           {/* 🔧 NUEVO: Mostrar enlace a factura si existe */}
+                           {message.content && message.content.includes('Factura recibida') && (
+                             <div className="mt-2 pt-2 border-t border-gray-200">
+                               <button
+                                 onClick={() => {
+                                   // Buscar la orden más reciente del proveedor para obtener el receipt_url
+                                   const currentContactPhone = currentContact?.phone;
+                                   if (currentContactPhone) {
+                                     // Hacer fetch de la orden más reciente
+                                     fetch('/api/facturas/invoices')
+                                       .then(res => res.json())
+                                       .then(data => {
+                                         if (data.success && data.invoices) {
+                                           const latestInvoice = data.invoices.find((inv: any) => 
+                                             inv.provider_name === currentContact?.name
+                                           );
+                                           if (latestInvoice?.receipt_url) {
+                                             window.open(latestInvoice.receipt_url, '_blank');
+                                           }
+                                         }
+                                       })
+                                       .catch(console.error);
+                                   }
+                                 }}
+                                 className="inline-flex items-center px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full hover:bg-blue-200 transition-colors"
+                               >
+                                 📎 Ver Factura
+                               </button>
+                             </div>
+                           )}
                          </div>
                          <div className={`text-xs mt-1 flex items-center justify-between ${
                            message.type === 'sent' ? 'text-green-100' : 'text-gray-500'

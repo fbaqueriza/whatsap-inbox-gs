@@ -374,16 +374,28 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
     let mediaUrl = '';
     let mediaType = '';
     
+    console.log(`🔍 [${requestId}] Estructura del mensaje multimedia:`, JSON.stringify(media, null, 2));
+    
     if (media.image) {
-      mediaUrl = media.image.link;
+      mediaUrl = media.image.link || media.image.url || media.image.id;
       mediaType = 'image';
+      console.log(`🖼️ [${requestId}] Imagen detectada:`, { link: media.image.link, url: media.image.url, id: media.image.id });
     } else if (media.document) {
-      mediaUrl = media.document.link;
+      mediaUrl = media.document.link || media.document.url || media.document.id;
       mediaType = media.document.mime_type || 'document';
+      console.log(`📄 [${requestId}] Documento detectado:`, { link: media.document.link, url: media.document.url, id: media.document.id });
     }
     
+    // Intentar obtener URL de diferentes ubicaciones posibles
     if (!mediaUrl) {
-      return { success: false, error: 'No se pudo obtener URL del archivo' };
+      // Buscar en campos alternativos
+      if (media.id) {
+        mediaUrl = `https://graph.facebook.com/v18.0/${media.id}`;
+        console.log(`🔗 [${requestId}] Usando ID como URL alternativa:`, mediaUrl);
+      } else {
+        console.log(`❌ [${requestId}] No se pudo obtener URL del archivo. Estructura:`, JSON.stringify(media, null, 2));
+        return { success: false, error: 'No se pudo obtener URL del archivo' };
+      }
     }
     
     console.log(`📎 [${requestId}] Archivo detectado:`, { mediaUrl, mediaType, providerPhone });

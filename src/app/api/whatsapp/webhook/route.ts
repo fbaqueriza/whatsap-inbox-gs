@@ -309,13 +309,18 @@ async function processWhatsAppMessage(message: any, requestId: string) {
     }
 
     // 🔧 FUNCIONALIDAD EXISTENTE: Guardar mensaje con user_id asignado
-    const saveResult = await saveMessageWithUserId(normalizedFrom, text?.body, timestamp, requestId);
-    
-    if (saveResult.success) {
-      console.log(`✅ [${requestId}] Mensaje guardado con user_id: ${saveResult.userId}`);
+    // Solo guardar mensaje si hay contenido de texto
+    if (text?.body) {
+      const saveResult = await saveMessageWithUserId(normalizedFrom, text.body, timestamp, requestId);
+      
+      if (saveResult.success) {
+        console.log(`✅ [${requestId}] Mensaje guardado con user_id: ${saveResult.userId}`);
+      } else {
+        console.log(`❌ [${requestId}] Error guardando mensaje: ${saveResult.error}`);
+        return { success: false, error: saveResult.error };
+      }
     } else {
-      console.log(`❌ [${requestId}] Error guardando mensaje: ${saveResult.error}`);
-      return { success: false, error: saveResult.error };
+      console.log(`ℹ️ [${requestId}] No hay contenido de texto para guardar`);
     }
 
     // Procesar respuesta del proveedor (solo para texto)

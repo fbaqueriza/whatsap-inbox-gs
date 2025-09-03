@@ -369,6 +369,7 @@ async function processWhatsAppMessage(message: any, requestId: string) {
 async function processMediaAsInvoice(providerPhone: string, media: any, requestId: string) {
   try {
     console.log(`📎 [${requestId}] Procesando archivo multimedia como factura...`);
+    console.log(`📱 [${requestId}] Número de teléfono recibido:`, providerPhone);
     
     // Obtener URL del archivo desde WhatsApp
     let mediaUrl = '';
@@ -407,12 +408,24 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
     
-    // Normalizar número para búsqueda
+    // 🔧 MEJORA: Búsqueda más robusta de proveedores
     const { PhoneNumberService } = await import('../../../../lib/phoneNumberService');
-    const searchVariants = PhoneNumberService.searchVariants(providerPhone);
     
+    // Normalizar el número recibido
+    const normalizedPhone = PhoneNumberService.normalizeUnified(providerPhone);
+    console.log(`🔧 [${requestId}] Número normalizado:`, normalizedPhone);
+    
+    // Generar variantes de búsqueda
+    const searchVariants = PhoneNumberService.searchVariants(providerPhone);
+    console.log(`🔍 [${requestId}] Variantes de búsqueda:`, searchVariants);
+    
+    // 🔧 MEJORA: Búsqueda más eficiente con OR lógico
     let provider = null;
+    
+    // Primero intentar con búsqueda exacta por cada variante
     for (const variant of searchVariants) {
+      console.log(`🔍 [${requestId}] Buscando proveedor con variante:`, variant);
+      
       const { data: providerData, error: providerError } = await supabase
         .from('providers')
         .select('id, name, phone')
@@ -421,12 +434,57 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
       
       if (!providerError && providerData) {
         provider = providerData;
-        console.log(`✅ [${requestId}] Proveedor encontrado:`, provider.name);
+        console.log(`✅ [${requestId}] Proveedor encontrado con búsqueda exacta:`, provider.name, `(${provider.phone})`);
         break;
       }
     }
     
+    // 🔧 MEJORA: Si no se encuentra, intentar búsqueda más flexible
     if (!provider) {
+      console.log(`⚠️ [${requestId}] No se encontró proveedor con búsqueda exacta, intentando búsqueda flexible...`);
+      
+      // Búsqueda por similitud de números (últimos 8-10 dígitos)
+      const lastDigits = providerPhone.replace(/\D/g, '').slice(-8);
+      if (lastDigits.length >= 8) {
+        console.log(`🔍 [${requestId}] Buscando por últimos dígitos:`, lastDigits);
+        
+        const { data: providers, error: searchError } = await supabase
+          .from('providers')
+          .select('id, name, phone')
+          .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`);
+        
+        if (!searchError && providers && providers.length > 0) {
+          // Encontrar la mejor coincidencia
+          const bestMatch = providers.find(p => {
+            const providerDigits = p.phone.replace(/\D/g, '').slice(-8);
+            return providerDigits === lastDigits;
+          });
+          
+          if (bestMatch) {
+            provider = bestMatch;
+            console.log(`✅ [${requestId}] Proveedor encontrado con búsqueda flexible:`, provider.name, `(${provider.phone})`);
+          }
+        }
+      }
+    }
+    
+    // 🔧 MEJORA: Si aún no se encuentra, mostrar información de debug
+    if (!provider) {
+      console.log(`❌ [${requestId}] No se pudo encontrar proveedor. Información de debug:`);
+      console.log(`📱 [${requestId}] Número recibido:`, providerPhone);
+      console.log(`🔧 [${requestId}] Número normalizado:`, normalizedPhone);
+      console.log(`🔍 [${requestId}] Variantes de búsqueda:`, searchVariants);
+      
+      // Intentar obtener todos los proveedores para debug
+      const { data: allProviders, error: debugError } = await supabase
+        .from('providers')
+        .select('id, name, phone')
+        .limit(5);
+      
+      if (!debugError && allProviders) {
+        console.log(`🔍 [${requestId}] Primeros 5 proveedores en BD:`, allProviders.map(p => ({ name: p.name, phone: p.phone })));
+      }
+      
       return { success: false, error: 'Proveedor no encontrado' };
     }
     
@@ -440,6 +498,7 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
       .limit(1);
     
     if (orderError || !latestOrder || latestOrder.length === 0) {
+      console.log(`⚠️ [${requestId}] No se encontraron órdenes pendientes para proveedor:`, provider.name);
       return { success: false, error: 'No se encontraron órdenes pendientes para este proveedor' };
     }
     
@@ -538,59 +597,99 @@ async function downloadMediaFromWhatsApp(mediaUrl: string, requestId: string) {
     // Obtener token de acceso de WhatsApp
     const accessToken = process.env.WHATSAPP_API_KEY;
     if (!accessToken) {
+      console.error(`❌ [${requestId}] Token de WhatsApp no configurado`);
       return { data: null, error: 'Token de WhatsApp no configurado' };
     }
     
-    // Descargar archivo
-    const response = await fetch(mediaUrl, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-    
-    if (!response.ok) {
-      return { data: null, error: `Error HTTP ${response.status} descargando archivo` };
+    // 🔧 MEJORA: Validar URL antes de descargar
+    if (!mediaUrl || !mediaUrl.startsWith('http')) {
+      console.error(`❌ [${requestId}] URL de archivo inválida:`, mediaUrl);
+      return { data: null, error: 'URL de archivo inválida' };
     }
     
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    console.log(`🔐 [${requestId}] Iniciando descarga con token:`, accessToken.substring(0, 10) + '...');
     
-    console.log(`✅ [${requestId}] Archivo descargado exitosamente:`, buffer.length, 'bytes');
+    // Descargar archivo con timeout y headers apropiados
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
     
-    return { data: buffer, error: null };
+    try {
+      const response = await fetch(mediaUrl, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'User-Agent': 'GastronomySaaS/1.0'
+        },
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'No se pudo leer respuesta');
+        console.error(`❌ [${requestId}] Error HTTP ${response.status} descargando archivo:`, errorText);
+        return { data: null, error: `Error HTTP ${response.status}: ${response.statusText}` };
+      }
+      
+      const contentType = response.headers.get('content-type');
+      const contentLength = response.headers.get('content-length');
+      
+      console.log(`📊 [${requestId}] Respuesta recibida:`, {
+        status: response.status,
+        contentType,
+        contentLength: contentLength ? `${contentLength} bytes` : 'Desconocido'
+      });
+      
+      // 🔧 MEJORA: Validar tipo de contenido
+      if (contentType && !contentType.includes('image') && !contentType.includes('pdf') && !contentType.includes('application')) {
+        console.warn(`⚠️ [${requestId}] Tipo de contenido inesperado:`, contentType);
+      }
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      
+      console.log(`✅ [${requestId}] Archivo descargado exitosamente:`, {
+        bytes: buffer.length,
+        kilobytes: (buffer.length / 1024).toFixed(2),
+        contentType
+      });
+      
+      return { data: buffer, error: null };
+      
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      
+      if (fetchError.name === 'AbortError') {
+        console.error(`⏰ [${requestId}] Timeout descargando archivo (30s)`);
+        return { data: null, error: 'Timeout descargando archivo' };
+      }
+      
+      throw fetchError;
+    }
     
   } catch (error) {
     console.error(`❌ [${requestId}] Error descargando archivo:`, error);
-    return { data: null, error: error instanceof Error ? error.message : 'Error desconocido' };
+    
+    // 🔧 MEJORA: Clasificar tipos de error
+    let errorMessage = 'Error desconocido descargando archivo';
+    
+    if (error instanceof Error) {
+      if (error.message.includes('fetch')) {
+        errorMessage = 'Error de red al descargar archivo';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Timeout al descargar archivo';
+      } else if (error.message.includes('unauthorized')) {
+        errorMessage = 'No autorizado para descargar archivo';
+      } else {
+        errorMessage = error.message;
+      }
+    }
+    
+    return { data: null, error: errorMessage };
   }
 }
 
-// 🔧 FUNCIÓN AUXILIAR: Enviar confirmación de factura recibida
-async function sendInvoiceConfirmation(providerPhone: string, orderNumber: string, requestId: string) {
-  try {
-    console.log(`📤 [${requestId}] Enviando confirmación de factura recibida...`);
-    
-    const { MetaWhatsAppService } = await import('../../../../lib/metaWhatsAppService');
-    const metaService = new MetaWhatsAppService();
-    
-    // 🔧 SOLO confirmación simple, SIN detalles del pedido
-    const message = `✅ *Factura recibida exitosamente*\n\n` +
-                   `📋 Orden: ${orderNumber}\n` +
-                   `📎 Documento procesado y asociado\n\n` +
-                   `Gracias por enviar la factura.`;
-    
-    const result = await metaService.sendMessage(providerPhone, message);
-    
-    if (result) {
-      console.log(`✅ [${requestId}] Confirmación enviada exitosamente`);
-    } else {
-      console.log(`⚠️ [${requestId}] No se pudo enviar confirmación`);
-    }
-    
-  } catch (error) {
-    console.error(`❌ [${requestId}] Error enviando confirmación:`, error);
-  }
-}
+// 🔧 FUNCIÓN ELIMINADA: sendInvoiceConfirmation ya no se usa
+// Se eliminó para simplificar el flujo y evitar confirmaciones innecesarias
 
 // 🔧 FUNCIÓN MEJORADA: Guardar mensaje con user_id asignado automáticamente
 async function saveMessageWithUserId(contactId: string, content: string, timestamp: string, requestId: string) {
@@ -607,40 +706,70 @@ async function saveMessageWithUserId(contactId: string, content: string, timesta
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // 🔧 CORRECCIÓN: Usar normalización unificada para búsquedas
+    // 🔧 MEJORA: Usar normalización unificada para búsquedas
+    const { PhoneNumberService } = await import('../../../../lib/phoneNumberService');
     const searchVariants = PhoneNumberService.searchVariants(contactId);
     
     // 🔧 MEJORA: Log del número normalizado esperado para debugging
     const expectedNormalized = PhoneNumberService.normalizeUnified(contactId);
     console.log(`🔍 [${requestId}] Número normalizado esperado para búsqueda:`, expectedNormalized);
+    console.log(`🔍 [${requestId}] Variantes de búsqueda:`, searchVariants);
     
-    let providersQuery = supabase
-      .from('providers')
-      .select('user_id, phone');
-    
-    // Construir query dinámico con todas las variantes usando OR dinámico
-    if (searchVariants.length > 0) {
-      // Construir query OR correctamente para Supabase
-      const orConditions = searchVariants.map(variant => `phone.eq.${variant}`).join(',');
-      providersQuery = providersQuery.or(orConditions);
-    } else {
-      // Búsqueda básica si no se puede normalizar
-      providersQuery = providersQuery.or(`phone.eq.${contactId},phone.eq.${contactId.replace('+', '')}`);
-    }
-    
-    const { data: providers, error: providersError } = await providersQuery;
-
-    if (providersError) {
-      console.error(`❌ [${requestId}] Error buscando proveedor:`, providersError);
-      return { success: false, error: 'Error buscando proveedor' };
-    }
-
     let userId = null;
-    if (providers && providers.length > 0) {
-      userId = providers[0].user_id; // Este es el user_id del usuario de la app
-      console.log(`✅ [${requestId}] Encontrado usuario de la app ${userId} para proveedor ${contactId}`);
-    } else {
+    
+    // 🔧 MEJORA: Búsqueda más robusta de proveedores
+    if (searchVariants.length > 0) {
+      // Buscar por cada variante hasta encontrar un proveedor
+      for (const variant of searchVariants) {
+        console.log(`🔍 [${requestId}] Buscando proveedor con variante:`, variant);
+        
+        const { data: provider, error: providerError } = await supabase
+          .from('providers')
+          .select('user_id, phone, name')
+          .eq('phone', variant)
+          .single();
+        
+        if (!providerError && provider) {
+          userId = provider.user_id;
+          console.log(`✅ [${requestId}] Proveedor encontrado:`, provider.name, `(${provider.phone}) - User ID:`, userId);
+          break;
+        }
+      }
+    }
+    
+    // 🔧 MEJORA: Si no se encuentra, intentar búsqueda más flexible
+    if (!userId) {
+      console.log(`⚠️ [${requestId}] No se encontró proveedor con búsqueda exacta, intentando búsqueda flexible...`);
+      
+      // Búsqueda por similitud de números (últimos 8-10 dígitos)
+      const lastDigits = contactId.replace(/\D/g, '').slice(-8);
+      if (lastDigits.length >= 8) {
+        console.log(`🔍 [${requestId}] Buscando por últimos dígitos:`, lastDigits);
+        
+        const { data: providers, error: searchError } = await supabase
+          .from('providers')
+          .select('user_id, phone, name')
+          .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`);
+        
+        if (!searchError && providers && providers.length > 0) {
+          // Encontrar la mejor coincidencia
+          const bestMatch = providers.find(p => {
+            const providerDigits = p.phone.replace(/\D/g, '').slice(-8);
+            return providerDigits === lastDigits;
+          });
+          
+          if (bestMatch) {
+            userId = bestMatch.user_id;
+            console.log(`✅ [${requestId}] Proveedor encontrado con búsqueda flexible:`, bestMatch.name, `(${bestMatch.phone}) - User ID:`, userId);
+          }
+        }
+      }
+    }
+
+    if (!userId) {
       console.log(`⚠️ [${requestId}] No se encontró usuario de la app para proveedor ${contactId}`);
+    } else {
+      console.log(`✅ [${requestId}] Encontrado usuario de la app ${userId} para proveedor ${contactId}`);
     }
 
     // Guardar mensaje con user_id del usuario de la app

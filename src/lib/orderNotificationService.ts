@@ -1,4 +1,5 @@
 import { Order, OrderItem, Provider } from '../types';
+import { PhoneNumberService } from './phoneNumberService';
 
 interface OrderNotificationData {
   order: Order;
@@ -66,56 +67,10 @@ export class OrderNotificationService {
   }
 
   /**
-   * Normaliza un número de teléfono al formato requerido +54XXXXXXXXXX
+   * 🎯 USAR SERVICIO CENTRALIZADO UNIFICADO: Normaliza un número de teléfono al formato requerido +54XXXXXXXXXX
    */
   private static normalizePhoneNumber(phone: string): string | null {
-    if (!phone) return null;
-    
-    // Remover espacios, guiones, paréntesis y otros caracteres
-    let normalized = phone.replace(/[\s\-\(\)]/g, '');
-    
-    // Si ya empieza con +54, verificar que tenga el formato correcto
-    if (normalized.startsWith('+54')) {
-      if (normalized.length >= 12 && normalized.length <= 14) {
-        return normalized;
-      }
-    }
-    
-    // Si empieza con 54 (sin +), agregar +
-    if (normalized.startsWith('54')) {
-      normalized = '+' + normalized;
-      if (normalized.length >= 12 && normalized.length <= 14) {
-        return normalized;
-      }
-    }
-    
-    // Si empieza con 9 (número argentino), agregar +54
-    if (normalized.startsWith('9') && normalized.length === 10) {
-      return '+54' + normalized;
-    }
-    
-    // Si empieza con 11 (código de área), agregar +549
-    if (normalized.startsWith('11') && normalized.length === 10) {
-      return '+54' + normalized;
-    }
-    
-    // Si tiene 10 dígitos y empieza con 15, agregar +54
-    if (normalized.startsWith('15') && normalized.length === 10) {
-      return '+54' + normalized;
-    }
-    
-    // Si tiene 9 dígitos y empieza con 9, agregar +549
-    if (normalized.startsWith('9') && normalized.length === 9) {
-      return '+549' + normalized;
-    }
-    
-    // Si tiene 8 dígitos y empieza con 9, agregar +549
-    if (normalized.startsWith('9') && normalized.length === 8) {
-      return '+549' + normalized;
-    }
-    
-    console.warn('⚠️ No se pudo normalizar el número:', phone);
-    return null;
+    return PhoneNumberService.normalizeUnified(phone);
   }
 
   /**
@@ -134,13 +89,7 @@ export class OrderNotificationService {
     };
 
     try {
-      // 🔧 MEJORA: Log detallado para debugging
-      // 🔧 MEJORA: Reducir logging excesivo
-      if (process.env.NODE_ENV === 'development') {
-        console.log('📤 Enviando notificación para orden:', order.id);
-      }
-      
-      // 🔧 MEJORA: Obtener información del proveedor usando singleton mejorado
+      // Obtener información del proveedor usando singleton mejorado
       const supabase = await this.getSupabaseClient();
 
       const { data: provider, error: providerError } = await supabase
@@ -156,13 +105,9 @@ export class OrderNotificationService {
         return result;
       }
       
-             // 🔧 MEJORA: Reducir logging excesivo
-        if (process.env.NODE_ENV === 'development') {
-          console.log('✅ Proveedor:', provider.name);
-        }
-      
-      // PASO 1: Normalizar número de teléfono
+      // 🔧 PASO 1: NORMALIZACIÓN AUTOMÁTICA DEL NÚMERO DEL PROVEEDOR
       const normalizedPhone = this.normalizePhoneNumber(provider.phone);
+      
       if (!normalizedPhone) {
         const error = `No se pudo normalizar el número: ${provider.phone}`;
         console.error('❌', error);
@@ -170,51 +115,62 @@ export class OrderNotificationService {
         return result;
       }
       
-             // Log solo si hay cambio en la normalización
-       if (provider.phone !== normalizedPhone) {
-         // 🔧 MEJORA: Reducir logging excesivo
-        if (process.env.NODE_ENV === 'development') {
-          console.log('📱 Número normalizado:', provider.phone, '→', normalizedPhone);
-        }
-       }
+      // 🔧 MEJORA: Log de normalización para debugging
+      if (provider.phone !== normalizedPhone && process.env.NODE_ENV === 'development') {
+        console.log('📱 Número normalizado automáticamente:', {
+          original: provider.phone,
+          normalizado: normalizedPhone,
+          proveedor: provider.name
+        });
+      }
 
-      // 🔧 PASO 2: Enviar template evio_orden con variables personalizadas
+      // 🔧 CORRECCIÓN: ACTUALIZAR EL NÚMERO DEL PROVEEDOR EN LA BASE DE DATOS
+      // Esto asegura que todos los números se almacenen en formato consistente
+      if (provider.phone !== normalizedPhone) {
+        const { error: updateError } = await supabase
+          .from('providers')
+          .update({ phone: normalizedPhone })
+          .eq('id', provider.id);
+
+        if (updateError) {
+          console.warn('⚠️ No se pudo actualizar el número del proveedor:', updateError);
+          // No es crítico, continuar con el proceso
+        } else {
+          if (process.env.NODE_ENV === 'development') {
+            console.log('✅ Número del proveedor actualizado en BD:', {
+              proveedor: provider.name,
+              numeroAnterior: provider.phone,
+              numeroNuevo: normalizedPhone
+            });
+          }
+          // 🔧 CORRECCIÓN: NO modificar el objeto provider localmente
+          // Esto evita inconsistencias y race conditions
+        }
+      }
+
+      // 🔧 PASO 2: ENVIAR TEMPLATE CON NÚMERO NORMALIZADO
       const baseUrl = this.buildBaseUrl();
 
       try {
-              // 🔧 CORRECCIÓN: Preparar variables para el template evio_orden
-      // Según Meta Business Manager, evio_orden usa nombres específicos:
-      // 1. Header: "provider_name" (nombre del proveedor)
-      // 2. Body: "contact_name" (nombre de contacto del proveedor)
-      const templateVariables = {
-        'provider_name': provider?.name || 'Proveedor',
-        'contact_name': provider?.contact_name || provider?.name || 'Contacto'
-      };
-      
-      // 🔧 MEJORA: Log detallado para verificar qué valor se usa para contact_name
-      if (process.env.NODE_ENV === 'development') {
-        console.log('🔧 Variables preparadas para template:', templateVariables);
-        console.log('🔧 Datos del proveedor:', {
-          id: provider?.id,
-          name: provider?.name,
-          contact_name: provider?.contact_name,
-          hasContactName: !!provider?.contact_name,
-          contactNameType: typeof provider?.contact_name
-        });
-        if (provider?.contact_name) {
-          console.log('✅ Usando contact_name del proveedor:', provider.contact_name);
-        } else {
-          console.log('⚠️ No hay contact_name configurado, usando name del proveedor:', provider?.name);
-        }
-      }
+        // Preparar variables para el template evio_orden
+        // Según Meta Business Manager, evio_orden usa nombres específicos:
+        // 1. Header: "provider_name" (nombre del proveedor)
+        // 2. Body: "contact_name" (nombre de contacto del proveedor)
+        const templateVariables = {
+          'provider_name': provider?.name || 'Proveedor',
+          'contact_name': provider?.contact_name || provider?.name || 'Contacto'
+        };
         
+
+      
         const templateResult = await this.sendTemplateToMeta(normalizedPhone, templateVariables, userId);
         result.templateSent = templateResult.success;
         
         if (!templateResult.success) {
           const errorMessage = templateResult.error || 'Error desconocido';
+          console.error('❌ Template falló:', errorMessage);
           
-          // 🔧 MEJORA: Manejo específico de errores de conexión
+          // Manejo específico de errores de conexión
           if (errorMessage.includes('conexión') || errorMessage.includes('red')) {
             result.errors.push(`⚠️ ${errorMessage} - El pedido se guardará como pendiente`);
             console.warn('⚠️ Error de conexión detectado - El pedido se guardará como pendiente');
@@ -238,8 +194,9 @@ export class OrderNotificationService {
         }
       }
 
-      // PASO 3: Guardar pedido pendiente de confirmación
+      // 🔧 PASO 3: Guardar pedido pendiente de confirmación CON NÚMERO NORMALIZADO
       try {
+        // 🔧 CORRECCIÓN: Usar SIEMPRE el número normalizado, no el del objeto provider
         const saveResult = await this.savePendingOrderAtomic(order, provider, normalizedPhone, userId, baseUrl);
         result.pendingOrderSaved = saveResult.success;
         if (!saveResult.success) {
@@ -259,17 +216,17 @@ export class OrderNotificationService {
       // 🔧 MEJORA: Considerar éxito si se guardó el pedido pendiente, incluso si el template falló
       result.success = result.templateSent || result.pendingOrderSaved;
       
-             // Log solo si hay errores o éxito completo
-       if (result.errors.length > 0) {
-         console.log('❌ Errores en notificación:', result.errors.length);
-         // 🔧 MEJORA: Log específico para errores de activación
-         const activationErrors = result.errors.filter(e => e.includes('activación manual'));
-         if (activationErrors.length > 0) {
-           console.log('⚠️ Errores de activación manual detectados:', activationErrors.length);
-         }
-       } else if (result.success) {
-         console.log('✅ Notificación completada');
-       }
+      // Log solo si hay errores o éxito completo
+      if (result.errors.length > 0) {
+        console.log('❌ Errores en notificación:', result.errors.length);
+        // 🔧 MEJORA: Log específico para errores de activación
+        const activationErrors = result.errors.filter(e => e.includes('activación manual'));
+        if (activationErrors.length > 0) {
+          console.log('⚠️ Errores de activación manual detectados:', activationErrors.length);
+        }
+      } else if (result.success) {
+        console.log('✅ Notificación completada');
+      }
 
       return result;
 
@@ -282,9 +239,6 @@ export class OrderNotificationService {
   }
 
   /**
-   * Envía template a Meta WhatsApp API
-   */
-  /**
    * Envía template a Meta WhatsApp API con manejo robusto de errores
    */
   private static async sendTemplateToMeta(
@@ -293,24 +247,28 @@ export class OrderNotificationService {
     userId: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      // 🔧 CORRECCIÓN: Detectar URL base automáticamente
-      const baseUrl = this.detectBaseUrl();
+      // 🔧 CORRECCIÓN: Usar buildBaseUrl de forma consistente
+      const baseUrl = this.buildBaseUrl();
       
       if (process.env.NODE_ENV === 'development') {
         console.log('📱 Enviando template evio_orden a Meta API...');
       }
       
-      const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
+      const apiUrl = `${baseUrl}/api/whatsapp/send`;
+      
+      const requestBody = {
+        to: phone,
+        message: 'evio_orden',
+        templateVariables: templateVariables,
+        userId: userId
+      };
+      
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          to: phone,
-          message: 'evio_orden',
-          templateVariables: templateVariables,
-          userId: userId
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -343,26 +301,7 @@ export class OrderNotificationService {
     }
   }
 
-  /**
-   * Detecta automáticamente la URL base correcta
-   */
-  private static detectBaseUrl(): string {
-    // 🔧 MEJORA: Detección inteligente de URL base
-    if (typeof window !== 'undefined') {
-      // Cliente: usar la URL actual
-      return window.location.origin;
-    }
-    
-    // Servidor: usar variables de entorno o detectar puerto
-    const envUrl = process.env.NEXT_PUBLIC_APP_URL;
-    if (envUrl) {
-      return envUrl;
-    }
-    
-    // 🔧 CORRECCIÓN: Usar puerto 3001 en desarrollo
-    const port = process.env.PORT || '3001';
-    return `http://localhost:${port}`;
-  }
+
 
   /**
    * Formatea mensajes de error de forma consistente
@@ -433,7 +372,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
   }
 
      /**
-    * Guarda pedido pendiente de confirmación de forma atómica
+    * Guarda pedido pendiente de confirmación de forma atómica CON NÚMERO NORMALIZADO
     */
    private static async savePendingOrderAtomic(
      order: Order,
@@ -443,7 +382,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
      baseUrl: string
    ): Promise<{ success: boolean; error?: string }> {
      try {
-       // Validar datos antes de enviar
+       // 🔧 MEJORA: Validación simplificada y robusta
        if (!order.id || !provider.id || !normalizedPhone || !userId) {
          const missingData = [];
          if (!order.id) missingData.push('orderId');
@@ -455,6 +394,13 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return { success: false, error: `Datos faltantes: ${missingData.join(', ')}` };
        }
        
+       // 🔧 MEJORA: Verificación de normalización más robusta
+       const expectedNormalized = this.normalizePhoneNumber(normalizedPhone);
+       if (!expectedNormalized) {
+         console.error('❌ No se pudo normalizar el número recibido:', normalizedPhone);
+         return { success: false, error: 'No se pudo normalizar el número del proveedor' };
+       }
+       
        const response = await fetch(`${baseUrl}/api/whatsapp/save-pending-order`, {
          method: 'POST',
          headers: {
@@ -463,7 +409,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          body: JSON.stringify({
            orderId: order.id,
            providerId: provider.id,
-           providerPhone: normalizedPhone,
+           providerPhone: expectedNormalized,
            userId: userId
          }),
        });
@@ -475,7 +421,6 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return { success: false, error: result.error || 'Error guardando pedido' };
        }
 
-       console.log('✅ Pedido pendiente guardado exitosamente');
        return { success: true };
 
      } catch (error) {
@@ -521,42 +466,60 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      // 🔧 DEBUG: Verificar normalización del número
-      const normalizedProviderPhone = this.normalizePhoneNumber(providerPhone);
-      console.log(`🔧 DEBUG - Normalización de número:`, {
-        original: providerPhone,
-        normalized: normalizedProviderPhone,
-        match: providerPhone === normalizedProviderPhone ? 'SÍ' : 'NO'
-      });
-
-      // 🔧 CORRECCIÓN: Buscar pedidos pendientes con cualquier estado de pending
-      const { data: pendingOrders, error: pendingError } = await supabase
+      // 🔧 CORRECCIÓN: Usar normalización unificada para búsquedas
+      const searchVariants = PhoneNumberService.searchVariants(providerPhone);
+      
+      console.log(`🔍 [${requestId}] Variantes de búsqueda para ${providerPhone}:`, searchVariants);
+      
+      // 🔧 MEJORA: Log del número normalizado esperado para debugging
+      const expectedNormalized = PhoneNumberService.normalizeUnified(providerPhone);
+      console.log(`🔍 [${requestId}] Número normalizado esperado:`, expectedNormalized);
+      
+      // 🔧 SIMPLIFICACIÓN: Buscar primero con el número exacto, luego con variantes
+      let pendingOrder = null;
+      
+      // 🔧 PASO 1: Búsqueda directa con el número exacto
+      const { data: exactMatch, error: exactError } = await supabase
         .from('pending_orders')
         .select('*')
-        .eq('provider_phone', normalizedProviderPhone || providerPhone)
         .or('status.eq.pending,status.eq.pending_confirmation')
+        .eq('provider_phone', providerPhone)
         .order('created_at', { ascending: false })
-        .limit(1);
+        .limit(1)
+        .single();
 
-      console.log(`🔧 DEBUG - Búsqueda de pedidos pendientes:`, {
-        providerPhone,
-        normalizedProviderPhone,
-        searchQuery: normalizedProviderPhone || providerPhone,
-        pendingOrdersCount: pendingOrders?.length || 0,
-        error: pendingError
-      });
+      if (!exactError && exactMatch) {
+        pendingOrder = exactMatch;
+        console.log(`🔍 [${requestId}] Pedido encontrado con búsqueda exacta:`, pendingOrder.id);
+      } else {
+        // 🔧 PASO 2: Si no hay coincidencia exacta, buscar con variantes
+        console.log(`🔍 [${requestId}] Búsqueda exacta falló, probando con variantes...`);
+        
+        for (const variant of searchVariants) {
+          if (variant === providerPhone) continue; // Ya probamos este
+          
+          const { data: variantMatch, error: variantError } = await supabase
+            .from('pending_orders')
+            .select('*')
+            .or('status.eq.pending,status.eq.pending_confirmation')
+            .eq('provider_phone', variant)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
 
-      if (pendingError) {
-        console.error(`❌ [${requestId}] Error buscando pedidos pendientes:`, pendingError);
-        return false;
+          if (!variantError && variantMatch) {
+            pendingOrder = variantMatch;
+            console.log(`🔍 [${requestId}] Pedido encontrado con variante ${variant}:`, pendingOrder.id);
+            break;
+          }
+        }
       }
 
-      if (!pendingOrders || pendingOrders.length === 0) {
+      if (!pendingOrder) {
         console.log(`⚠️ [${requestId}] No se encontraron pedidos pendientes para:`, providerPhone);
         return false;
       }
 
-      const pendingOrder = pendingOrders[0];
       console.log(`📋 [${requestId}] Pedido pendiente encontrado:`, {
         id: pendingOrder.id,
         order_id: pendingOrder.order_id,
@@ -564,10 +527,7 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         created_at: pendingOrder.created_at
       });
 
-      // 🔧 CORRECCIÓN: Buscar orden completa con información del proveedor
-      console.log(`🔧 DEBUG - Buscando orden con ID: ${pendingOrder.order_id}`);
-      
-      // 🔧 CORRECCIÓN: Primero obtener la orden básica
+      // Buscar orden completa con información del proveedor
       const { data: orderBasic, error: orderBasicError } = await supabase
         .from('orders')
         .select('*')
@@ -579,39 +539,18 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         return false;
       }
 
-      // 🔧 CORRECCIÓN: Luego obtener información del proveedor por separado
+      // Obtener información del proveedor por separado
       const { data: provider, error: providerError } = await supabase
         .from('providers')
         .select('id, name, contact_name, phone, notes, default_payment_method, default_delivery_time')
         .eq('id', orderBasic.provider_id)
         .single();
 
-      console.log(`🔧 DEBUG - Resultado de consultas:`, {
-        orderBasic: {
-          id: orderBasic.id,
-          provider_id: orderBasic.provider_id,
-          order_number: orderBasic.order_number
-        },
-        provider: {
-          id: provider?.id,
-          name: provider?.name,
-          contact_name: provider?.contact_name,
-          notes: provider?.notes,
-          default_payment_method: provider?.default_payment_method
-        },
-        providerError: providerError
-      });
-
-      // 🔧 CORRECCIÓN: Combinar los datos
+      // Combinar los datos
       const orderData = {
         ...orderBasic,
         providers: provider
       };
-
-      console.log(`🔧 DEBUG - Resultado de consulta:`, {
-        data: orderData,
-        hasProviders: orderData?.providers ? 'SÍ' : 'NO'
-      });
       console.log(`📦 [${requestId}] Orden encontrada:`, {
         id: orderData.id,
         order_number: orderData.order_number,
@@ -636,21 +575,9 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       console.log(`✅ [${requestId}] Estado de orden actualizado a confirmado`);
 
       // Enviar detalles del pedido
-      console.log(`🔧 DEBUG - Antes de generar detalles del pedido:`, {
-        orderDataKeys: Object.keys(orderData),
-        providers: orderData.providers,
-        providerName: orderData.providers?.name,
-        providerId: orderData.providers?.id,
-        providerNotes: orderData.providers?.notes,
-        orderDate: orderData.order_date,
-        orderNotes: orderData.notes,
-        fullOrderData: JSON.stringify(orderData, null, 2)
-      });
-      
       const orderDetails = this.generateOrderDetailsMessage(orderData);
-      console.log(`📤 [${requestId}] Enviando detalles del pedido:`, orderDetails.substring(0, 100) + '...');
 
-      // 🔧 CORRECCIÓN: Enviar mensaje directamente usando MetaWhatsAppService
+      // Enviar mensaje directamente usando MetaWhatsAppService
       const { MetaWhatsAppService } = await import('./metaWhatsAppService');
       const metaService = new MetaWhatsAppService();
       const result = await metaService.sendMessage(providerPhone, orderDetails);
@@ -707,8 +634,8 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      // Normalizar el número de teléfono
-      const normalizedPhone = this.normalizePhoneNumber(providerPhone);
+      // 🔧 MEJORA: Usar servicio centralizado unificado de normalización
+      const normalizedPhone = PhoneNumberService.normalizeUnified(providerPhone);
       if (!normalizedPhone) {
         console.error('❌ No se pudo normalizar el número de teléfono:', providerPhone);
         return null;
@@ -716,15 +643,41 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       
       console.log('✅ Buscando con número normalizado:', providerPhone, '->', normalizedPhone);
       
-      // Buscar directamente con el número normalizado
-      const { data, error } = await supabase
+      // 🔧 MEJORA: Usar normalización unificada para búsquedas
+      const searchVariants = PhoneNumberService.searchVariants(providerPhone);
+      console.log('🔍 Variantes de búsqueda:', searchVariants);
+      
+      // 🔧 MEJORA: Log del número normalizado esperado para debugging
+      console.log('🔍 Número normalizado esperado para búsqueda:', normalizedPhone);
+      
+      let query = supabase
         .from('pending_orders')
         .select('*')
-        .eq('provider_phone', normalizedPhone)
         .eq('status', 'pending_confirmation')
         .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
+      
+      // 🔧 MEJORA: Buscar con todas las variantes del número usando OR dinámico
+      if (searchVariants.length > 0) {
+        // 🔧 CORRECCIÓN: Construir query OR correctamente para Supabase
+        const orConditions = searchVariants.map(variant => `provider_phone.eq.${variant}`);
+        console.log('🔍 Variantes para búsqueda:', orConditions);
+        
+        // 🔧 CORRECCIÓN: Aplicar OR para las variantes del número
+        if (orConditions.length === 1) {
+          query = query.eq('provider_phone', orConditions[0]);
+        } else if (orConditions.length > 1) {
+          // Para múltiples variantes, usar .or() con la sintaxis correcta
+          const orString = orConditions.map(condition => `provider_phone.eq.${condition}`).join(',');
+          query = query.or(orString);
+        }
+      } else {
+        // 🔧 FALLBACK: Búsqueda básica si no se puede normalizar
+        console.log('⚠️ Usando búsqueda básica con:', normalizedPhone);
+        query = query.eq('provider_phone', normalizedPhone);
+      }
+      
+      const { data, error } = await query.single();
 
       console.log(`🔍 Resultado de búsqueda para ${providerPhone}:`, { 
         data: data ? {
@@ -772,55 +725,27 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
          return '📋 Detalles del pedido confirmado.';
        }
 
-       // 🔧 DEBUG: Log detallado de los datos recibidos
-       console.log('🔧 DEBUG - Datos completos de orderData:', {
-         id: orderData.id,
-         order_number: orderData.order_number,
-         providers: orderData.providers,
-         providerName: orderData.providers?.name,
-         providerId: orderData.providers?.id,
-         providerNotes: orderData.providers?.notes,
-         order_date: orderData.order_date,
-         notes: orderData.notes,
-         items: orderData.items,
-         total_amount: orderData.total_amount,
-         currency: orderData.currency,
-         // 🔧 NUEVO: Log específico de los datos del modal
-         modalData: {
-           desired_delivery_date: orderData.desired_delivery_date,
-           desired_delivery_time: orderData.desired_delivery_time,
-           payment_method: orderData.payment_method,
-           notes: orderData.notes
-         },
-         fullData: JSON.stringify(orderData, null, 2)
-       });
+       
 
        const items = Array.isArray(orderData.items) ? orderData.items : [];
        const orderNumber = orderData.order_number || orderData.id || 'N/A';
        
-       // 🔧 CORRECCIÓN: Obtener nombre del proveedor desde la relación con fallback robusto
-       let providerName = 'Proveedor';
-       console.log('🔧 DEBUG - Estructura de providers:', {
-         providers: orderData.providers,
-         type: typeof orderData.providers,
-         hasName: orderData.providers?.name,
-         hasId: orderData.providers?.id,
-         fullProviders: JSON.stringify(orderData.providers)
-       });
+               // Obtener nombre del proveedor desde la relación con fallback robusto
+        let providerName = 'Proveedor';
+        
+        if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.name) {
+          providerName = orderData.providers.name;
+        } else if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.id) {
+          // Si no hay nombre pero sí ID, usar un identificador más descriptivo
+          providerName = `Proveedor ID: ${orderData.providers.id}`;
+        }
+        
+        // Validar que providerName no esté vacío
+        if (!providerName || providerName.trim() === '') {
+          providerName = 'Proveedor';
+        }
        
-       if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.name) {
-         providerName = orderData.providers.name;
-         console.log('🔧 DEBUG - Nombre del proveedor encontrado:', providerName);
-       } else if (orderData.providers && typeof orderData.providers === 'object' && orderData.providers.id) {
-         // Si no hay nombre pero sí ID, usar un identificador más descriptivo
-         providerName = `Proveedor ID: ${orderData.providers.id}`;
-         console.log('🔧 DEBUG - Usando ID del proveedor como nombre:', providerName);
-       } else {
-         console.log('🔧 DEBUG - No se encontró información del proveedor, usando valor por defecto');
-         providerName = 'Proveedor';
-       }
-       
-               // 🔧 CORRECCIÓN: Formatear fecha de entrega usando campo correcto (order_date) con fallback robusto
+                       // Formatear fecha de entrega usando campo correcto (order_date) con fallback robusto
         let deliveryDate = 'No especificada';
         if (orderData.order_date) {
           try {
@@ -832,20 +757,15 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
                 month: 'long',
                 day: 'numeric'
               });
-              console.log('🔧 DEBUG - Fecha de orden formateada:', deliveryDate);
             } else {
-              console.warn('⚠️ Fecha de orden inválida:', orderData.order_date);
               deliveryDate = 'Fecha inválida';
             }
           } catch (error) {
-            console.warn('⚠️ Error formateando fecha de orden:', error);
             deliveryDate = 'Error en fecha';
           }
-        } else {
-          console.log('🔧 DEBUG - No hay fecha de orden disponible');
         }
         
-        // 🔧 NUEVO: Formatear fecha de entrega DESEADA del modal
+        // Formatear fecha de entrega DESEADA del modal
         let desiredDeliveryDate = 'No especificada';
         if (orderData.desired_delivery_date) {
           try {
@@ -857,123 +777,107 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
                 month: 'long',
                 day: 'numeric'
               });
-              console.log('🔧 DEBUG - Fecha de entrega deseada formateada:', desiredDeliveryDate);
             } else {
-              console.warn('⚠️ Fecha de entrega deseada inválida:', orderData.desired_delivery_date);
               desiredDeliveryDate = 'Fecha inválida';
             }
           } catch (error) {
-            console.warn('⚠️ Error formateando fecha de entrega deseada:', error);
             desiredDeliveryDate = 'Error en fecha';
           }
-        } else {
-          console.log('🔧 DEBUG - No hay fecha de entrega deseada disponible');
         }
        
-       // 🔧 MEJORA: Obtener método de pago
-       // 🔧 CORRECCIÓN: Obtener método de pago con traducción
-       const getPaymentMethodText = (method: string): string => {
-         const paymentMethods: { [key: string]: string } = {
-           'efectivo': 'Efectivo',
-           'transferencia': 'Transferencia',
-           'tarjeta': 'Tarjeta',
-           'cheque': 'Cheque'
-         };
-         return paymentMethods[method] || method || 'No especificado';
-       };
-       
-               // 🔧 CORRECCIÓN: Obtener método de pago del modal primero, luego del proveedor como fallback
+               // Obtener método de pago con traducción
+        const getPaymentMethodText = (method: string): string => {
+          const paymentMethods: { [key: string]: string } = {
+            'efectivo': 'Efectivo',
+            'transferencia': 'Transferencia',
+            'tarjeta': 'Tarjeta',
+            'cheque': 'Cheque'
+          };
+          return paymentMethods[method] || method || 'No especificado';
+        };
+        
+        // Obtener método de pago del modal primero, luego del proveedor como fallback
         let paymentMethod = 'Efectivo'; // Valor por defecto
         if (orderData.payment_method) {
           paymentMethod = getPaymentMethodText(orderData.payment_method);
-          console.log('🔧 DEBUG - Método de pago del modal:', paymentMethod);
         } else if (orderData.providers?.default_payment_method) {
           paymentMethod = getPaymentMethodText(orderData.providers.default_payment_method);
-          console.log('🔧 DEBUG - Método de pago del proveedor:', paymentMethod);
-        } else {
-          console.log('🔧 DEBUG - Usando método de pago por defecto:', paymentMethod);
         }
-       
-       // 🔧 CORRECCIÓN: Obtener notas del modal primero, luego del proveedor como fallback
-       let notes = '';
-       if (orderData.notes && orderData.notes.trim()) {
-         notes = orderData.notes;
-         console.log('🔧 DEBUG - Notas del modal agregadas:', notes);
-       } else if (orderData.providers?.notes && orderData.providers.notes.trim()) {
-         notes = orderData.providers.notes;
-         console.log('🔧 DEBUG - Notas del proveedor agregadas:', notes);
-       } else {
-         notes = 'Sin notas adicionales';
-         console.log('🔧 DEBUG - No hay notas disponibles');
-       }
+        
+        // Obtener notas del modal primero, luego del proveedor como fallback
+        let notes = '';
+        if (orderData.notes && orderData.notes.trim()) {
+          notes = orderData.notes;
+        } else if (orderData.providers?.notes && orderData.providers.notes.trim()) {
+          notes = orderData.providers.notes;
+        } else {
+          notes = 'Sin notas adicionales';
+        }
        
        let message = `📋 *${providerName.toUpperCase()}*\n\n`;
        message += `*Orden:* ${orderNumber}\n`;
        
-       // 🔧 CORRECCIÓN: Usar fecha de entrega DESEADA del modal como fecha principal
-       if (desiredDeliveryDate !== 'No especificada') {
-         message += `*📅 Fecha de entrega:* ${desiredDeliveryDate}\n`;
-       } else {
-         // Fallback a fecha de creación si no hay fecha deseada
-         message += `*📅 Fecha de entrega:* ${deliveryDate}\n`;
-       }
-       
-       // 🔧 NUEVO: Agregar horarios de entrega DESEADOS del modal
-       if (orderData.desired_delivery_time && orderData.desired_delivery_time.length > 0) {
-         const desiredTimes = orderData.desired_delivery_time;
-         if (desiredTimes.length === 1) {
-           message += `*⏰ Horario de entrega DESEADO:* ${desiredTimes[0]}\n`;
-         } else {
-           message += `*⏰ Horarios de entrega DESEADOS:* ${desiredTimes.join(', ')}\n`;
-         }
-         console.log('🔧 DEBUG - Horarios de entrega deseados agregados:', desiredTimes);
-       } else {
-         // 🔧 FALLBACK: Usar horarios del proveedor si no hay del modal
-         if (orderData.providers?.default_delivery_time && orderData.providers.default_delivery_time.length > 0) {
-           const deliveryTimes = orderData.providers.default_delivery_time;
-           if (deliveryTimes.length === 1) {
-             message += `*⏰ Horario de entrega:* ${deliveryTimes[0]}\n`;
-           } else {
-             message += `*⏰ Horarios de entrega:* ${deliveryTimes.join(', ')}\n`;
-           }
-           console.log('🔧 DEBUG - Horarios de entrega del proveedor agregados:', deliveryTimes);
-         } else {
-           message += `*⏰ Horario de entrega:* No especificado\n`;
-           console.log('🔧 DEBUG - No hay horarios de entrega disponibles');
-         }
-       }
+               // Usar fecha de entrega DESEADA del modal como fecha principal
+        if (desiredDeliveryDate !== 'No especificada') {
+          message += `*📅 Fecha de entrega:* ${desiredDeliveryDate}\n`;
+        } else {
+          // Fallback a fecha de creación si no hay fecha deseada
+          message += `*📅 Fecha de entrega:* ${deliveryDate}\n`;
+        }
+        
+        // Agregar horarios de entrega DESEADOS del modal
+        if (orderData.desired_delivery_time && orderData.desired_delivery_time.length > 0) {
+          const desiredTimes = orderData.desired_delivery_time;
+          if (desiredTimes.length === 1) {
+            message += `*⏰ Horario de entrega DESEADO:* ${desiredTimes[0]}\n`;
+          } else {
+            message += `*⏰ Horarios de entrega DESEADOS:* ${desiredTimes.join(', ')}\n`;
+          }
+        } else {
+          // Usar horarios del proveedor si no hay del modal
+          if (orderData.providers?.default_delivery_time && orderData.providers.default_delivery_time.length > 0) {
+            const deliveryTimes = orderData.providers.default_delivery_time;
+            if (deliveryTimes.length === 1) {
+              message += `*⏰ Horario de entrega:* ${deliveryTimes[0]}\n`;
+            } else {
+              message += `*⏰ Horarios de entrega:* ${deliveryTimes.join(', ')}\n`;
+            }
+          } else {
+            message += `*⏰ Horario de entrega:* No especificado\n`;
+          }
+        }
        
        message += `*💳 Método de pago:* ${paymentMethod}\n`;
        
-       // 🔧 MEJORA: Agregar notas solo si existen
-       if (notes && notes.trim()) {
-         message += `*Notas:* ${notes}\n`;
-       }
-       
-       message += `\n`;
-       
-       if (items.length > 0) {
-         message += `*Items del pedido:*\n`;
-         items.forEach((item: any, index: number) => {
-           if (item && typeof item === 'object') {
-             const quantity = item.quantity || 1;
-             const unit = item.unit || 'un';
-             const name = item.productName || item.name || item.product_name || 'Producto';
-             const price = item.price || item.total || '';
-             
-             if (price) {
-               message += `${index + 1}. ${name} - ${quantity} ${unit} - $${price}\n`;
-             } else {
-               message += `${index + 1}. ${name} - ${quantity} ${unit}\n`;
-             }
-           }
-         });
-       }
-       
-       // 🔧 MEJORA: Agregar total si está disponible
-       if (orderData.total_amount) {
-         message += `\n*Total:* $${orderData.total_amount} ${orderData.currency || 'ARS'}`;
-       }
+               // Agregar notas solo si existen
+        if (notes && notes.trim()) {
+          message += `*Notas:* ${notes}\n`;
+        }
+        
+        message += `\n`;
+        
+        if (items.length > 0) {
+          message += `*Items del pedido:*\n`;
+          items.forEach((item: any, index: number) => {
+            if (item && typeof item === 'object') {
+              const quantity = item.quantity || 1;
+              const unit = item.unit || 'un';
+              const name = item.productName || item.name || item.product_name || 'Producto';
+              const price = item.price || item.total || '';
+              
+              if (price) {
+                message += `${index + 1}. ${name} - ${quantity} ${unit} - $${price}\n`;
+              } else {
+                message += `${index + 1}. ${name} - ${quantity} ${unit}\n`;
+              }
+            }
+          });
+        }
+        
+        // Agregar total si está disponible
+        if (orderData.total_amount) {
+          message += `\n*Total:* $${orderData.total_amount} ${orderData.currency || 'ARS'}`;
+        }
        
        return message;
      } catch (error) {
@@ -1122,14 +1026,12 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
     // Cliente (navegador)
     if (typeof window !== 'undefined') {
       baseUrl = window.location.origin;
-      console.log(`[buildBaseUrl] Client-side URL: ${baseUrl}`);
       return baseUrl;
     }
     
     // 🔧 CORRECCIÓN: Priorizar NEXT_PUBLIC_APP_URL (URL de producción)
     if (process.env.NEXT_PUBLIC_APP_URL) {
       baseUrl = process.env.NEXT_PUBLIC_APP_URL;
-      console.log(`[buildBaseUrl] NEXT_PUBLIC_APP_URL: ${baseUrl}`);
       return baseUrl;
     }
     
@@ -1142,20 +1044,17 @@ NOTA: Este error ocurre cuando han pasado más de 24 horas desde la última resp
       } else {
         baseUrl = `https://${vercelUrl}`;
       }
-      console.log(`[buildBaseUrl] NEXT_PUBLIC_VERCEL_URL: ${baseUrl}`);
       return baseUrl;
     }
     
     // Servidor - Vercel (URL única del deployment) - ÚLTIMA OPCIÓN
     if (process.env.VERCEL_URL) {
       baseUrl = `https://${process.env.VERCEL_URL}`;
-      console.log(`[buildBaseUrl] VERCEL_URL (fallback): ${baseUrl}`);
       return baseUrl;
     }
     
     // Fallback de producción
     baseUrl = 'https://gastronomy-saas.vercel.app';
-    console.warn(`[buildBaseUrl] Fallback URL: ${baseUrl}`);
     return baseUrl;
   }
 }

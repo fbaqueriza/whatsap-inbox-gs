@@ -8,6 +8,7 @@ import { Order, Provider, StockItem, OrderItem } from '../../types';
 import { useChat } from '../../contexts/ChatContext';
 import { useGlobalChat } from '../../contexts/GlobalChatContext';
 import { OrderNotificationService } from '../../lib/orderNotificationService';
+import { PhoneNumberService } from '../../lib/phoneNumberService';
 import { supabase } from '../../lib/supabase/client';
 import {
   Plus,
@@ -146,10 +147,9 @@ function DashboardPageContent({
     }
   }, [contextIsChatOpen, isChatOpen, setIsChatOpen]);
   
-  // 🔧 OPTIMIZACIÓN: Variables simplificadas para el dashboard
   const totalProviders = providers.length;
 
-  // 🔧 OPTIMIZACIÓN: Creación de órdenes mejorada con manejo de errores
+  // Creación de órdenes mejorada con manejo de errores
   const handleCreateOrder = async (orderData: {
     providerId: string;
     items: OrderItem[];
@@ -162,18 +162,7 @@ function DashboardPageContent({
     if (!user) return;
     
     try {
-      // 🔧 DEBUG: Log de los datos recibidos del modal
-      console.log('🔧 DEBUG - Datos recibidos del modal:', {
-        providerId: orderData.providerId,
-        itemsCount: orderData.items.length,
-        notes: orderData.notes,
-        desiredDeliveryDate: orderData.desiredDeliveryDate,
-        desiredDeliveryTime: orderData.desiredDeliveryTime,
-        paymentMethod: orderData.paymentMethod,
-        additionalFilesCount: orderData.additionalFiles?.length || 0
-      });
-      
-      // 🔧 MEJORA: Generar número de orden único
+      // Generar número de orden único
       const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
       const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
       const orderNumber = `ORD-${timestamp}-${randomSuffix}`;
@@ -191,7 +180,6 @@ function DashboardPageContent({
         bankInfo: {},
         receiptUrl: "",
         notes: orderData.notes,
-        // 🔧 CORRECCIÓN: Incluir todos los campos del modal
         desiredDeliveryDate: orderData.desiredDeliveryDate,
         desiredDeliveryTime: orderData.desiredDeliveryTime,
         paymentMethod: orderData.paymentMethod || 'efectivo',
@@ -201,29 +189,15 @@ function DashboardPageContent({
         user_id: user.id,
       };
       
-      // 🔧 DEBUG: Log de la orden que se va a crear
-      console.log('🔧 DEBUG - Orden a crear:', {
-        orderNumber: newOrder.orderNumber,
-        providerId: newOrder.providerId,
-        itemsCount: newOrder.items?.length,
-        notes: newOrder.notes,
-        desiredDeliveryDate: newOrder.desiredDeliveryDate,
-        desiredDeliveryTime: newOrder.desiredDeliveryTime,
-        paymentMethod: newOrder.paymentMethod,
-        additionalFilesCount: newOrder.additionalFiles?.length
-      });
-      
-      // 🔧 MEJORA: Cerrar modal inmediatamente para mejor UX
+      // Cerrar modal inmediatamente para mejor UX
       setIsCreateModalOpen(false);
       setSuggestedOrder(null);
       
-      // 🔧 MEJORA: Crear la orden con manejo de errores
+      // Crear la orden con manejo de errores
       const createdOrder = await addOrder(newOrder, user.id);
       
       if (createdOrder) {
-        console.log('✅ Pedido creado:', createdOrder.id);
-        
-        // 🔧 MEJORA: Enviar notificación al proveedor en segundo plano
+        // Enviar notificación al proveedor en segundo plano
         const provider = providers.find(p => p.id === orderData.providerId);
         
         if (provider) {
@@ -243,33 +217,30 @@ function DashboardPageContent({
             }
             return response.json();
           }).then(data => {
-            console.log('✅ Notificación enviada exitosamente');
+            // Notificación enviada exitosamente
           }).catch(error => {
-            console.error('❌ Error enviando notificación de pedido:', error);
+            console.error('Error enviando notificación de pedido:', error);
           });
         } else {
-          console.error('❌ Proveedor no encontrado para ID:', orderData.providerId);
+          console.error('Proveedor no encontrado para ID:', orderData.providerId);
         }
       } else {
-        console.error('❌ No se pudo crear la orden');
-        // 🔧 MEJORA: Reabrir modal si hay error
+        console.error('No se pudo crear la orden');
+        // Reabrir modal si hay error
         setIsCreateModalOpen(true);
       }
       
-      // 🔧 MEJORA: Actualizar la lista de órdenes inmediatamente y forzar re-render
-      console.log('🔄 Actualizando lista de órdenes después de crear...');
+      // Actualizar la lista de órdenes inmediatamente
       await fetchAll();
-      console.log('✅ Lista de órdenes actualizada');
       
-      // 🔧 MEJORA: Forzar actualización adicional después de un breve delay
+      // Forzar actualización adicional después de un breve delay
       setTimeout(async () => {
-        console.log('🔄 Actualización adicional para asegurar sincronización...');
         await fetchAll();
       }, 500);
       
     } catch (error) {
-      console.error('❌ Error creando pedido:', error);
-      // 🔧 MEJORA: Reabrir modal si hay error y mostrar mensaje
+      console.error('Error creando pedido:', error);
+      // Reabrir modal si hay error y mostrar mensaje
       alert('Error al crear el pedido. Por favor, inténtalo de nuevo.');
       setIsCreateModalOpen(true);
     }
@@ -280,37 +251,30 @@ function DashboardPageContent({
     setIsCreateModalOpen(true);
   };
 
-  // 🔧 OPTIMIZACIÓN: MANEJADORES REALTIME MEJORADOS PARA ÓRDENES
+  // Manejadores realtime mejorados para órdenes
   const handleNewOrder = useCallback((payload: any) => {
-    console.log('🆕 Nueva orden recibida via Realtime:', payload.new?.id, 'Estado:', payload.new?.status);
     const newOrder = payload.new;
     
     if (newOrder) {
       setOrders(prev => {
-        // 🔧 MEJORA: Verificar si la orden ya existe
+        // Verificar si la orden ya existe
         const orderExists = prev.some(order => order.id === newOrder.id);
         if (orderExists) {
-          console.log('🔄 Actualizando orden existente:', newOrder.id);
           return prev.map(order => order.id === newOrder.id ? { ...order, ...newOrder } : order);
         }
         
-        // 🔧 MEJORA: Agregar la nueva orden al inicio y forzar re-render
-        console.log('➕ Agregando nueva orden:', newOrder.id);
-        const updatedOrders = [newOrder, ...prev];
-        console.log('📊 Total de órdenes después de agregar:', updatedOrders.length);
-        return updatedOrders;
+        // Agregar la nueva orden al inicio
+        return [newOrder, ...prev];
       });
       
-      // 🔧 MEJORA: Forzar actualización de la UI
+      // Forzar actualización de la UI
       setTimeout(() => {
-        console.log('🔄 Forzando actualización de UI...');
         fetchAll();
       }, 100);
     }
   }, [fetchAll]);
 
   const handleOrderUpdate = useCallback((payload: any) => {
-    console.log('🔄 Orden actualizada via Realtime:', payload.new?.id, 'Estado:', payload.new?.status);
     const updatedOrder = payload.new;
     
     if (updatedOrder) {
@@ -323,7 +287,6 @@ function DashboardPageContent({
   }, []);
 
   const handleOrderDelete = useCallback((payload: any) => {
-    console.log('🗑️ Orden eliminada via Realtime:', payload.old?.id);
     const deletedOrder = payload.old;
     
     if (deletedOrder) {
@@ -333,7 +296,7 @@ function DashboardPageContent({
     }
   }, []);
 
-    // 🔧 OPTIMIZACIÓN: SUSCRIPCIÓN REALTIME ACTIVA CON MANEJO DE ERRORES
+  // Suscripción realtime activa con manejo de errores
   const realtimeData = useOrdersRealtime(
     handleNewOrder,
     handleOrderUpdate,
@@ -343,30 +306,24 @@ function DashboardPageContent({
   const isSubscribed = realtimeData.isSubscribed;
   const connectionStatus = 'connectionStatus' in realtimeData ? realtimeData.connectionStatus : 'disconnected';
 
-  // 🔧 MEJORA: SINCRONIZAR CON LÓGICA DE PÁGINA DE ÓRDENES
+  // Sincronizar con lógica de página de órdenes
   const currentOrders = useMemo(() => {
-    // Incluir órdenes activas (no finalizadas ni canceladas) - MISMOS FILTROS QUE PÁGINA DE ÓRDENES
+    // Incluir órdenes activas (no finalizadas ni canceladas)
     const activeOrders = orders.filter(order => 
       !['finalizado', 'cancelled', 'pagado'].includes(order.status)
     );
     
-    // Ordenar por fecha de creación (más recientes primero) - MISMOS CRITERIOS QUE PÁGINA DE ÓRDENES
+    // Ordenar por fecha de creación (más recientes primero)
     const sortedOrders = activeOrders.sort((a, b) => 
       new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
     );
     
-    // 🔧 OPTIMIZACIÓN: Logs reducidos para evitar spam
-    if (process.env.NODE_ENV === 'development' && sortedOrders.length > 0 && sortedOrders.length % 3 === 0) {
-      console.log('📊 Órdenes actuales filtradas:', sortedOrders.length, 'Órdenes totales:', orders.length);
-    }
-    
     return sortedOrders;
   }, [orders]);
 
-  // 🔧 MEJORA: LISTENER PARA ACTUALIZACIÓN AL CERRAR MODAL
+  // Listener para actualización al cerrar modal
   useEffect(() => {
     const handleModalClosed = () => {
-      console.log('🔄 Modal cerrado, actualizando datos...');
       fetchAll();
     };
 
@@ -379,36 +336,31 @@ function DashboardPageContent({
   const handleSendOrder = async (orderId: string) => {
     const order = orders.find(o => o.id === orderId);
     if (order) {
-      console.log('DEBUG: Enviando pedido', orderId, 'estado actual:', order.status);
       await updateOrder({ ...order, status: 'enviado' });
-      console.log('DEBUG: Pedido enviado, esperando factura...');
       
       // La actualización se manejará automáticamente via Realtime
       setTimeout(async () => {
-        console.log('DEBUG: Simulando recepción de factura...');
         // Buscar el pedido actualizado después del fetchAll
         const updatedOrders = await supabase.from('orders').select('*').eq('id', orderId).single();
         if (updatedOrders.data && updatedOrders.data.status === 'enviado') {
-              // Obtener datos del proveedor para la orden de pago
+          // Obtener datos del proveedor para la orden de pago
           const provider = providers.find(p => p.id === order.providerId);
-              const bankInfo = {
+          const bankInfo = {
             accountNumber: provider?.cbu || '1234567890'
-              };
-              const totalAmount = 1000; // Monto extraído de la factura PDF
+          };
+          const totalAmount = 1000; // Monto extraído de la factura PDF
 
-              const orderWithInvoice = {
+          const orderWithInvoice = {
             ...updatedOrders.data,
-                status: 'factura_recibida' as 'factura_recibida',
-                invoiceNumber: 'INV-MOCK-001',
-                receiptUrl: '/mock-factura.pdf',
-                bankInfo: bankInfo,
-                totalAmount: totalAmount,
-              } as Order;
-              console.log('DEBUG: Actualizando pedido con factura y orden de pago:', orderWithInvoice);
-              await updateOrder(orderWithInvoice);
-              // La actualización se manejará automáticamente via Realtime
-        } else {
-          console.log('DEBUG: Pedido no encontrado o estado incorrecto:', updatedOrders.data?.status);
+            status: 'factura_recibida' as 'factura_recibida',
+            invoiceNumber: 'INV-MOCK-001',
+            receiptUrl: '/mock-factura.pdf',
+            bankInfo: bankInfo,
+            totalAmount: totalAmount,
+          } as Order;
+          
+          await updateOrder(orderWithInvoice);
+          // La actualización se manejará automáticamente via Realtime
         }
       }, 2000);
     }
@@ -425,14 +377,10 @@ function DashboardPageContent({
       reader.onload = async (e) => {
         const dataUrl = e.target?.result as string;
         
-        console.log('DEBUG: Simulando subida de comprobante:', fileName);
-        console.log('DEBUG: Data URL del comprobante creada');
-        
         // Actualizar la orden con la data URL del comprobante
         const order = orders.find(o => o.id === orderId);
         if (order) {
           await updateOrder({ ...order, receiptUrl: dataUrl, status: 'pagado' });
-          console.log('DEBUG: Orden actualizada con comprobante');
           // Refetch para actualizar los datos en la UI
           await fetchAll();
         }
@@ -464,21 +412,8 @@ function DashboardPageContent({
     const provider = providers.find(p => p.id === order.providerId);
     
     if (provider) {
-      // Normalizar el número de teléfono usando la función del contexto
-      let normalizedPhone = provider.phone || '';
-      
-      // Remover espacios, guiones y paréntesis
-      normalizedPhone = normalizedPhone.replace(/[\s\-\(\)]/g, '');
-      
-      // Agregar + si no tiene
-      if (!normalizedPhone.startsWith('+')) {
-        normalizedPhone = `+${normalizedPhone}`;
-      }
-      
-      // Asegurar que sea un número argentino válido
-      if (!normalizedPhone.includes('+549')) {
-        normalizedPhone = `+549${normalizedPhone.replace('+', '')}`;
-      }
+      // Usar servicio centralizado de normalización
+      const normalizedPhone = PhoneNumberService.normalizePhoneNumber(provider.phone) || provider.phone || '';
       
       // Crear contacto para el chat con el formato correcto
       const contact = {

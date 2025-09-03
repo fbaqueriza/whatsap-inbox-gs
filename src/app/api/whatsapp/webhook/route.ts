@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { OrderNotificationService } from '../../../../lib/orderNotificationService';
+import { PhoneNumberService } from '../../../../lib/phoneNumberService';
 
 // Verificar token de webhook (configurado en Meta Developer Console)
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'your_verify_token_here';
@@ -28,7 +29,9 @@ export async function POST(request: NextRequest) {
     console.log(`🚀 [${requestId}] WEBHOOK INICIADO:`, new Date().toISOString());
     
     const body = await request.json();
-    console.log(`📥 [${requestId}] Webhook recibido:`, JSON.stringify(body, null, 2));
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`📥 [${requestId}] Webhook recibido:`, JSON.stringify(body, null, 2));
+    }
 
     // Verificar que es un mensaje de WhatsApp
     if (body.object === 'whatsapp_business_account') {
@@ -267,49 +270,87 @@ async function processWhatsAppMessage(message: any, requestId: string) {
   const messageStartTime = Date.now();
   
   try {
-    const { from, text, timestamp } = message;
+    const { from, text, image, document, timestamp } = message;
     
     console.log(`📱 [${requestId}] Procesando mensaje de WhatsApp:`, {
       from,
       text: text?.body,
+      hasImage: !!image,
+      hasDocument: !!document,
       timestamp
     });
 
-    // 🔧 MEJORA: Normalizar número de teléfono
+    // Normalizar número de teléfono
     let normalizedFrom = from;
     if (from && !from.startsWith('+')) {
       normalizedFrom = `+${from}`;
     }
 
-    // 🔧 NUEVA FUNCIONALIDAD: Guardar mensaje con user_id asignado
-    const saveResult = await saveMessageWithUserId(normalizedFrom, text?.body, timestamp, requestId);
-    
-    if (saveResult.success) {
-      console.log(`✅ [${requestId}] Mensaje guardado con user_id: ${saveResult.userId}`);
-    } else {
-      console.log(`❌ [${requestId}] Error guardando mensaje: ${saveResult.error}`);
-      return { success: false, error: saveResult.error };
+    // 🔧 NUEVA FUNCIONALIDAD: Procesar archivos multimedia (facturas)
+    if (image || document) {
+      console.log(`📎 [${requestId}] Archivo multimedia detectado, procesando como posible factura...`);
+      
+      try {
+        const mediaResult = await processMediaAsInvoice(normalizedFrom, image || document, requestId);
+        if (mediaResult.success) {
+          console.log(`✅ [${requestId}] Factura procesada exitosamente:`, mediaResult.orderId);
+          
+          // 🔧 NO enviar confirmación - solo procesar silenciosamente
+          
+          const duration = Date.now() - messageStartTime;
+          console.log(`✅ [${requestId}] Factura procesada en ${duration}ms`);
+          return { success: true, duration: duration, type: 'invoice' };
+        } else {
+          console.log(`⚠️ [${requestId}] Archivo no procesado como factura:`, mediaResult.error);
+        }
+      } catch (error) {
+        console.error(`❌ [${requestId}] Error procesando archivo multimedia:`, error);
+      }
     }
 
-    // Procesar respuesta del proveedor
+    // 🔧 FUNCIONALIDAD EXISTENTE: Guardar mensaje con user_id asignado
+    // Solo guardar mensaje si hay contenido de texto
+    if (text?.body) {
+      const saveResult = await saveMessageWithUserId(normalizedFrom, text.body, timestamp, requestId);
+      
+      if (saveResult.success) {
+        console.log(`✅ [${requestId}] Mensaje guardado con user_id: ${saveResult.userId}`);
+      } else {
+        console.log(`❌ [${requestId}] Error guardando mensaje: ${saveResult.error}`);
+        return { success: false, error: saveResult.error };
+      }
+    } else {
+      console.log(`ℹ️ [${requestId}] No hay contenido de texto para guardar`);
+    }
+
+    // Procesar respuesta del proveedor (solo para texto)
     if (text?.body) {
       console.log(`🔄 [${requestId}] Iniciando processProviderResponse para:`, normalizedFrom);
       
-      const success = await OrderNotificationService.processProviderResponse(normalizedFrom, text.body);
-      
-      if (success) {
-        console.log(`✅ [${requestId}] Respuesta del proveedor procesada exitosamente`);
-      } else {
-        console.log(`ℹ️ [${requestId}] No se encontró pedido pendiente para este número:`, normalizedFrom);
+      try {
+        console.log(`🔧 [${requestId}] DEBUG - Antes de llamar a processProviderResponse`);
+        const success = await OrderNotificationService.processProviderResponse(normalizedFrom, text.body);
+        console.log(`🔧 [${requestId}] DEBUG - Después de processProviderResponse, resultado:`, success);
+        
+        if (success) {
+          console.log(`✅ [${requestId}] Respuesta del proveedor procesada exitosamente`);
+        } else {
+          console.log(`ℹ️ [${requestId}] No se encontró pedido pendiente para este número:`, normalizedFrom);
+        }
+      } catch (error) {
+        console.error(`❌ [${requestId}] ERROR en processProviderResponse:`, error);
+        if (error instanceof Error) {
+          console.error(`❌ [${requestId}] Stack trace:`, error.stack);
+        }
       }
-    } else {
-      console.log(`⚠️ [${requestId}] Mensaje sin texto recibido de:`, normalizedFrom);
+    } else if (!image && !document) {
+      console.log(`⚠️ [${requestId}] Mensaje sin texto ni archivo recibido de:`, normalizedFrom);
     }
     
     const duration = Date.now() - messageStartTime;
     console.log(`✅ [${requestId}] Mensaje procesado en ${duration}ms`);
     
-    return { success: true, duration: duration };
+    return { success: true, duration: duration, type: 'text' };
     
   } catch (error) {
     const duration = Date.now() - messageStartTime;
@@ -323,6 +364,332 @@ async function processWhatsAppMessage(message: any, requestId: string) {
     return { success: false, error: error instanceof Error ? error.message : 'Error desconocido' };
   }
 }
+
+// 🔧 NUEVA FUNCIÓN: Procesar archivos multimedia como facturas
+async function processMediaAsInvoice(providerPhone: string, media: any, requestId: string) {
+  try {
+    console.log(`📎 [${requestId}] Procesando archivo multimedia como factura...`);
+    console.log(`📱 [${requestId}] Número de teléfono recibido:`, providerPhone);
+    
+    // Obtener URL del archivo desde WhatsApp
+    let mediaUrl = '';
+    let mediaType = '';
+    
+    console.log(`🔍 [${requestId}] Estructura del mensaje multimedia:`, JSON.stringify(media, null, 2));
+    
+    if (media.image) {
+      mediaUrl = media.image.link || media.image.url || media.image.id;
+      mediaType = 'image';
+      console.log(`🖼️ [${requestId}] Imagen detectada:`, { link: media.image.link, url: media.image.url, id: media.image.id });
+    } else if (media.document) {
+      mediaUrl = media.document.link || media.document.url || media.document.id;
+      mediaType = media.document.mime_type || 'document';
+      console.log(`📄 [${requestId}] Documento detectado:`, { link: media.document.link, url: media.document.url, id: media.document.id });
+    }
+    
+    // Intentar obtener URL de diferentes ubicaciones posibles
+    if (!mediaUrl) {
+      // Buscar en campos alternativos
+      if (media.id) {
+        mediaUrl = `https://graph.facebook.com/v18.0/${media.id}`;
+        console.log(`🔗 [${requestId}] Usando ID como URL alternativa:`, mediaUrl);
+      } else {
+        console.log(`❌ [${requestId}] No se pudo obtener URL del archivo. Estructura:`, JSON.stringify(media, null, 2));
+        return { success: false, error: 'No se pudo obtener URL del archivo' };
+      }
+    }
+    
+    console.log(`📎 [${requestId}] Archivo detectado:`, { mediaUrl, mediaType, providerPhone });
+    
+    // Buscar proveedor por número de teléfono
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    
+    // 🔧 MEJORA: Búsqueda más robusta de proveedores
+    const { PhoneNumberService } = await import('../../../../lib/phoneNumberService');
+    
+    // Normalizar el número recibido
+    const normalizedPhone = PhoneNumberService.normalizeUnified(providerPhone);
+    console.log(`🔧 [${requestId}] Número normalizado:`, normalizedPhone);
+    
+    // Generar variantes de búsqueda
+    const searchVariants = PhoneNumberService.searchVariants(providerPhone);
+    console.log(`🔍 [${requestId}] Variantes de búsqueda:`, searchVariants);
+    
+    // 🔧 MEJORA: Búsqueda más eficiente con OR lógico
+    let provider = null;
+    
+    // Primero intentar con búsqueda exacta por cada variante
+    for (const variant of searchVariants) {
+      console.log(`🔍 [${requestId}] Buscando proveedor con variante:`, variant);
+      
+      const { data: providerData, error: providerError } = await supabase
+        .from('providers')
+        .select('id, name, phone')
+        .eq('phone', variant)
+        .single();
+      
+      if (!providerError && providerData) {
+        provider = providerData;
+        console.log(`✅ [${requestId}] Proveedor encontrado con búsqueda exacta:`, provider.name, `(${provider.phone})`);
+        break;
+      }
+    }
+    
+    // 🔧 MEJORA: Si no se encuentra, intentar búsqueda más flexible
+    if (!provider) {
+      console.log(`⚠️ [${requestId}] No se encontró proveedor con búsqueda exacta, intentando búsqueda flexible...`);
+      
+      // Búsqueda por similitud de números (últimos 8-10 dígitos)
+      const lastDigits = providerPhone.replace(/\D/g, '').slice(-8);
+      if (lastDigits.length >= 8) {
+        console.log(`🔍 [${requestId}] Buscando por últimos dígitos:`, lastDigits);
+        
+        const { data: providers, error: searchError } = await supabase
+          .from('providers')
+          .select('id, name, phone')
+          .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`);
+        
+        if (!searchError && providers && providers.length > 0) {
+          // Encontrar la mejor coincidencia
+          const bestMatch = providers.find(p => {
+            const providerDigits = p.phone.replace(/\D/g, '').slice(-8);
+            return providerDigits === lastDigits;
+          });
+          
+          if (bestMatch) {
+            provider = bestMatch;
+            console.log(`✅ [${requestId}] Proveedor encontrado con búsqueda flexible:`, provider.name, `(${provider.phone})`);
+          }
+        }
+      }
+    }
+    
+    // 🔧 MEJORA: Si aún no se encuentra, mostrar información de debug
+    if (!provider) {
+      console.log(`❌ [${requestId}] No se pudo encontrar proveedor. Información de debug:`);
+      console.log(`📱 [${requestId}] Número recibido:`, providerPhone);
+      console.log(`🔧 [${requestId}] Número normalizado:`, normalizedPhone);
+      console.log(`🔍 [${requestId}] Variantes de búsqueda:`, searchVariants);
+      
+      // Intentar obtener todos los proveedores para debug
+      const { data: allProviders, error: debugError } = await supabase
+        .from('providers')
+        .select('id, name, phone')
+        .limit(5);
+      
+      if (!debugError && allProviders) {
+        console.log(`🔍 [${requestId}] Primeros 5 proveedores en BD:`, allProviders.map(p => ({ name: p.name, phone: p.phone })));
+      }
+      
+      return { success: false, error: 'Proveedor no encontrado' };
+    }
+    
+    // Buscar orden pendiente más reciente del proveedor
+    const { data: latestOrder, error: orderError } = await supabase
+      .from('orders')
+      .select('id, order_number, total_amount, status')
+      .eq('provider_id', provider.id)
+      .is('receipt_url', null)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (orderError || !latestOrder || latestOrder.length === 0) {
+      console.log(`⚠️ [${requestId}] No se encontraron órdenes pendientes para proveedor:`, provider.name);
+      return { success: false, error: 'No se encontraron órdenes pendientes para este proveedor' };
+    }
+    
+    const orderToUpdate = latestOrder[0];
+    console.log(`📋 [${requestId}] Orden pendiente encontrada:`, orderToUpdate.order_number);
+    
+    // Descargar archivo desde WhatsApp y subirlo a Supabase Storage
+    const { data: fileBuffer, error: downloadError } = await downloadMediaFromWhatsApp(mediaUrl, requestId);
+    
+    if (downloadError || !fileBuffer) {
+      return { success: false, error: 'Error descargando archivo desde WhatsApp' };
+    }
+    
+    // Generar nombre único para el archivo
+    const fileName = `invoice_${Date.now()}_${provider.id}_${orderToUpdate.order_number}.${mediaType === 'image' ? 'jpg' : 'pdf'}`;
+    const filePath = `invoices/${provider.id}/${fileName}`;
+    
+    // Subir archivo a Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('documents')
+      .upload(filePath, fileBuffer, {
+        contentType: mediaType === 'image' ? 'image/jpeg' : 'application/pdf'
+      });
+    
+    if (uploadError) {
+      console.error(`❌ [${requestId}] Error subiendo archivo a Supabase:`, uploadError);
+      return { success: false, error: 'Error subiendo archivo a Supabase' };
+    }
+    
+    // Obtener URL pública del archivo
+    const { data: { publicUrl } } = supabase.storage
+      .from('documents')
+      .getPublicUrl(filePath);
+    
+    // Asociar factura a la orden
+    const { error: updateError } = await supabase
+      .from('orders')
+      .update({
+        receipt_url: publicUrl,
+        status: 'invoice_received',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', orderToUpdate.id);
+    
+    if (updateError) {
+      console.error(`❌ [${requestId}] Error asociando factura a orden:`, updateError);
+      return { success: false, error: 'Error asociando factura a orden' };
+    }
+    
+    console.log(`✅ [${requestId}] Factura asociada exitosamente a orden ${orderToUpdate.order_number}`);
+    
+    // 🔧 NUEVA FUNCIONALIDAD: Guardar mensaje de factura en el chat
+    try {
+      const messageSid = `invoice_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      const { error: messageError } = await supabase
+        .from('whatsapp_messages')
+        .insert([{
+          content: `📎 Factura recibida para orden ${orderToUpdate.order_number}`,
+          message_type: 'received',
+          status: 'delivered',
+          contact_id: providerPhone,
+          user_id: null, // Mensaje del proveedor
+          message_sid: messageSid,
+          timestamp: new Date().toISOString(),
+          created_at: new Date().toISOString()
+        }]);
+      
+      if (messageError) {
+        console.error(`❌ [${requestId}] Error guardando mensaje de factura:`, messageError);
+      } else {
+        console.log(`✅ [${requestId}] Mensaje de factura guardado en chat:`, messageSid);
+      }
+    } catch (error) {
+      console.error(`❌ [${requestId}] Error guardando mensaje de factura:`, error);
+    }
+    
+    return {
+      success: true,
+      orderId: orderToUpdate.id,
+      orderNumber: orderToUpdate.order_number,
+      fileUrl: publicUrl
+    };
+    
+  } catch (error) {
+    console.error(`❌ [${requestId}] Error en processMediaAsInvoice:`, error);
+    return { success: false, error: error instanceof Error ? error.message : 'Error desconocido' };
+  }
+}
+
+// 🔧 FUNCIÓN AUXILIAR: Descargar archivo desde WhatsApp
+async function downloadMediaFromWhatsApp(mediaUrl: string, requestId: string) {
+  try {
+    console.log(`📥 [${requestId}] Descargando archivo desde WhatsApp:`, mediaUrl);
+    
+    // Obtener token de acceso de WhatsApp
+    const accessToken = process.env.WHATSAPP_API_KEY;
+    if (!accessToken) {
+      console.error(`❌ [${requestId}] Token de WhatsApp no configurado`);
+      return { data: null, error: 'Token de WhatsApp no configurado' };
+    }
+    
+    // 🔧 MEJORA: Validar URL antes de descargar
+    if (!mediaUrl || !mediaUrl.startsWith('http')) {
+      console.error(`❌ [${requestId}] URL de archivo inválida:`, mediaUrl);
+      return { data: null, error: 'URL de archivo inválida' };
+    }
+    
+    console.log(`🔐 [${requestId}] Iniciando descarga con token:`, accessToken.substring(0, 10) + '...');
+    
+    // Descargar archivo con timeout y headers apropiados
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
+    
+    try {
+      const response = await fetch(mediaUrl, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'User-Agent': 'GastronomySaaS/1.0'
+        },
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'No se pudo leer respuesta');
+        console.error(`❌ [${requestId}] Error HTTP ${response.status} descargando archivo:`, errorText);
+        return { data: null, error: `Error HTTP ${response.status}: ${response.statusText}` };
+      }
+      
+      const contentType = response.headers.get('content-type');
+      const contentLength = response.headers.get('content-length');
+      
+      console.log(`📊 [${requestId}] Respuesta recibida:`, {
+        status: response.status,
+        contentType,
+        contentLength: contentLength ? `${contentLength} bytes` : 'Desconocido'
+      });
+      
+      // 🔧 MEJORA: Validar tipo de contenido
+      if (contentType && !contentType.includes('image') && !contentType.includes('pdf') && !contentType.includes('application')) {
+        console.warn(`⚠️ [${requestId}] Tipo de contenido inesperado:`, contentType);
+      }
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      
+      console.log(`✅ [${requestId}] Archivo descargado exitosamente:`, {
+        bytes: buffer.length,
+        kilobytes: (buffer.length / 1024).toFixed(2),
+        contentType
+      });
+      
+      return { data: buffer, error: null };
+      
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      
+      if (fetchError.name === 'AbortError') {
+        console.error(`⏰ [${requestId}] Timeout descargando archivo (30s)`);
+        return { data: null, error: 'Timeout descargando archivo' };
+      }
+      
+      throw fetchError;
+    }
+    
+  } catch (error) {
+    console.error(`❌ [${requestId}] Error descargando archivo:`, error);
+    
+    // 🔧 MEJORA: Clasificar tipos de error
+    let errorMessage = 'Error desconocido descargando archivo';
+    
+    if (error instanceof Error) {
+      if (error.message.includes('fetch')) {
+        errorMessage = 'Error de red al descargar archivo';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Timeout al descargar archivo';
+      } else if (error.message.includes('unauthorized')) {
+        errorMessage = 'No autorizado para descargar archivo';
+      } else {
+        errorMessage = error.message;
+      }
+    }
+    
+    return { data: null, error: errorMessage };
+  }
+}
+
+// 🔧 FUNCIÓN ELIMINADA: sendInvoiceConfirmation ya no se usa
+// Se eliminó para simplificar el flujo y evitar confirmaciones innecesarias
 
 // 🔧 FUNCIÓN MEJORADA: Guardar mensaje con user_id asignado automáticamente
 async function saveMessageWithUserId(contactId: string, content: string, timestamp: string, requestId: string) {
@@ -339,24 +706,70 @@ async function saveMessageWithUserId(contactId: string, content: string, timesta
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // 🔧 CORRECCIÓN: Buscar usuario de la app que tenga este número como proveedor
-    // Buscar tanto con + como sin + para mayor compatibilidad
-    const { data: providers, error: providersError } = await supabase
-      .from('providers')
-      .select('user_id, phone')
-      .or(`phone.eq.${contactId},phone.eq.${contactId.replace('+', '')}`);
-
-    if (providersError) {
-      console.error(`❌ [${requestId}] Error buscando proveedor:`, providersError);
-      return { success: false, error: 'Error buscando proveedor' };
+    // 🔧 MEJORA: Usar normalización unificada para búsquedas
+    const { PhoneNumberService } = await import('../../../../lib/phoneNumberService');
+    const searchVariants = PhoneNumberService.searchVariants(contactId);
+    
+    // 🔧 MEJORA: Log del número normalizado esperado para debugging
+    const expectedNormalized = PhoneNumberService.normalizeUnified(contactId);
+    console.log(`🔍 [${requestId}] Número normalizado esperado para búsqueda:`, expectedNormalized);
+    console.log(`🔍 [${requestId}] Variantes de búsqueda:`, searchVariants);
+    
+    let userId = null;
+    
+    // 🔧 MEJORA: Búsqueda más robusta de proveedores
+    if (searchVariants.length > 0) {
+      // Buscar por cada variante hasta encontrar un proveedor
+      for (const variant of searchVariants) {
+        console.log(`🔍 [${requestId}] Buscando proveedor con variante:`, variant);
+        
+        const { data: provider, error: providerError } = await supabase
+          .from('providers')
+          .select('user_id, phone, name')
+          .eq('phone', variant)
+          .single();
+        
+        if (!providerError && provider) {
+          userId = provider.user_id;
+          console.log(`✅ [${requestId}] Proveedor encontrado:`, provider.name, `(${provider.phone}) - User ID:`, userId);
+          break;
+        }
+      }
+    }
+    
+    // 🔧 MEJORA: Si no se encuentra, intentar búsqueda más flexible
+    if (!userId) {
+      console.log(`⚠️ [${requestId}] No se encontró proveedor con búsqueda exacta, intentando búsqueda flexible...`);
+      
+      // Búsqueda por similitud de números (últimos 8-10 dígitos)
+      const lastDigits = contactId.replace(/\D/g, '').slice(-8);
+      if (lastDigits.length >= 8) {
+        console.log(`🔍 [${requestId}] Buscando por últimos dígitos:`, lastDigits);
+        
+        const { data: providers, error: searchError } = await supabase
+          .from('providers')
+          .select('user_id, phone, name')
+          .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`);
+        
+        if (!searchError && providers && providers.length > 0) {
+          // Encontrar la mejor coincidencia
+          const bestMatch = providers.find(p => {
+            const providerDigits = p.phone.replace(/\D/g, '').slice(-8);
+            return providerDigits === lastDigits;
+          });
+          
+          if (bestMatch) {
+            userId = bestMatch.user_id;
+            console.log(`✅ [${requestId}] Proveedor encontrado con búsqueda flexible:`, bestMatch.name, `(${bestMatch.phone}) - User ID:`, userId);
+          }
+        }
+      }
     }
 
-    let userId = null;
-    if (providers && providers.length > 0) {
-      userId = providers[0].user_id; // Este es el user_id del usuario de la app
-      console.log(`✅ [${requestId}] Encontrado usuario de la app ${userId} para proveedor ${contactId}`);
-    } else {
+    if (!userId) {
       console.log(`⚠️ [${requestId}] No se encontró usuario de la app para proveedor ${contactId}`);
+    } else {
+      console.log(`✅ [${requestId}] Encontrado usuario de la app ${userId} para proveedor ${contactId}`);
     }
 
     // Guardar mensaje con user_id del usuario de la app

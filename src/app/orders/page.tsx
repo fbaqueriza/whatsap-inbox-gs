@@ -9,7 +9,7 @@ import { ChatProvider } from '../../contexts/ChatContext';
 import { GlobalChatProvider } from '../../contexts/GlobalChatContext';
 import GlobalChatWrapper from '../../components/GlobalChatWrapper';
 import { useOrdersFlowRealtime } from '../../hooks/useSupabaseRealtime';
-import DebugPanel from '../../components/DebugPanel';
+
 
 // Lazy load components to reduce bundle size
 const SuggestedOrders = React.lazy(() => import('../../components/SuggestedOrders'));
@@ -249,18 +249,32 @@ function OrdersPage({ user }: OrdersPageProps) {
         setSuggestedOrder(null);
         
         // Send notification in background
+        console.log('🔧 DEBUG - Iniciando envío de notificación...');
+        console.log('🔧 DEBUG - Orden a notificar:', newOrder);
+        console.log('🔧 DEBUG - Usuario ID:', user.id);
+        
         try {
+          console.log('🔧 DEBUG - Llamando a /api/orders/send-notification...');
           const response = await fetch('/api/orders/send-notification', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ order: newOrder, userId: user.id }),
           });
           
+          console.log('🔧 DEBUG - Respuesta recibida:', {
+            status: response.status,
+            statusText: response.statusText,
+            ok: response.ok
+          });
+          
           if (!response.ok) {
-            console.error('Error enviando notificación:', await response.text());
+            const errorText = await response.text();
+            console.error('❌ Error enviando notificación:', errorText);
+          } else {
+            console.log('✅ Notificación enviada exitosamente');
           }
         } catch (error) {
-          console.error('Error enviando notificación:', error);
+          console.error('❌ Error enviando notificación:', error);
         }
       }
     } catch (error) {
@@ -530,8 +544,7 @@ function OrdersPage({ user }: OrdersPageProps) {
           providers={providers}
         />
         
-        {/* Panel de debug */}
-        <DebugPanel />
+
       </main>
     </div>
   );

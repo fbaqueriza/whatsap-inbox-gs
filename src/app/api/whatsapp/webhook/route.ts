@@ -516,22 +516,28 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
     const fileName = `invoice_${Date.now()}_${provider.id}_${orderToUpdate.order_number}.${mediaType === 'image' ? 'jpg' : 'pdf'}`;
     const filePath = `invoices/${provider.id}/${fileName}`;
     
-    // Subir archivo a Supabase Storage
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('documents')
-      .upload(filePath, fileBuffer, {
-        contentType: mediaType === 'image' ? 'image/jpeg' : 'application/pdf'
-      });
+    // 🔧 MEJORA: Usar servicio de storage robusto con verificación automática de bucket
+    const { SupabaseStorageService } = await import('../../../../lib/supabaseStorageService');
+    const storageService = new SupabaseStorageService(requestId);
     
-    if (uploadError) {
-      console.error(`❌ [${requestId}] Error subiendo archivo a Supabase:`, uploadError);
-      return { success: false, error: 'Error subiendo archivo a Supabase' };
+    // Subir archivo usando el servicio robusto
+    const uploadResult = await storageService.uploadFileWithBucketCheck(
+      'files', // Usar bucket existente
+      filePath,
+      fileBuffer,
+      {
+        contentType: mediaType === 'image' ? 'image/jpeg' : 'application/pdf',
+        cacheControl: '3600'
+      }
+    );
+    
+    if (!uploadResult.success) {
+      console.error(`❌ [${requestId}] Error subiendo archivo a Supabase:`, uploadResult.error);
+      return { success: false, error: `Error subiendo archivo: ${uploadResult.error}` };
     }
     
-    // Obtener URL pública del archivo
-    const { data: { publicUrl } } = supabase.storage
-      .from('documents')
-      .getPublicUrl(filePath);
+    const publicUrl = uploadResult.fileUrl;
+    console.log(`✅ [${requestId}] Archivo subido exitosamente a Supabase:`, publicUrl);
     
     // Asociar factura a la orden
     const { error: updateError } = await supabase
@@ -642,6 +648,27 @@ async function downloadMediaFromWhatsApp(mediaUrl: string, requestId: string) {
       // 🔧 MEJORA: Validar tipo de contenido
       if (contentType && !contentType.includes('image') && !contentType.includes('pdf') && !contentType.includes('application')) {
         console.warn(`⚠️ [${requestId}] Tipo de contenido inesperado:`, contentType);
+        
+        // 🔧 MEJORA: Si es JSON, probablemente es un error de WhatsApp
+        if (contentType.includes('application/json')) {
+          console.warn(`⚠️ [${requestId}] WhatsApp devolvió JSON en lugar de archivo. Posible error de API.`);
+          
+          // Intentar leer el contenido JSON para debugging
+          try {
+            const jsonContent = await response.text();
+            console.log(`🔍 [${requestId}] Contenido JSON recibido:`, jsonContent);
+            
+            // Si es un error de WhatsApp, retornar información útil
+            if (jsonContent.includes('error') || jsonContent.includes('Error')) {
+              return { 
+                data: null, 
+                error: `WhatsApp API error: ${jsonContent.substring(0, 200)}` 
+              };
+            }
+          } catch (textError) {
+            console.warn(`⚠️ [${requestId}] No se pudo leer contenido JSON:`, textError);
+          }
+        }
       }
       
       const arrayBuffer = await response.arrayBuffer();

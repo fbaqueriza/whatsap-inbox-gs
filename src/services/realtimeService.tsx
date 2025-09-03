@@ -76,12 +76,30 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   }, []);
 
   // Handlers para mensajes
-  const handleNewMessage = (payload: any) => {
+  const handleNewMessage = async (payload: any) => {
     const newMessage = payload.new;
     if (newMessage) {
       // 🔧 OPTIMIZACIÓN: Filtrar mensajes por user_id del usuario actual
       if (newMessage.user_id && currentUserId && newMessage.user_id !== currentUserId) {
         return; // Ignorar mensajes de otros usuarios
+      }
+
+      // 🔧 NUEVA FUNCIONALIDAD: Para mensajes sin user_id (del proveedor), verificar que el contact_id corresponda a un proveedor del usuario
+      if (!newMessage.user_id && currentUserId) {
+        try {
+          const { data: provider } = await supabase
+            .from('providers')
+            .select('id')
+            .eq('user_id', currentUserId)
+            .eq('phone', newMessage.contact_id)
+            .single();
+          
+          if (!provider) {
+            return; // No es un proveedor del usuario actual
+          }
+        } catch (error) {
+          return; // Error o no es un proveedor del usuario actual
+        }
       }
 
       const message: RealtimeMessage = {
@@ -217,12 +235,34 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
     console.log(`🔗 RealtimeService: Configurando suscripciones para usuario ${currentUserId}`);
 
-    // Suscripción a mensajes con filtro por user_id
+    // Suscripción a mensajes con filtro por user_id Y contact_id de proveedores
     subscribe(
       { 
         table: 'whatsapp_messages', 
         event: '*',
         filter: `user_id=eq.${currentUserId}` // 🔧 FILTRO CRÍTICO: Solo mensajes del usuario actual
+      },
+      {
+        onInsert: handleNewMessage,
+        onUpdate: handleMessageUpdate,
+        onDelete: handleMessageDelete
+      },
+      {
+        debounceMs: 150,
+        retryConfig: {
+          maxRetries: 5,
+          retryDelay: 2000,
+          backoffMultiplier: 1.5
+        }
+      }
+    );
+
+    // 🔧 NUEVA SUSCRIPCIÓN: Mensajes de proveedores (donde contact_id corresponde a proveedores del usuario)
+    subscribe(
+      { 
+        table: 'whatsapp_messages', 
+        event: '*',
+        filter: `user_id=is.null` // 🔧 FILTRO CRÍTICO: Mensajes sin user_id (del proveedor)
       },
       {
         onInsert: handleNewMessage,
@@ -269,6 +309,11 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         table: 'whatsapp_messages', 
         event: '*',
         filter: `user_id=eq.${currentUserId}`
+      });
+      unsubscribe({ 
+        table: 'whatsapp_messages', 
+        event: '*',
+        filter: `user_id=is.null`
       });
       unsubscribe({ 
         table: 'orders', 

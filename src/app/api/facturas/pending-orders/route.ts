@@ -11,22 +11,19 @@ export async function GET(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // SOLO obtener órdenes que realmente tengan facturas asociadas
-    // No más datos mock o números de factura generados automáticamente
-    const { data: ordersWithInvoices, error: invoicesError } = await supabase
+    // Obtener órdenes pendientes de facturación
+    // Estas son las que realmente necesitamos procesar
+    const { data: pendingOrders, error: ordersError } = await supabase
       .from('orders')
       .select(`
         id,
         order_number,
-        invoice_number,
         total_amount,
         currency,
         status,
-        due_date,
         created_at,
-        payment_method,
+        desired_delivery_date,
         provider_id,
-        receipt_url,
         providers!inner(
           id,
           name,
@@ -34,43 +31,35 @@ export async function GET(request: NextRequest) {
           email
         )
       `)
-      .not('invoice_number', 'is', null)  // Solo órdenes CON número de factura
-      .not('receipt_url', 'is', null)     // Solo órdenes CON comprobante
+      .or('invoice_number.is.null,receipt_url.is.null')  // Sin factura o sin comprobante
       .order('created_at', { ascending: false });
 
-    if (invoicesError) {
+    if (ordersError) {
       return NextResponse.json({
         success: false,
-        error: 'Error obteniendo facturas',
-        details: invoicesError.message
+        error: 'Error obteniendo órdenes pendientes',
+        details: ordersError.message
       }, { status: 500 });
     }
 
-    // Transformar solo datos reales, sin fallbacks mock
-    const realInvoices = ordersWithInvoices?.map(order => ({
+    // Transformar órdenes pendientes
+    const pendingInvoices = pendingOrders?.map(order => ({
       id: order.id,
       order_number: order.order_number,
-      invoice_number: order.invoice_number, // Solo si existe
       provider_name: order.providers?.name || 'Proveedor no encontrado',
       total_amount: order.total_amount,
       currency: order.currency,
-      status: order.status,
-      due_date: order.due_date,
+      status: 'pending_invoice', // Estado real: pendiente de factura
       created_at: order.created_at,
-      payment_method: order.payment_method,
-      receipt_url: order.receipt_url
-    })).filter(invoice => 
-      // Filtrar solo facturas válidas
-      invoice.invoice_number && 
-      invoice.total_amount && 
-      invoice.receipt_url
-    ) || [];
+      desired_delivery_date: order.desired_delivery_date,
+      provider_id: order.provider_id
+    })) || [];
 
     return NextResponse.json({
       success: true,
-      invoices: realInvoices,
-      count: realInvoices.length,
-      message: 'Solo facturas reales con comprobantes'
+      pendingOrders: pendingInvoices,
+      count: pendingInvoices.length,
+      message: 'Órdenes pendientes de facturación'
     });
 
   } catch (error) {

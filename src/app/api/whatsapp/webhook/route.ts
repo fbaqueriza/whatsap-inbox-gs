@@ -270,11 +270,13 @@ async function processWhatsAppMessage(message: any, requestId: string) {
   const messageStartTime = Date.now();
   
   try {
-    const { from, text, timestamp } = message;
+    const { from, text, image, document, timestamp } = message;
     
     console.log(`📱 [${requestId}] Procesando mensaje de WhatsApp:`, {
       from,
       text: text?.body,
+      hasImage: !!image,
+      hasDocument: !!document,
       timestamp
     });
 
@@ -284,7 +286,29 @@ async function processWhatsAppMessage(message: any, requestId: string) {
       normalizedFrom = `+${from}`;
     }
 
-    // 🔧 NUEVA FUNCIONALIDAD: Guardar mensaje con user_id asignado
+    // 🔧 NUEVA FUNCIONALIDAD: Procesar archivos multimedia (facturas)
+    if (image || document) {
+      console.log(`📎 [${requestId}] Archivo multimedia detectado, procesando como posible factura...`);
+      
+      try {
+        const mediaResult = await processMediaAsInvoice(normalizedFrom, image || document, requestId);
+        if (mediaResult.success) {
+          console.log(`✅ [${requestId}] Factura procesada exitosamente:`, mediaResult.orderId);
+          
+          // 🔧 NO enviar confirmación - solo procesar silenciosamente
+          
+          const duration = Date.now() - messageStartTime;
+          console.log(`✅ [${requestId}] Factura procesada en ${duration}ms`);
+          return { success: true, duration: duration, type: 'invoice' };
+        } else {
+          console.log(`⚠️ [${requestId}] Archivo no procesado como factura:`, mediaResult.error);
+        }
+      } catch (error) {
+        console.error(`❌ [${requestId}] Error procesando archivo multimedia:`, error);
+      }
+    }
+
+    // 🔧 FUNCIONALIDAD EXISTENTE: Guardar mensaje con user_id asignado
     const saveResult = await saveMessageWithUserId(normalizedFrom, text?.body, timestamp, requestId);
     
     if (saveResult.success) {
@@ -294,7 +318,7 @@ async function processWhatsAppMessage(message: any, requestId: string) {
       return { success: false, error: saveResult.error };
     }
 
-    // Procesar respuesta del proveedor
+    // Procesar respuesta del proveedor (solo para texto)
     if (text?.body) {
       console.log(`🔄 [${requestId}] Iniciando processProviderResponse para:`, normalizedFrom);
       
@@ -314,14 +338,14 @@ async function processWhatsAppMessage(message: any, requestId: string) {
           console.error(`❌ [${requestId}] Stack trace:`, error.stack);
         }
       }
-    } else {
-      console.log(`⚠️ [${requestId}] Mensaje sin texto recibido de:`, normalizedFrom);
+    } else if (!image && !document) {
+      console.log(`⚠️ [${requestId}] Mensaje sin texto ni archivo recibido de:`, normalizedFrom);
     }
     
     const duration = Date.now() - messageStartTime;
     console.log(`✅ [${requestId}] Mensaje procesado en ${duration}ms`);
     
-    return { success: true, duration: duration };
+    return { success: true, duration: duration, type: 'text' };
     
   } catch (error) {
     const duration = Date.now() - messageStartTime;
@@ -333,6 +357,195 @@ async function processWhatsAppMessage(message: any, requestId: string) {
     }
     
     return { success: false, error: error instanceof Error ? error.message : 'Error desconocido' };
+  }
+}
+
+// 🔧 NUEVA FUNCIÓN: Procesar archivos multimedia como facturas
+async function processMediaAsInvoice(providerPhone: string, media: any, requestId: string) {
+  try {
+    console.log(`📎 [${requestId}] Procesando archivo multimedia como factura...`);
+    
+    // Obtener URL del archivo desde WhatsApp
+    let mediaUrl = '';
+    let mediaType = '';
+    
+    if (media.image) {
+      mediaUrl = media.image.link;
+      mediaType = 'image';
+    } else if (media.document) {
+      mediaUrl = media.document.link;
+      mediaType = media.document.mime_type || 'document';
+    }
+    
+    if (!mediaUrl) {
+      return { success: false, error: 'No se pudo obtener URL del archivo' };
+    }
+    
+    console.log(`📎 [${requestId}] Archivo detectado:`, { mediaUrl, mediaType, providerPhone });
+    
+    // Buscar proveedor por número de teléfono
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    
+    // Normalizar número para búsqueda
+    const { PhoneNumberService } = await import('../../../../lib/phoneNumberService');
+    const searchVariants = PhoneNumberService.searchVariants(providerPhone);
+    
+    let provider = null;
+    for (const variant of searchVariants) {
+      const { data: providerData, error: providerError } = await supabase
+        .from('providers')
+        .select('id, name, phone')
+        .eq('phone', variant)
+        .single();
+      
+      if (!providerError && providerData) {
+        provider = providerData;
+        console.log(`✅ [${requestId}] Proveedor encontrado:`, provider.name);
+        break;
+      }
+    }
+    
+    if (!provider) {
+      return { success: false, error: 'Proveedor no encontrado' };
+    }
+    
+    // Buscar orden pendiente más reciente del proveedor
+    const { data: latestOrder, error: orderError } = await supabase
+      .from('orders')
+      .select('id, order_number, total_amount, status')
+      .eq('provider_id', provider.id)
+      .is('receipt_url', null)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (orderError || !latestOrder || latestOrder.length === 0) {
+      return { success: false, error: 'No se encontraron órdenes pendientes para este proveedor' };
+    }
+    
+    const orderToUpdate = latestOrder[0];
+    console.log(`📋 [${requestId}] Orden pendiente encontrada:`, orderToUpdate.order_number);
+    
+    // Descargar archivo desde WhatsApp y subirlo a Supabase Storage
+    const { data: fileBuffer, error: downloadError } = await downloadMediaFromWhatsApp(mediaUrl, requestId);
+    
+    if (downloadError || !fileBuffer) {
+      return { success: false, error: 'Error descargando archivo desde WhatsApp' };
+    }
+    
+    // Generar nombre único para el archivo
+    const fileName = `invoice_${Date.now()}_${provider.id}_${orderToUpdate.order_number}.${mediaType === 'image' ? 'jpg' : 'pdf'}`;
+    const filePath = `invoices/${provider.id}/${fileName}`;
+    
+    // Subir archivo a Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('documents')
+      .upload(filePath, fileBuffer, {
+        contentType: mediaType === 'image' ? 'image/jpeg' : 'application/pdf'
+      });
+    
+    if (uploadError) {
+      console.error(`❌ [${requestId}] Error subiendo archivo a Supabase:`, uploadError);
+      return { success: false, error: 'Error subiendo archivo a Supabase' };
+    }
+    
+    // Obtener URL pública del archivo
+    const { data: { publicUrl } } = supabase.storage
+      .from('documents')
+      .getPublicUrl(filePath);
+    
+    // Asociar factura a la orden
+    const { error: updateError } = await supabase
+      .from('orders')
+      .update({
+        receipt_url: publicUrl,
+        status: 'invoice_received',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', orderToUpdate.id);
+    
+    if (updateError) {
+      console.error(`❌ [${requestId}] Error asociando factura a orden:`, updateError);
+      return { success: false, error: 'Error asociando factura a orden' };
+    }
+    
+    console.log(`✅ [${requestId}] Factura asociada exitosamente a orden ${orderToUpdate.order_number}`);
+    
+    return {
+      success: true,
+      orderId: orderToUpdate.id,
+      orderNumber: orderToUpdate.order_number,
+      fileUrl: publicUrl
+    };
+    
+  } catch (error) {
+    console.error(`❌ [${requestId}] Error en processMediaAsInvoice:`, error);
+    return { success: false, error: error instanceof Error ? error.message : 'Error desconocido' };
+  }
+}
+
+// 🔧 FUNCIÓN AUXILIAR: Descargar archivo desde WhatsApp
+async function downloadMediaFromWhatsApp(mediaUrl: string, requestId: string) {
+  try {
+    console.log(`📥 [${requestId}] Descargando archivo desde WhatsApp:`, mediaUrl);
+    
+    // Obtener token de acceso de WhatsApp
+    const accessToken = process.env.WHATSAPP_API_KEY;
+    if (!accessToken) {
+      return { data: null, error: 'Token de WhatsApp no configurado' };
+    }
+    
+    // Descargar archivo
+    const response = await fetch(mediaUrl, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    
+    if (!response.ok) {
+      return { data: null, error: `Error HTTP ${response.status} descargando archivo` };
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    console.log(`✅ [${requestId}] Archivo descargado exitosamente:`, buffer.length, 'bytes');
+    
+    return { data: buffer, error: null };
+    
+  } catch (error) {
+    console.error(`❌ [${requestId}] Error descargando archivo:`, error);
+    return { data: null, error: error instanceof Error ? error.message : 'Error desconocido' };
+  }
+}
+
+// 🔧 FUNCIÓN AUXILIAR: Enviar confirmación de factura recibida
+async function sendInvoiceConfirmation(providerPhone: string, orderNumber: string, requestId: string) {
+  try {
+    console.log(`📤 [${requestId}] Enviando confirmación de factura recibida...`);
+    
+    const { MetaWhatsAppService } = await import('../../../../lib/metaWhatsAppService');
+    const metaService = new MetaWhatsAppService();
+    
+    // 🔧 SOLO confirmación simple, SIN detalles del pedido
+    const message = `✅ *Factura recibida exitosamente*\n\n` +
+                   `📋 Orden: ${orderNumber}\n` +
+                   `📎 Documento procesado y asociado\n\n` +
+                   `Gracias por enviar la factura.`;
+    
+    const result = await metaService.sendMessage(providerPhone, message);
+    
+    if (result) {
+      console.log(`✅ [${requestId}] Confirmación enviada exitosamente`);
+    } else {
+      console.log(`⚠️ [${requestId}] No se pudo enviar confirmación`);
+    }
+    
+  } catch (error) {
+    console.error(`❌ [${requestId}] Error enviando confirmación:`, error);
   }
 }
 

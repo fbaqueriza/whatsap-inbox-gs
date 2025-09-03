@@ -4,15 +4,12 @@ import React, { useState, useEffect } from 'react';
 import { 
   FileText, 
   Upload, 
-  Download, 
-  Eye, 
   CheckCircle, 
-  Clock, 
   AlertCircle,
-  DollarSign,
   Building2,
   Calendar,
-  Search
+  Receipt,
+  X
 } from 'lucide-react';
 
 interface Invoice {
@@ -26,6 +23,19 @@ interface Invoice {
   due_date: string;
   created_at: string;
   payment_method: string;
+  receipt_url: string;
+}
+
+interface PendingOrder {
+  id: string;
+  order_number: string;
+  provider_name: string;
+  total_amount: number;
+  currency: string;
+  status: string;
+  created_at: string;
+  desired_delivery_date: string;
+  provider_id: string;
 }
 
 interface Provider {
@@ -35,26 +45,18 @@ interface Provider {
   email: string;
 }
 
-interface PaymentSummary {
-  provider_id: string;
-  provider_name: string;
-  invoices: Invoice[];
-  total_amount: number;
-  currency: string;
-}
-
 export default function FacturasPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [selectedInvoices, setSelectedInvoices] = useState<string[]>([]);
-  const [paymentSummaries, setPaymentSummaries] = useState<PaymentSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [searchTerm, setSearchTerm] = useState<string>('');
-
-  // Estados para modales
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [showDocumentModal, setShowDocumentModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<'invoices' | 'pending'>('pending');
+  
+  // 🔧 NUEVO: Estado para modal de subida de factura
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState<PendingOrder | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -64,9 +66,13 @@ export default function FacturasPage() {
     try {
       setLoading(true);
       
-      // Obtener facturas (orders)
+      // Obtener facturas reales (con comprobantes)
       const invoicesResponse = await fetch('/api/facturas/invoices');
       const invoicesData = await invoicesResponse.json();
+      
+      // Obtener órdenes pendientes de facturación
+      const pendingResponse = await fetch('/api/facturas/pending-orders');
+      const pendingData = await pendingResponse.json();
       
       // Obtener proveedores
       const providersResponse = await fetch('/api/facturas/providers');
@@ -74,6 +80,10 @@ export default function FacturasPage() {
 
       if (invoicesData.success) {
         setInvoices(invoicesData.invoices);
+      }
+      
+      if (pendingData.success) {
+        setPendingOrders(pendingData.pendingOrders);
       }
       
       if (providersData.success) {
@@ -86,48 +96,12 @@ export default function FacturasPage() {
     }
   };
 
-  const handleInvoiceSelection = (invoiceId: string, checked: boolean) => {
-    if (checked) {
-      setSelectedInvoices(prev => [...prev, invoiceId]);
-    } else {
-      setSelectedInvoices(prev => prev.filter(id => id !== invoiceId));
-    }
-  };
-
-  const generatePaymentSummary = () => {
-    if (selectedInvoices.length === 0) return;
-
-    const selectedInvoiceData = invoices.filter(inv => selectedInvoices.includes(inv.id));
-    
-    // Agrupar por proveedor
-    const groupedByProvider = selectedInvoiceData.reduce((acc, invoice) => {
-      const provider = providers.find(p => p.name === invoice.provider_name);
-      if (!provider) return acc;
-
-      if (!acc[provider.id]) {
-        acc[provider.id] = {
-          provider_id: provider.id,
-          provider_name: provider.name,
-          invoices: [],
-          total_amount: 0,
-          currency: invoice.currency
-        };
-      }
-
-      acc[provider.id].invoices.push(invoice);
-      acc[provider.id].total_amount += invoice.total_amount;
-      
-      return acc;
-    }, {} as Record<string, PaymentSummary>);
-
-    setPaymentSummaries(Object.values(groupedByProvider));
-    setShowPaymentModal(true);
-  };
-
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'pending_payment':
-        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800"><Clock className="w-3 h-3 mr-1" />Pendiente</span>;
+      case 'pending_invoice':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800"><Receipt className="w-3 h-3 mr-1" />Pendiente de Factura</span>;
+      case 'invoice_received':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><Receipt className="w-3 h-3 mr-1" />Factura Recibida</span>;
       case 'paid':
         return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"><CheckCircle className="w-3 h-3 mr-1" />Pagado</span>;
       case 'overdue':
@@ -137,12 +111,58 @@ export default function FacturasPage() {
     }
   };
 
-  const filteredInvoices = invoices.filter(invoice => {
-    const matchesStatus = filterStatus === 'all' || invoice.status === filterStatus;
-    const matchesSearch = invoice.invoice_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         invoice.provider_name.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesStatus && matchesSearch;
-  });
+  // 🔧 NUEVA FUNCIÓN: Abrir modal de subida
+  const openUploadModal = (order: PendingOrder) => {
+    setSelectedOrder(order);
+    setShowUploadModal(true);
+    setUploadMessage('');
+  };
+
+  // 🔧 NUEVA FUNCIÓN: Cerrar modal
+  const closeUploadModal = () => {
+    setShowUploadModal(false);
+    setSelectedOrder(null);
+    setUploading(false);
+    setUploadMessage('');
+  };
+
+  // 🔧 NUEVA FUNCIÓN: Subir factura
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !selectedOrder) return;
+
+    setUploading(true);
+    setUploadMessage('Subiendo factura...');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('providerId', selectedOrder.provider_id);
+      formData.append('orderId', selectedOrder.id);
+
+      const response = await fetch('/api/facturas/upload-invoice', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setUploadMessage('✅ Factura subida exitosamente');
+        // Recargar datos
+        setTimeout(() => {
+          fetchData();
+          closeUploadModal();
+        }, 1500);
+      } else {
+        setUploadMessage(`❌ Error: ${result.error}`);
+      }
+    } catch (error) {
+      setUploadMessage(`❌ Error de conexión: ${error}`);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -161,39 +181,46 @@ export default function FacturasPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Sistema de Facturas</h1>
-          <p className="text-gray-600 mt-2">Gestión completa de facturas y pagos</p>
+          <p className="text-gray-600 mt-2">Gestión real de facturas y órdenes pendientes</p>
         </div>
         <div className="flex space-x-3">
           <button 
-            onClick={() => setShowDocumentModal(true)}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            onClick={() => setActiveTab('pending')}
+            className={`inline-flex items-center px-4 py-2 border rounded-md shadow-sm text-sm font-medium ${
+              activeTab === 'pending' 
+                ? 'border-blue-500 text-blue-600 bg-blue-50' 
+                : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+            }`}
           >
-            <Upload className="w-4 h-4 mr-2" />
-            Subir Comprobante
+            <Receipt className="w-4 h-4 mr-2" />
+            Órdenes Pendientes ({pendingOrders.length})
           </button>
           <button 
-            onClick={generatePaymentSummary}
-            disabled={selectedInvoices.length === 0}
-            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => setActiveTab('invoices')}
+            className={`inline-flex items-center px-4 py-2 border rounded-md shadow-sm text-sm font-medium ${
+              activeTab === 'invoices' 
+                ? 'border-blue-500 text-blue-600 bg-blue-50' 
+                : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+            }`}
           >
-            <DollarSign className="w-4 h-4 mr-2" />
-            Generar Resumen de Pago ({selectedInvoices.length})
+            <Receipt className="w-4 h-4 mr-2" />
+            Facturas ({invoices.length})
           </button>
         </div>
       </div>
 
       {/* Estadísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white overflow-hidden shadow rounded-lg">
           <div className="p-5">
             <div className="flex items-center">
               <div className="flex-shrink-0">
-                <FileText className="h-6 w-6 text-gray-400" />
+                <Receipt className="h-6 w-6 text-yellow-400" />
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Total Facturas</dt>
-                  <dd className="text-lg font-medium text-gray-900">{invoices.length}</dd>
+                  <dt className="text-sm font-medium text-gray-500 truncate">Pendientes de Factura</dt>
+                  <dd className="text-lg font-medium text-yellow-600">{pendingOrders.length}</dd>
                 </dl>
               </div>
             </div>
@@ -204,14 +231,12 @@ export default function FacturasPage() {
           <div className="p-5">
             <div className="flex items-center">
               <div className="flex-shrink-0">
-                <Clock className="h-6 w-6 text-orange-400" />
+                <Receipt className="h-6 w-6 text-blue-400" />
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Pendientes de Pago</dt>
-                  <dd className="text-lg font-medium text-orange-600">
-                    {invoices.filter(inv => inv.status === 'pending_payment').length}
-                  </dd>
+                  <dt className="text-sm font-medium text-gray-500 truncate">Facturas Recibidas</dt>
+                  <dd className="text-lg font-medium text-blue-600">{invoices.length}</dd>
                 </dl>
               </div>
             </div>
@@ -226,28 +251,8 @@ export default function FacturasPage() {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Pagadas</dt>
-                  <dd className="text-lg font-medium text-green-600">
-                    {invoices.filter(inv => inv.status === 'paid').length}
-                  </dd>
-                </dl>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-white overflow-hidden shadow rounded-lg">
-          <div className="p-5">
-            <div className="flex items-center">
-              <div className="flex-shrink-0">
-                <AlertCircle className="h-6 w-6 text-red-400" />
-              </div>
-              <div className="ml-5 w-0 flex-1">
-                <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Vencidas</dt>
-                  <dd className="text-lg font-medium text-red-600">
-                    {invoices.filter(inv => inv.status === 'overdue').length}
-                  </dd>
+                  <dt className="text-sm font-medium text-gray-500 truncate">Total Proveedores</dt>
+                  <dd className="text-lg font-medium text-green-600">{providers.length}</dd>
                 </dl>
               </div>
             </div>
@@ -255,238 +260,222 @@ export default function FacturasPage() {
         </div>
       </div>
 
-      {/* Filtros y Búsqueda */}
-      <div className="bg-white shadow rounded-lg">
-        <div className="px-4 py-5 sm:p-6">
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="flex-1">
-              <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">Buscar Facturas</label>
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                <input
-                  id="search"
-                  type="text"
-                  placeholder="Buscar por número de factura o proveedor..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            </div>
+      {/* Contenido de Tabs */}
+      {activeTab === 'pending' && (
+        <div className="bg-white shadow rounded-lg">
+          <div className="px-4 py-5 sm:p-6">
+            <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+              Órdenes Pendientes de Facturación
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Estas órdenes esperan que el proveedor envíe la factura correspondiente
+            </p>
             
-            <div>
-              <label htmlFor="status-filter" className="block text-sm font-medium text-gray-700 mb-2">Filtrar por Estado</label>
-              <select
-                id="status-filter"
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md leading-5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="all">Todos los estados</option>
-                <option value="pending_payment">Pendientes de pago</option>
-                <option value="paid">Pagadas</option>
-                <option value="overdue">Vencidas</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabla de Facturas */}
-      <div className="bg-white shadow rounded-lg">
-        <div className="px-4 py-5 sm:p-6">
-          <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">Facturas</h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
-                    <input
-                      type="checkbox"
-                      checked={selectedInvoices.length === filteredInvoices.length}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedInvoices(filteredInvoices.map(inv => inv.id));
-                        } else {
-                          setSelectedInvoices([]);
-                        }
-                      }}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                    />
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Número</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Proveedor</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monto</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vencimiento</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredInvoices.map((invoice) => (
-                  <tr key={invoice.id}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <input
-                        type="checkbox"
-                        checked={selectedInvoices.includes(invoice.id)}
-                        onChange={(e) => handleInvoiceSelection(invoice.id, e.target.checked)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                      />
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">{invoice.invoice_number}</div>
-                        <div className="text-sm text-gray-500">{invoice.order_number}</div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center space-x-2">
-                        <Building2 className="h-4 w-4 text-gray-400" />
-                        <span className="text-sm text-gray-900">{invoice.provider_name}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
-                        {invoice.currency} {invoice.total_amount.toLocaleString()}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {getStatusBadge(invoice.status)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center space-x-2">
-                        <Calendar className="h-4 w-4 text-gray-400" />
-                        <span className="text-sm text-gray-900">{new Date(invoice.due_date).toLocaleDateString()}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex space-x-2">
-                        <button className="text-blue-600 hover:text-blue-900">
-                          <Eye className="h-4 w-4" />
-                        </button>
-                        <button className="text-blue-600 hover:text-blue-900">
-                          <Download className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* Modal de Resumen de Pago */}
-      {showPaymentModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-11/12 max-w-4xl shadow-lg rounded-md bg-white">
-            <div className="mt-3">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Resumen de Pago por Proveedor</h3>
-              
-              <div className="space-y-6">
-                {paymentSummaries.map((summary) => (
-                  <div key={summary.provider_id} className="border rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-lg font-medium text-gray-900">{summary.provider_name}</h4>
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        {summary.currency} {summary.total_amount.toLocaleString()}
-                      </span>
-                    </div>
-                    
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Número de Factura</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monto</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vencimiento</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {summary.invoices.map((invoice) => (
-                            <tr key={invoice.id}>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{invoice.invoice_number}</td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{invoice.currency} {invoice.total_amount.toLocaleString()}</td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{new Date(invoice.due_date).toLocaleDateString()}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    
-                    <div className="mt-4 flex justify-end space-x-3">
-                      <button className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                        Descargar Resumen
-                      </button>
-                      <button className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
-                        Procesar Pago
-                      </button>
-                    </div>
-                  </div>
-                ))}
+            {pendingOrders.length === 0 ? (
+              <div className="text-center py-8">
+                <Receipt className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-500">No hay órdenes pendientes de facturación</p>
+                <p className="text-sm text-gray-400">Todas las órdenes ya tienen sus facturas</p>
               </div>
-              
-              <div className="mt-6 flex justify-end">
-                <button
-                  onClick={() => setShowPaymentModal(false)}
-                  className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-                >
-                  Cerrar
-                </button>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Orden</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Proveedor</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monto</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {pendingOrders.map((order) => (
+                      <tr key={order.id}>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">{order.order_number}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center space-x-2">
+                            <Building2 className="h-4 w-4 text-gray-400" />
+                            <span className="text-sm text-gray-900">{order.provider_name}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">
+                            {order.currency} {order.total_amount?.toLocaleString() || 'N/A'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {getStatusBadge(order.status)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center space-x-2">
+                            <Calendar className="h-4 w-4 text-gray-400" />
+                            <span className="text-sm text-gray-900">
+                              {new Date(order.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <button 
+                            onClick={() => openUploadModal(order)}
+                            className="text-blue-600 hover:text-blue-900 p-2 rounded-lg hover:bg-blue-50 transition-colors"
+                            title="Subir factura"
+                          >
+                            <Upload className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Modal de Subida de Comprobantes */}
-      {showDocumentModal && (
+      {activeTab === 'invoices' && (
+        <div className="bg-white shadow rounded-lg">
+          <div className="px-4 py-5 sm:p-6">
+            <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+              Facturas Recibidas
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Facturas reales con comprobantes asociados
+            </p>
+            
+            {invoices.length === 0 ? (
+              <div className="text-center py-8">
+                <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-500">No hay facturas recibidas</p>
+                <p className="text-sm text-gray-400">Las facturas aparecerán aquí cuando los proveedores las envíen</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Orden</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Factura</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Proveedor</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monto</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {invoices.map((invoice) => (
+                      <tr key={invoice.id}>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">{invoice.order_number}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{invoice.invoice_number}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center space-x-2">
+                            <Building2 className="h-4 w-4 text-gray-400" />
+                            <span className="text-sm text-gray-900">{invoice.provider_name}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">
+                            {invoice.currency} {invoice.total_amount?.toLocaleString() || 'N/A'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {getStatusBadge(invoice.status)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <div className="flex space-x-2">
+                            <button className="text-blue-600 hover:text-blue-900">
+                              <FileText className="h-4 w-4" />
+                            </button>
+                            <a 
+                              href={invoice.receipt_url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-green-600 hover:text-green-900"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 🔧 NUEVO: Modal de subida de factura */}
+      {showUploadModal && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
           <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
             <div className="mt-3">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Subir Comprobante de Pago</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium text-gray-900">Subir Factura</h3>
+                <button
+                  onClick={closeUploadModal}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
               
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="provider" className="block text-sm font-medium text-gray-700 mb-2">Proveedor</label>
-                  <select
-                    id="provider"
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-md leading-5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="">Seleccionar proveedor</option>
-                    {providers.map((provider) => (
-                      <option key={provider.id} value={provider.id}>
-                        {provider.name}
-                      </option>
-                    ))}
-                  </select>
+              {selectedOrder && (
+                <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">
+                    <strong>Orden:</strong> {selectedOrder.order_number}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    <strong>Proveedor:</strong> {selectedOrder.provider_name}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    <strong>Monto:</strong> {selectedOrder.currency} {selectedOrder.total_amount?.toLocaleString()}
+                  </p>
                 </div>
-                
-                <div>
-                  <label htmlFor="document" className="block text-sm font-medium text-gray-700 mb-2">Comprobante</label>
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                    <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-sm text-gray-600">
-                      Arrastra y suelta archivos aquí o haz clic para seleccionar
-                    </p>
-                    <button className="mt-4 inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                      Seleccionar Archivo
-                    </button>
-                  </div>
+              )}
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Seleccionar archivo (PDF o imagen)
+                </label>
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={handleFileUpload}
+                  disabled={uploading}
+                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                />
+              </div>
+
+              {uploadMessage && (
+                <div className={`p-3 rounded-lg text-sm ${
+                  uploadMessage.includes('✅') 
+                    ? 'bg-green-50 text-green-800' 
+                    : uploadMessage.includes('❌')
+                    ? 'bg-red-50 text-red-800'
+                    : 'bg-blue-50 text-blue-800'
+                }`}>
+                  {uploadMessage}
                 </div>
-                
-                <div className="flex justify-end space-x-3">
-                  <button
-                    onClick={() => setShowDocumentModal(false)}
-                    className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-                  >
-                    Cancelar
-                  </button>
-                  <button className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
-                    Subir Comprobante
-                  </button>
-                </div>
+              )}
+
+              <div className="flex justify-end space-x-3 mt-6">
+                <button
+                  onClick={closeUploadModal}
+                  disabled={uploading}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
               </div>
             </div>
           </div>

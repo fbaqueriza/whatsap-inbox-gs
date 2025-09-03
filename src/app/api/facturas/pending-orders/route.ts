@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
       provider_name: order.providers?.name || 'Proveedor no encontrado',
       total_amount: order.total_amount,
       currency: order.currency,
-      status: 'pending_invoice', // Estado real: pendiente de factura
+      status: order.status || 'pending_invoice', // 🔧 CORRECCIÓN: Usar estado real de la BD
       created_at: order.created_at,
       desired_delivery_date: order.desired_delivery_date,
       provider_id: order.provider_id

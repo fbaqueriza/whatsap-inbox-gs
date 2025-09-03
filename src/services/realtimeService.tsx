@@ -79,12 +79,12 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const handleNewMessage = async (payload: any) => {
     const newMessage = payload.new;
     if (newMessage) {
-      // 🔧 OPTIMIZACIÓN: Filtrar mensajes por user_id del usuario actual
+      // 🔧 CORRECCIÓN: Para mensajes de factura, siempre procesar si tienen user_id válido
       if (newMessage.user_id && currentUserId && newMessage.user_id !== currentUserId) {
         return; // Ignorar mensajes de otros usuarios
       }
 
-      // 🔧 NUEVA FUNCIONALIDAD: Para mensajes sin user_id (del proveedor), verificar que el contact_id corresponda a un proveedor del usuario
+      // 🔧 CORRECCIÓN: Para mensajes sin user_id (del proveedor), verificar que el contact_id corresponda a un proveedor del usuario
       if (!newMessage.user_id && currentUserId) {
         try {
           const { data: provider } = await supabase

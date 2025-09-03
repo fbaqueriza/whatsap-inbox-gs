@@ -11,8 +11,8 @@ export async function GET(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // SOLO obtener órdenes que realmente tengan facturas asociadas
-    // No más datos mock o números de factura generados automáticamente
+    // 🔧 CORRECCIÓN: Obtener órdenes que tengan facturas asociadas (con comprobantes)
+    // Incluir tanto facturas con número como facturas procesadas por WhatsApp
     const { data: ordersWithInvoices, error: invoicesError } = await supabase
       .from('orders')
       .select(`
@@ -26,16 +26,9 @@ export async function GET(request: NextRequest) {
         created_at,
         payment_method,
         provider_id,
-        receipt_url,
-        providers!inner(
-          id,
-          name,
-          phone,
-          email
-        )
+        receipt_url
       `)
-      .not('invoice_number', 'is', null)  // Solo órdenes CON número de factura
-      .not('receipt_url', 'is', null)     // Solo órdenes CON comprobante
+      .not('receipt_url', 'is', null)     // 🔧 CORRECCIÓN: Solo órdenes CON comprobante
       .order('created_at', { ascending: false });
 
     if (invoicesError) {
@@ -46,12 +39,26 @@ export async function GET(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // Transformar solo datos reales, sin fallbacks mock
+    // 🔧 CORRECCIÓN: Obtener proveedores por separado para evitar problemas de relación
+    const providerIds = Array.from(new Set(ordersWithInvoices?.map(order => order.provider_id) || []));
+    const { data: providers, error: providersError } = await supabase
+      .from('providers')
+      .select('id, name, phone, email')
+      .in('id', providerIds);
+
+    if (providersError) {
+      console.error('Error obteniendo proveedores:', providersError);
+    }
+
+    // Crear mapa de proveedores para acceso rápido
+    const providersMap = new Map(providers?.map(p => [p.id, p]) || []);
+
+    // Transformar solo datos reales, incluyendo facturas procesadas por WhatsApp
     const realInvoices = ordersWithInvoices?.map(order => ({
       id: order.id,
       order_number: order.order_number,
-      invoice_number: order.invoice_number, // Solo si existe
-      provider_name: order.providers?.name || 'Proveedor no encontrado',
+      invoice_number: order.invoice_number || `WHATSAPP_${String(order.id).slice(-8)}`, // 🔧 CORRECCIÓN: Generar ID para facturas de WhatsApp
+      provider_name: providersMap.get(order.provider_id)?.name || 'Proveedor no encontrado',
       total_amount: order.total_amount,
       currency: order.currency,
       status: order.status,
@@ -60,8 +67,7 @@ export async function GET(request: NextRequest) {
       payment_method: order.payment_method,
       receipt_url: order.receipt_url
     })).filter(invoice => 
-      // Filtrar solo facturas válidas
-      invoice.invoice_number && 
+      // 🔧 CORRECCIÓN: Filtrar solo facturas con comprobante y monto
       invoice.total_amount && 
       invoice.receipt_url
     ) || [];
@@ -70,7 +76,7 @@ export async function GET(request: NextRequest) {
       success: true,
       invoices: realInvoices,
       count: realInvoices.length,
-      message: 'Solo facturas reales con comprobantes'
+      message: 'Facturas reales con comprobantes (incluyendo WhatsApp)'
     });
 
   } catch (error) {

@@ -560,6 +560,18 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
     try {
       const messageSid = `invoice_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
+      // 🔧 CORRECCIÓN: Buscar el user_id del proveedor para asociar el mensaje correctamente
+      const { data: providerUser, error: userError } = await supabase
+        .from('providers')
+        .select('user_id')
+        .eq('id', provider.id)
+        .single();
+      
+      if (userError || !providerUser?.user_id) {
+        console.error(`❌ [${requestId}] Error obteniendo user_id del proveedor:`, userError);
+        return { success: false, error: 'No se pudo obtener usuario del proveedor' };
+      }
+      
       const { error: messageError } = await supabase
         .from('whatsapp_messages')
         .insert([{
@@ -567,7 +579,7 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
           message_type: 'received',
           status: 'delivered',
           contact_id: providerPhone,
-          user_id: null, // Mensaje del proveedor
+          user_id: providerUser.user_id, // 🔧 CORRECCIÓN: Asociar al usuario correcto
           message_sid: messageSid,
           timestamp: new Date().toISOString(),
           created_at: new Date().toISOString()

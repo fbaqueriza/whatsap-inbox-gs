@@ -408,7 +408,7 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
     
-    // 🔧 MEJORA: Búsqueda más robusta de proveedores
+    // 🔧 MEJORA: Búsqueda más robusta de proveedores con timeout
     const { PhoneNumberService } = await import('../../../../lib/phoneNumberService');
     
     // Normalizar el número recibido
@@ -419,11 +419,18 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
     const searchVariants = PhoneNumberService.searchVariants(providerPhone);
     console.log(`🔍 [${requestId}] Variantes de búsqueda:`, searchVariants);
     
-    // 🔧 MEJORA: Búsqueda más eficiente con OR lógico
+    // 🔧 MEJORA: Búsqueda más eficiente con timeout
     let provider = null;
+    const searchStartTime = Date.now();
+    const SEARCH_TIMEOUT = 8000; // 8 segundos máximo para búsqueda
     
     // Primero intentar con búsqueda exacta por cada variante
     for (const variant of searchVariants) {
+      if (Date.now() - searchStartTime > SEARCH_TIMEOUT) {
+        console.warn(`⚠️ [${requestId}] Timeout en búsqueda de proveedores`);
+        break;
+      }
+      
       console.log(`🔍 [${requestId}] Buscando proveedor con variante:`, variant);
       
       const { data: providerData, error: providerError } = await supabase
@@ -439,8 +446,8 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
       }
     }
     
-    // 🔧 MEJORA: Si no se encuentra, intentar búsqueda más flexible
-    if (!provider) {
+    // 🔧 MEJORA: Si no se encuentra, intentar búsqueda más flexible con timeout
+    if (!provider && (Date.now() - searchStartTime < SEARCH_TIMEOUT)) {
       console.log(`⚠️ [${requestId}] No se encontró proveedor con búsqueda exacta, intentando búsqueda flexible...`);
       
       // Búsqueda por similitud de números (últimos 8-10 dígitos)
@@ -451,7 +458,8 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
         const { data: providers, error: searchError } = await supabase
           .from('providers')
           .select('id, name, phone')
-          .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`);
+          .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`)
+          .limit(3); // 🔧 MEJORA: Limitar resultados para evitar timeouts
         
         if (!searchError && providers && providers.length > 0) {
           // Encontrar la mejor coincidencia
@@ -470,19 +478,19 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
     
     // 🔧 MEJORA: Si aún no se encuentra, mostrar información de debug
     if (!provider) {
-      console.log(`❌ [${requestId}] No se pudo encontrar proveedor. Información de debug:`);
+      console.log(`❌ [${requestId}] No se pudo encontrar proveedor después de ${Date.now() - searchStartTime}ms. Información de debug:`);
       console.log(`📱 [${requestId}] Número recibido:`, providerPhone);
       console.log(`🔧 [${requestId}] Número normalizado:`, normalizedPhone);
       console.log(`🔍 [${requestId}] Variantes de búsqueda:`, searchVariants);
       
-      // Intentar obtener todos los proveedores para debug
+      // 🔧 MEJORA: Intentar obtener solo los primeros 3 proveedores para debug (más rápido)
       const { data: allProviders, error: debugError } = await supabase
         .from('providers')
         .select('id, name, phone')
-        .limit(5);
+        .limit(3);
       
       if (!debugError && allProviders) {
-        console.log(`🔍 [${requestId}] Primeros 5 proveedores en BD:`, allProviders.map(p => ({ name: p.name, phone: p.phone })));
+        console.log(`🔍 [${requestId}] Primeros 3 proveedores en BD:`, allProviders.map(p => ({ name: p.name, phone: p.phone })));
       }
       
       return { success: false, error: 'Proveedor no encontrado' };

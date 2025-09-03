@@ -182,10 +182,12 @@ function OrdersPage({ user }: OrdersPageProps) {
       pending_confirmation: <AlertCircle className="h-4 w-4 text-orange-500" />,
       confirmed: <CheckCircle className="h-4 w-4 text-green-500" />,
       enviado: <Send className="h-4 w-4 text-blue-500" />,
+      invoice_received: <FileText className="h-4 w-4 text-purple-500" />,
       factura_recibida: <FileText className="h-4 w-4 text-purple-500" />,
       pagado: <CheckCircle className="h-4 w-4 text-green-500" />,
       finalizado: <CheckCircle className="h-4 w-4 text-green-500" />,
       cancelled: <X className="h-4 w-4 text-red-500" />,
+      delivered: <CheckCircle className="h-4 w-4 text-green-500" />,
     };
     return statusIcons[status as keyof typeof statusIcons] || <Clock className="h-4 w-4 text-gray-500" />;
   };
@@ -196,10 +198,12 @@ function OrdersPage({ user }: OrdersPageProps) {
       pending_confirmation: 'bg-orange-100 text-orange-800',
       confirmed: 'bg-green-100 text-green-800',
       enviado: 'bg-blue-100 text-blue-800',
+      invoice_received: 'bg-purple-100 text-purple-800',
       factura_recibida: 'bg-purple-100 text-purple-800',
       pagado: 'bg-green-100 text-green-800',
       finalizado: 'bg-green-100 text-green-800',
       cancelled: 'bg-red-100 text-red-800',
+      delivered: 'bg-green-100 text-green-800',
     };
     return statusClasses[status as keyof typeof statusClasses] || 'bg-gray-100 text-gray-800';
   };
@@ -486,10 +490,13 @@ function OrdersPage({ user }: OrdersPageProps) {
                               {order.status === 'pending_confirmation' && 'Pendiente de Confirmación'}
                               {order.status === 'confirmed' && 'Confirmado'}
                               {order.status === 'enviado' && 'Enviado'}
+                              {order.status === 'invoice_received' && 'Factura Recibida'}
                               {order.status === 'factura_recibida' && 'Factura Recibida'}
                               {order.status === 'pagado' && 'Pagado'}
                               {order.status === 'finalizado' && 'Finalizado'}
                               {order.status === 'cancelled' && 'Cancelado'}
+                              {order.status === 'delivered' && 'Entregado'}
+                              {!['pending', 'pending_confirmation', 'confirmed', 'enviado', 'invoice_received', 'factura_recibida', 'pagado', 'finalizado', 'cancelled', 'delivered'].includes(order.status) && order.status}
                             </span>
                           </div>
                         </td>

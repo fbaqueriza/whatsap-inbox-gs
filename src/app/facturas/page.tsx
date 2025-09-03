@@ -24,6 +24,7 @@ interface Invoice {
   created_at: string;
   payment_method: string;
   receipt_url: string;
+  provider_id?: string; // 🔧 CORRECCIÓN: Agregar campo opcional
 }
 
 interface PendingOrder {
@@ -397,14 +398,35 @@ export default function FacturasPage() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex space-x-2">
-                            <button className="text-blue-600 hover:text-blue-900">
+                            <button 
+                              onClick={() => openUploadModal({
+                                id: invoice.id,
+                                order_number: invoice.order_number,
+                                provider_name: invoice.provider_name,
+                                total_amount: invoice.total_amount,
+                                currency: invoice.currency,
+                                status: invoice.status,
+                                created_at: invoice.created_at,
+                                desired_delivery_date: invoice.due_date,
+                                provider_id: invoice.provider_id || 'unknown'
+                              })}
+                              className="text-blue-600 hover:text-blue-900 p-2 rounded-lg hover:bg-blue-50 transition-colors"
+                              title="Seleccionar para pago"
+                            >
+                              <CheckCircle className="h-4 w-4" />
+                            </button>
+                            <button 
+                              className="text-blue-600 hover:text-blue-900 p-2 rounded-lg hover:bg-blue-50 transition-colors"
+                              title="Ver factura"
+                            >
                               <FileText className="h-4 w-4" />
                             </button>
                             <a 
                               href={invoice.receipt_url} 
                               target="_blank" 
                               rel="noopener noreferrer"
-                              className="text-green-600 hover:text-green-900"
+                              className="text-green-600 hover:text-green-900 p-2 rounded-lg hover:bg-green-50 transition-colors"
+                              title="Descargar comprobante"
                             >
                               <FileText className="h-4 w-4" />
                             </a>

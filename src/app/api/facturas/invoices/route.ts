@@ -65,7 +65,8 @@ export async function GET(request: NextRequest) {
       due_date: order.due_date,
       created_at: order.created_at,
       payment_method: order.payment_method,
-      receipt_url: order.receipt_url
+      receipt_url: order.receipt_url,
+      provider_id: order.provider_id // 🔧 CORRECCIÓN: Incluir provider_id
     })).filter(invoice => 
       // 🔧 CORRECCIÓN: Filtrar solo facturas con comprobante y monto
       invoice.total_amount && 

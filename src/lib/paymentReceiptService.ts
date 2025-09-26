@@ -654,7 +654,10 @@ export class PaymentReceiptService {
         `📅 Fecha: ${receipt.payment_date || 'N/A'}\n\n` +
         `¡Gracias por tu confianza! 🙏`;
       
-      const response = await fetch('/api/whatsapp/send', {
+      // Obtenemos la URL base del cliente
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001';
+      
+      const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

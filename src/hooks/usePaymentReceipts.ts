@@ -45,27 +45,49 @@ export function usePaymentReceipts() {
       setIsLoading(true);
       setError(null);
 
-      const { data, error: fetchError } = await supabase
+      const { data: receipts, error: fetchError } = await supabase
         .from('payment_receipts')
-        .select(`
-          *,
-          auto_assigned_provider:providers!auto_assigned_provider_id(name, phone),
-          auto_assigned_order:orders!auto_assigned_order_id(order_number, total_amount, status)
-        `)
+        .select('*')
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (fetchError) {
-        // Si la tabla no existe, retornar array vacío en lugar de error
-        if (fetchError.message.includes('relation "payment_receipts" does not exist') || 
-            fetchError.message.includes('Could not find a relationship')) {
-          return [];
-        }
-        throw new Error(fetchError.message);
+        throw fetchError;
       }
-      
-      setReceipts(data || []);
-      return data || [];
+
+      // Obtener datos relacionados por separado para evitar errores de relación ambigua
+      const enrichedReceipts = await Promise.all(receipts.map(async (receipt) => {
+        // Buscar proveedor si hay assignment
+        let providerData = null;
+        if (receipt.auto_assigned_provider_id) {
+          const { data: provider } = await supabase
+            .from('providers')
+            .select('name, phone')
+            .eq('id', receipt.auto_assigned_provider_id)
+            .single();
+          providerData = provider;
+        }
+
+        // Buscar orden si hay assignment  
+        let orderData = null;
+        if (receipt.auto_assigned_order_id) {
+          const { data: order } = await supabase
+            .from('orders')
+            .select('order_number, total_amount, status')
+            .eq('id', receipt.auto_assigned_order_id)
+            .single();
+          orderData = order;
+        }
+
+        return {
+          ...receipt,
+          auto_assigned_provider: providerData,
+          auto_assigned_order: orderData
+        };
+      }));
+
+      setReceipts(enrichedReceipts || []);
+      return enrichedReceipts || [];
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error obteniendo comprobantes';
       setError(errorMessage);

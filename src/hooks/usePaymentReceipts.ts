@@ -28,6 +28,9 @@ export interface PaymentReceiptData {
   created_at?: string;
   updated_at?: string;
   processed_at?: string;
+  // Información relacionada
+  providers?: { name: string; phone?: string };
+  orders?: { order_number: string; total_amount: number; status: string };
 }
 
 export function usePaymentReceipts() {
@@ -44,7 +47,11 @@ export function usePaymentReceipts() {
 
       const { data, error: fetchError } = await supabase
         .from('payment_receipts')
-        .select('*')
+        .select(`
+          *,
+          providers(name, phone),
+          orders(order_number, total_amount, status)
+        `)
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 

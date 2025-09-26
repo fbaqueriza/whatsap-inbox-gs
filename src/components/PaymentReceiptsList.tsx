@@ -239,18 +239,28 @@ export default function PaymentReceiptsList({ userId, className = '', hideHeader
                     <div className="flex items-center space-x-2">
                       <User className="h-4 w-4 text-gray-400" />
                       <span>
-                        {receipt.auto_assigned_provider_id ? 
-                          `Asignado a proveedor` : 
+                        {receipt.providers?.name ? 
+                          `Asignado a ${receipt.providers.name}` : 
+                          receipt.auto_assigned_provider_id ? 
+                          'Asignado a proveedor' : 
                           'Sin asignar'
                         }
                       </span>
                     </div>
                     
-                    {receipt.auto_assigned_order_id && (
+                    {(receipt.auto_assigned_order_id || receipt.orders) && (
                       <div className="flex items-center space-x-2">
                         <FileText className="h-4 w-4 text-gray-400" />
                         <span className="text-sm text-gray-600">
-                          Orden: {receipt.auto_assigned_order_id}
+                          {receipt.orders?.order_number ? 
+                            `Orden: ${receipt.orders.order_number}` : 
+                            `Orden: ${receipt.auto_assigned_order_id}`
+                          }
+                          {receipt.orders?.status && (
+                            <span className="ml-2 text-xs px-1.5 py-0.5 rounded text-gray-500 bg-gray-100">
+                              {receipt.orders.status}
+                            </span>
+                          )}
                         </span>
                       </div>
                     )}

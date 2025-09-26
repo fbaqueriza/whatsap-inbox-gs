@@ -139,15 +139,15 @@ export function usePaymentReceipts() {
           }
         }
       )
-      .subscribe((status) => {
-        console.log(`🔗 [Realtime] Estado suscripción comprobantes: ${status}`);
-        if (status === 'SUBSCRIBED') {
-          console.log('✅ [Realtime] Suscripción activa establecida');
-        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          console.log(`⚠️ [Realtime] Suscripción perdida: ${status}`);
-          subscriptionInitializedRef.current.delete(userId); // Permitir reconexión
-        }
-      });
+        .subscribe((status) => {
+          console.log(`🔗 [Realtime] Estado suscripción comprobantes: ${status}`);
+          if (status === 'SUBSCRIBED') {
+            console.log('✅ [Realtime] Suscripción activa establecida');
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            console.log(`⚠️ [Realtime] Suscripción perdida: ${status}`);
+            subscriptionInitializedRef.current.clear(); // Solo clear en error grave NO delete específico
+          }
+        });
   }, []);
 
   // Limpiar suscripción al desmontar

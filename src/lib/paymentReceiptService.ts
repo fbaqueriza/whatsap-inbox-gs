@@ -262,9 +262,7 @@ export class PaymentReceiptService {
           .from('orders')
           .update({ 
             status: 'pagado',
-            updated_at: new Date().toISOString(),
-            // 🔧 NUEVA COLUMNA: Guardar referencia al comprobante
-            payment_receipt_id: receiptId
+            updated_at: new Date().toISOString()
           })
           .eq('id', bestOrderMatch.order_id);
         

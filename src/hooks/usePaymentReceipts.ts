@@ -69,7 +69,7 @@ export function usePaymentReceipts() {
     }
   }, []);
 
-  // Configurar suscripción en tiempo real
+  // 🔧 SOLUCIÓN: Configurar suscripción en tiempo real optimizada
   const setupRealtimeSubscription = useCallback((userId: string) => {
     
     // Limpiar suscripción anterior
@@ -78,7 +78,7 @@ export function usePaymentReceipts() {
     }
 
     subscriptionRef.current = supabase
-      .channel('payment_receipts_changes')
+      .channel(`payment_receipts_user_${userId}`)
       .on(
         'postgres_changes',
         {
@@ -88,21 +88,34 @@ export function usePaymentReceipts() {
           filter: `user_id=eq.${userId}`
         },
         (payload) => {
+          console.log('🔄 [Realtime] Evento comprobantes recibido:', payload.eventType, payload.new?.id);
+          
           if (payload.eventType === 'INSERT') {
-            setReceipts(prev => [payload.new as PaymentReceiptData, ...prev]);
+            const newReceipt = payload.new as PaymentReceiptData;
+            console.log('✅ [Realtime] Nuevo comprobante agregado:', newReceipt.id);
+            setReceipts(prev => {
+              // Verificar que no existe ya
+              const exists = prev.find(r => r.id === newReceipt.id);
+              if (exists) return prev;
+              return [newReceipt, ...prev];
+            });
           } else if (payload.eventType === 'UPDATE') {
+            const updatedReceipt = payload.new as PaymentReceiptData;
+            console.log('🔄 [Realtime] Comprobante actualizado:', updatedReceipt.id);
             setReceipts(prev => prev.map(receipt => 
-              receipt.id === payload.new.id 
-                ? { ...receipt, ...payload.new }
+              receipt.id === updatedReceipt.id 
+                ? { ...receipt, ...updatedReceipt }
                 : receipt
             ));
           } else if (payload.eventType === 'DELETE') {
-            setReceipts(prev => prev.filter(receipt => receipt.id !== payload.old.id));
+            const deletedReceipt = payload.old as PaymentReceiptData;
+            console.log('❌ [Realtime] Comprobante eliminado:', deletedReceipt.id);
+            setReceipts(prev => prev.filter(receipt => receipt.id !== deletedReceipt.id));
           }
         }
       )
       .subscribe((status) => {
-        // Suscripción configurada
+        console.log(`🔗 [Realtime] Estado suscripción comprobantes: ${status}`);
       });
   }, []);
 

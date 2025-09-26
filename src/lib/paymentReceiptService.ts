@@ -201,15 +201,41 @@ export class PaymentReceiptService {
         await this.createDocumentRecord(receipt, bestProviderMatch.provider_id, bestOrderMatch?.order_id);
       }
       
-      // 8. 🔧 NUEVO: Actualizar estado de la orden a 'pagado' si se asignó exitosamente
+      console.log('✅ [PaymentReceiptService] Procesamiento completado. Logs de debugging:');
+      console.log('- Mejores matches proveedores:', providerMatches.length > 0 ? providerMatches.slice(0, 3) : []);
+      console.log('- Mejores matches órdenes:', orderMatches.length > 0 ? orderMatches.slice(0, 3) : []);
+      console.log('- Mejor match orden:', bestOrderMatch?.order_id);
+      
+      // 🔧 SOLUCIÓN: Conectar correctamente el comprobante con la orden asignada
       if (bestOrderMatch && bestOrderMatch.confidence > 0.7) {
+        console.log('🔄 [PaymentReceiptService] Asignando comprobante a orden:', bestOrderMatch.order_id);
+        
+        // Actualizar comprobante con la orden asignada
+        const { error: receiptUpdateError } = await supabase
+          .from('payment_receipts')
+          .update({ 
+            order_id: bestOrderMatch.order_id,
+            status: 'assigned',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', receiptId);
+        
+        if (receiptUpdateError) {
+          console.error('❌ [PaymentReceiptService] Error asignando comprobante a orden:', receiptUpdateError);
+        } else {
+          console.log('✅ [PaymentReceiptService] Comprobante asignado a orden exitosamente');
+        }
+        
+        // Actualizar estado de la orden a 'pagado'
         console.log('🔄 [PaymentReceiptService] Actualizando orden a estado "pagado":', bestOrderMatch.order_id);
         
         const { error: orderUpdateError } = await supabase
           .from('orders')
           .update({ 
             status: 'pagado',
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
+            // 🔧 NUEVA COLUMNA: Guardar referencia al comprobante
+            payment_receipt_id: receiptId
           })
           .eq('id', bestOrderMatch.order_id);
         
@@ -406,7 +432,7 @@ export class PaymentReceiptService {
   }
   
   /**
-   * Buscar órdenes que coincidan con el comprobante
+   * 🔧 SOLUCIÓN MEJORADA: Buscar órdenes que coincidan con el comprobante
    */
   static async findMatchingOrders(
     receipt: PaymentReceiptData, 
@@ -415,10 +441,47 @@ export class PaymentReceiptService {
     try {
       const matches: OrderMatchResult[] = [];
       
-      if (providerMatches.length === 0) return matches;
+      if (providerMatches.length === 0) {
+        console.log('⚠️ [PaymentReceiptService] No hay proveedores coincidentes, buscando órdenes por monto únicamente...');
+        
+        // 🔧 OPTIMIZACIÓN: Buscar por monto aunque no haya proveedores asignados
+        if (receipt.payment_amount) {
+          const { data: ordersByAmount, error: amountError } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('user_id', receipt.user_id)
+            .in('status', ['pendiente_de_pago', 'enviado'])
+            .gte('total_amount', receipt.payment_amount - 1)
+            .lte('total_amount', receipt.payment_amount + 1);
+          
+          if (!amountError && ordersByAmount) {
+            for (const order of ordersByAmount) {
+              const orderAmount = Number(order.total_amount) || 0;
+              const receiptAmount = Number(receipt.payment_amount) || 0;
+              const difference = Math.abs(orderAmount - receiptAmount);
+              
+              matches.push({
+                order_id: order.id,
+                order_number: order.order_number,
+                confidence: 0.7, // Menor confianza por no tener info de proveedor
+                match_method: 'amount_match',
+                match_details: { 
+                  amount: receipt.payment_amount,
+                  order_amount: orderAmount,
+                  difference,
+                  reason: 'exact_amount_match_standalone'
+                }
+              });
+            }
+          }
+        }
+        
+        return matches.sort((a, b) => b.confidence - a.confidence);
+      }
       
-      // Buscar órdenes pendientes de pago para los proveedores encontrados
+      // 🔧 OPTIMIZACIÓN: Buscar órdenes pendientes de pago para los proveedores encontrados
       const providerIds = providerMatches.map(m => m.provider_id);
+      console.log('🔍 [PaymentReceiptService] Buscando órdenes para proveedores:', providerIds);
       
       const { data: orders, error } = await supabase
         .from('orders')
@@ -432,44 +495,83 @@ export class PaymentReceiptService {
         return matches;
       }
       
-      // Buscar coincidencias por monto (con tolerancia)
+      console.log(`✅ [PaymentReceiptService] Órdenes encontradas para proveedores: ${orders.length}`);
+      
+      // 🔧 SOLUCIÓN: Buscar coincidencias por monto (con tolerancia más inteligente)
       if (receipt.payment_amount) {
         for (const order of orders) {
           const orderAmount = Number(order.total_amount) || 0;
           const receiptAmount = Number(receipt.payment_amount) || 0;
+          const difference = Math.abs(orderAmount - receiptAmount);
           
-          // Coincidencia exacta
+          // Coincidencia exacta (mayor prioridad)
           if (orderAmount === receiptAmount) {
             matches.push({
               order_id: order.id,
               order_number: order.order_number,
-              confidence: 0.9,
+              confidence: 0.95, // Alta confianza para coincidencias exactas
               match_method: 'exact_amount_match',
               match_details: { 
                 amount: receipt.payment_amount,
-                provider_id: order.provider_id
+                provider_id: order.provider_id,
+                order_created: order.created_at
               }
             });
           }
-          // Coincidencia con tolerancia de ±1 (para diferencias de decimales)
-          else if (Math.abs(orderAmount - receiptAmount) <= 1) {
+          // Coincidencia con tolerancia de ±5 (para diferencias pequeñas)
+          else if (difference <= 5) {
+            const confidence = Math.max(0.7, 0.95 - (difference / receiptAmount) * 10);
+            
             matches.push({
               order_id: order.id,
               order_number: order.order_number,
-              confidence: 0.8,
+              confidence: confidence,
               match_method: 'tolerance_amount_match',
               match_details: { 
                 amount: receipt.payment_amount,
+                order_amount: orderAmount,
                 provider_id: order.provider_id,
-                difference: Math.abs(orderAmount - receiptAmount)
+                difference: difference,
+                order_created: order.created_at
               }
             });
           }
         }
       }
       
-      // Ordenar por confianza
-      return matches.sort((a, b) => b.confidence - a.confidence);
+      // 🔧 MEJORA: Si no hay matches por monto, buscar por fecha (órdenes recientes)
+      if (matches.length === 0 && receipt.payment_date) {
+        console.log('🔍 [PaymentReceiptService] No matches por monto, buscando por fecha...');
+        
+        for (const order of orders) {
+          const orderDate = new Date(order.created_at);
+          const paymentDate = new Date(receipt.payment_date);
+          const daysDifference = Math.abs(paymentDate.getTime() - orderDate.getTime()) / (1000 * 60 * 60 * 24);
+          
+          // Coincidencia por proximidad temporal (hasta 7 días de diferencia)
+          if (daysDifference <= 7) {
+            matches.push({
+              order_id: order.id,
+              order_number: order.order_number,
+              confidence: Math.max(0.6, 0.8 - (daysDifference / 7)), // Disminuye con el tiempo
+              match_method: 'date_proximity_match',
+              match_details: { 
+                payment_date: receipt.payment_date,
+                order_date: order.created_at,
+                days_difference: daysDifference,
+                provider_id: order.provider_id
+              }
+            });
+          }
+        }
+      }
+      
+      // 🔧 OPTIMIZACIÓN: Evitar duplicados y ordenar por confianza
+      const uniqueMatches = Array.from(
+        new Map(matches.map(m => [m.order_id, m])).values()
+      );
+      
+      return uniqueMatches.sort((a, b) => b.confidence - a.confidence);
       
     } catch (error) {
       console.error('❌ [PaymentReceiptService] Error buscando órdenes:', error);

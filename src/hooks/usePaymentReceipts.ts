@@ -69,16 +69,28 @@ export function usePaymentReceipts() {
     }
   }, []);
 
-  // 🔧 SOLUCIÓN: Configurar suscripción en tiempo real optimizada
+  // 🔧 SOLUCIÓN CRÍTICA: Configurar suscripción en tiempo real con estabilidad
+  const subscriptionInitializedRef = useRef<Set<string>>(new Set());
+  
   const setupRealtimeSubscription = useCallback((userId: string) => {
+    // 🚫 PREVENIR: Múltiples suscripciones simultaneas por usuario
+    if (subscriptionInitializedRef.current.has(userId)) {
+      console.log(`🔐 [Realtime] Ya hay suscripción activa para usuario ${userId}`);
+      return;
+    }
+    
+    subscriptionInitializedRef.current.add(userId);
     
     // Limpiar suscripción anterior
     if (subscriptionRef.current) {
       subscriptionRef.current.unsubscribe();
+      subscriptionRef.current = null;
     }
 
+    console.log(`🔗 [Realtime] Configurando suscripción comprobantes para usuario ${userId}`);
+    
     subscriptionRef.current = supabase
-      .channel(`payment_receipts_user_${userId}`)
+      .channel(`payment_receipts_stable_${userId}`) // Nombre único y estable
       .on(
         'postgres_changes',
         {
@@ -116,6 +128,12 @@ export function usePaymentReceipts() {
       )
       .subscribe((status) => {
         console.log(`🔗 [Realtime] Estado suscripción comprobantes: ${status}`);
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ [Realtime] Suscripción activa establecida');
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          console.log(`⚠️ [Realtime] Suscripción perdida: ${status}`);
+          subscriptionInitializedRef.current.delete(userId); // Permitir reconexión
+        }
       });
   }, []);
 
@@ -123,8 +141,11 @@ export function usePaymentReceipts() {
   useEffect(() => {
     return () => {
       if (subscriptionRef.current) {
+        console.log('🔌 [Realtime] Desmontando suscripción comprobantes');
         subscriptionRef.current.unsubscribe();
+        subscriptionRef.current = null;
       }
+      subscriptionInitializedRef.current.clear();
     };
   }, []);
 

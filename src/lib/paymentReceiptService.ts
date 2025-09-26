@@ -131,9 +131,11 @@ export class PaymentReceiptService {
    */
   static async processPaymentReceipt(receiptId: string): Promise<{ success: boolean; error?: string }> {
     try {
-      console.log('🔄 [PaymentReceiptService] Procesando comprobante:', receiptId);
+      console.log('🔍 [PaymentReceiptService] ===== INICIANDO PROCESAMIENTO =====');
+      console.log('🔄 [PaymentReceiptService] Comprobante ID:', receiptId);
       
       // 1. Obtener datos del comprobante
+      console.log('🔍 [PaymentReceiptService] Obteniendo datos del comprobante...');
       const { data: receipt, error: fetchError } = await supabase
         .from('payment_receipts')
         .select('*')
@@ -145,6 +147,13 @@ export class PaymentReceiptService {
         return { success: false, error: 'Comprobante no encontrado' };
       }
       
+      console.log('✅ [PaymentReceiptService] Comprobante obtenido:', {
+        id: receipt.id,
+        amount: receipt.payment_amount,
+        user_id: receipt.user_id,
+        status: receipt.status
+      });
+      
       // 2. Actualizar estado a processing
       await supabase
         .from('payment_receipts')
@@ -152,12 +161,26 @@ export class PaymentReceiptService {
         .eq('id', receiptId);
       
       // 3. Intentar asignación automática a proveedores
+      console.log('🔍 [PaymentReceiptService] Buscando proveedores coincidentes...');
       const providerMatches = await this.findMatchingProviders(receipt);
-      console.log('🔍 [PaymentReceiptService] Proveedores encontrados:', providerMatches.length);
+      console.log('📊 [PaymentReceiptService] Proveedores encontrados:', providerMatches.length);
+      console.log('📋 [PaymentReceiptService] Detalles proveedores:', providerMatches.map(p => ({
+        id: p.provider_id,
+        name: p.provider_name,
+        confidence: p.confidence,
+        method: p.match_method
+      })));
       
       // 4. Intentar asignación automática a órdenes
+      console.log('🔍 [PaymentReceiptService] Buscando órdenes coincidentes...');
       const orderMatches = await this.findMatchingOrders(receipt, providerMatches);
-      console.log('🔍 [PaymentReceiptService] Órdenes encontradas:', orderMatches.length);
+      console.log('📊 [PaymentReceiptService] Órdenes encontradas:', orderMatches.length);
+      console.log('📋 [PaymentReceiptService] Detalles órdenes:', orderMatches.map(o => ({
+        id: o.order_id,
+        number: o.order_number,
+        confidence: o.confidence,
+        method: o.match_method
+      })));
       
       // 5. Actualizar comprobante con asignaciones
       const bestProviderMatch = providerMatches[0];
@@ -208,9 +231,16 @@ export class PaymentReceiptService {
       
       // 🔧 SOLUCIÓN: Conectar correctamente el comprobante con la orden asignada
       if (bestOrderMatch && bestOrderMatch.confidence > 0.7) {
-        console.log('🔄 [PaymentReceiptService] Asignando comprobante a orden:', bestOrderMatch.order_id);
+        console.log('🎯 [PaymentReceiptService] ===== ASIGNANDO A ORDEN =====');
+        console.log('🔄 [PaymentReceiptService] Mejor orden match:', {
+          id: bestOrderMatch.order_id,
+          number: bestOrderMatch.order_number,
+          confidence: bestOrderMatch.confidence,
+          method: bestOrderMatch.match_method
+        });
         
         // Actualizar comprobante con la orden asignada
+        console.log('🔧 [PaymentReceiptService] Actualizando comprobante...');
         const { error: receiptUpdateError } = await supabase
           .from('payment_receipts')
           .update({ 
@@ -227,8 +257,7 @@ export class PaymentReceiptService {
         }
         
         // Actualizar estado de la orden a 'pagado'
-        console.log('🔄 [PaymentReceiptService] Actualizando orden a estado "pagado":', bestOrderMatch.order_id);
-        
+        console.log('🎯 [PaymentReceiptService] Actualizando orden a "pagado":', bestOrderMatch.order_id);
         const { error: orderUpdateError } = await supabase
           .from('orders')
           .update({ 
@@ -244,6 +273,14 @@ export class PaymentReceiptService {
         } else {
           console.log('✅ [PaymentReceiptService] Orden actualizada a "pagado" exitosamente');
         }
+      } else {
+        console.log('⚠️ [PaymentReceiptService] No se encontró orden para asignar');
+        console.log('📊 [PaymentReceiptService] Razón:', {
+          hasOrderMatch: !!bestOrderMatch,
+          orderConfidence: bestOrderMatch?.confidence || 0,
+          requiredConfidence: 0.7,
+          enoughConfidence: bestOrderMatch?.confidence ? bestOrderMatch.confidence > 0.7 : false
+        });
       }
       
       console.log('✅ [PaymentReceiptService] Comprobante procesado exitosamente');

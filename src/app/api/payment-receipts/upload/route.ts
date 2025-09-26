@@ -78,9 +78,17 @@ Número: TRF-${Date.now()}`;
           
           // 4. Procesar comprobante para asignación automática (después de tener los datos extraídos)
           // Ejecutar inmediatamente después de confirmar que los datos se guardaron
-          PaymentReceiptService.processPaymentReceipt(result.receipt.id).catch(error => {
+          console.log('⏳ [API] Procesando comprobante para asignación automática...');
+          try {
+            const processResult = await PaymentReceiptService.processPaymentReceipt(result.receipt.id);
+            if (processResult.success) {
+              console.log('✅ [API] Comprobante procesado exitosamente');
+            } else {
+              console.error('❌ [API] Error procesando comprobante:', processResult.error);
+            }
+          } catch (error) {
             console.error('❌ [API] Error procesando comprobante:', error);
-          });
+          }
         } else {
           console.warn('⚠️ [API] No se pudieron extraer datos del texto:', extractionResult.error);
         }

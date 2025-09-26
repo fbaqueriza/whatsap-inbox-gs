@@ -239,8 +239,8 @@ export default function PaymentReceiptsList({ userId, className = '', hideHeader
                     <div className="flex items-center space-x-2">
                       <User className="h-4 w-4 text-gray-400" />
                       <span>
-                        {receipt.providers?.name ? 
-                          `Asignado a ${receipt.providers.name}` : 
+                        {receipt.auto_assigned_provider?.name ? 
+                          `Asignado a ${receipt.auto_assigned_provider.name}` : 
                           receipt.auto_assigned_provider_id ? 
                           'Asignado a proveedor' : 
                           'Sin asignar'
@@ -248,17 +248,17 @@ export default function PaymentReceiptsList({ userId, className = '', hideHeader
                       </span>
                     </div>
                     
-                    {(receipt.auto_assigned_order_id || receipt.orders) && (
+                    {(receipt.auto_assigned_order_id || receipt.auto_assigned_order) && (
                       <div className="flex items-center space-x-2">
                         <FileText className="h-4 w-4 text-gray-400" />
                         <span className="text-sm text-gray-600">
-                          {receipt.orders?.order_number ? 
-                            `Orden: ${receipt.orders.order_number}` : 
+                          {receipt.auto_assigned_order?.order_number ? 
+                            `Orden: ${receipt.auto_assigned_order.order_number}` : 
                             `Orden: ${receipt.auto_assigned_order_id}`
                           }
-                          {receipt.orders?.status && (
+                          {receipt.auto_assigned_order?.status && (
                             <span className="ml-2 text-xs px-1.5 py-0.5 rounded text-gray-500 bg-gray-100">
-                              {receipt.orders.status}
+                              {receipt.auto_assigned_order.status}
                             </span>
                           )}
                         </span>

@@ -17,13 +17,15 @@ if (supabaseUrl && supabaseKey) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { to, message, templateVariables, userId } = body;
+    const { to, message, templateVariables, userId, mediaUrl, mediaType } = body;
 
     console.log('📥 Recibiendo solicitud de envío:', {
       to,
       message,
       templateVariables,
-      userId
+      userId,
+      mediaUrl,
+      mediaType
     });
 
     if (!to || !message) {
@@ -39,7 +41,19 @@ export async function POST(request: NextRequest) {
     let result;
     let messageContent = message;
     
-    if (isTemplate) {
+    // Verificar si se debe enviar un documento adjunto
+    if (mediaUrl && mediaType) {
+      // Enviar mensaje con documento adjunto
+      messageContent = processTextMessage(message, templateVariables);
+      
+      console.log('📋 Enviando mensaje con documento adjunto:', {
+        mediaUrl,
+        mediaType,
+        message: messageContent
+      });
+      
+      result = await metaWhatsAppService.sendMessageWithDocument(to, messageContent, mediaUrl, mediaType, userId);
+    } else if (isTemplate) {
       // 🔧 CORRECCIÓN: Generar contenido para guardar en BD
       messageContent = generateTemplateContent(message, templateVariables);
       

@@ -328,6 +328,116 @@ export class MetaWhatsAppService {
        console.error('❌ Error en modo producción - NO se usará fallback a simulación');
        throw error; // Re-lanzar el error para que se maneje en el nivel superior
      }
+     }
+
+  // Enviar mensaje con documento adjunto
+  async sendMessageWithDocument(to: string, content: string, mediaUrl: string, mediaType: string, userId?: string): Promise<any> {
+    await this.initializeIfConfigured();
+
+    if (!this.isServiceEnabled()) {
+      console.log('Meta WhatsApp Service: Servicio deshabilitado');
+      return null;
+    }
+
+    try {
+      if (this.isSimulationMode) {
+        // Modo simulación
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📤 [SIMULACIÓN] Enviando mensaje con documento:', {
+            to,
+            content,
+            mediaUrl,
+            mediaType,
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const messageId = `sim_doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Guardar en base de datos
+        await this.saveMessage({
+          id: messageId,
+          from: this.config?.phoneNumberId || '123456789',
+          to,
+          content,
+          timestamp: new Date(),
+          status: 'sent',
+          isAutomated: false,
+          isSimulated: true,
+          messageType: 'sent',
+          user_id: userId
+        });
+
+        return {
+          id: messageId,
+          status: 'sent',
+          simulated: true
+        };
+      } else {
+        // Modo real
+        const { PhoneNumberService } = await import('./phoneNumberService');
+        let normalizedPhone = PhoneNumberService.normalizeUnified(to);
+        
+        if (!normalizedPhone) {
+          console.error('❌ No se pudo normalizar el número de teléfono:', to);
+          return null;
+        }
+
+        const requestBody = {
+          messaging_product: 'whatsapp',
+          to: normalizedPhone,
+          type: 'document',
+          document: {
+            link: mediaUrl,
+            filename: mediaUrl.split('/').pop() || 'receipt.pdf' // Extraer nombre de archivo de la URL
+          },
+          text: {
+            body: content
+          }
+        };
+
+        console.log('🔍 Enviando documento de WhatsApp:', requestBody);
+
+        const response = await fetch(`${this.baseUrl}/${this.config.phoneNumberId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.config.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          console.error('❌ Error enviando documento WhatsApp:', result);
+          return null;
+        }
+
+        console.log('✅ Documento enviado exitosamente:', result);
+
+        // Guardar mensaje enviado en base de datos
+        await this.saveMessage({
+          id: result.messages?.[0]?.id || `msg_${Date.now()}`,
+          from: this.config?.phoneNumberId || '123456789',
+          to,
+          content,
+          timestamp: new Date(),
+          status: 'sent',
+          isAutomated: false,
+          isSimulated: false,
+          messageType: 'sent',
+          user_id: userId
+        });
+
+        return result;
+      }
+    } catch (error) {
+      console.error('❌ Error sending Meta WhatsApp document:', error);
+      return null;
+    }
   }
 
      // Enviar mensaje con plantilla

@@ -514,7 +514,7 @@ export class PaymentReceiptService {
           
           // 🔧 CRÍTICO: Solo hacer match si el proveedor de la orden coincide con los proveedores encontrados
           const hasValidProviderMatch = providerMatches.some(pm => 
-            pm.provider_id === order.provider_id && pm.confidence > 0.5
+            pm.provider_id === order.provider_id && pm.confidence > 0.1 // Reducir a 10% mínimo para permitir matches
           );
           
           if (!hasValidProviderMatch) {

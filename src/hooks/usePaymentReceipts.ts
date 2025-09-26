@@ -73,12 +73,15 @@ export function usePaymentReceipts() {
   const subscriptionInitializedRef = useRef<Set<string>>(new Set());
   
   const setupRealtimeSubscription = useCallback((userId: string) => {
+    console.log(`🔍 [Realtime] Setup solicitado para usuario: ${userId}`);
+    
     // 🚫 PREVENIR: Múltiples suscripciones simultaneas por usuario
     if (subscriptionInitializedRef.current.has(userId)) {
-      console.log(`🔐 [Realtime] Ya hay suscripción activa para usuario ${userId}`);
+      console.log(`🔐 [Realtime] Ya hay suscripción activa para usuario ${userId}, ignorando llamada`);
       return;
     }
     
+    console.log(`📝 [Realtime] Marcando usuario como inicializado: ${userId}`);
     subscriptionInitializedRef.current.add(userId);
     
     // Limpiar suscripción anterior
@@ -105,10 +108,20 @@ export function usePaymentReceipts() {
           if (payload.eventType === 'INSERT') {
             const newReceipt = payload.new as PaymentReceiptData;
             console.log('✅ [Realtime] Nuevo comprobante agregado:', newReceipt.id);
+            console.log('📱 [Realtime] Datos del comprobante:', { 
+              id: newReceipt.id, 
+              filename: newReceipt.filename,
+              amount: newReceipt.payment_amount,
+              status: newReceipt.status 
+            });
             setReceipts(prev => {
               // Verificar que no existe ya
               const exists = prev.find(r => r.id === newReceipt.id);
-              if (exists) return prev;
+              if (exists) {
+                console.log('⚠️ [Realtime] Comprobante ya existe en el estado local');
+                return prev;
+              }
+              console.log('✅ [Realtime] Agregando comprobante al estado local');
               return [newReceipt, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {

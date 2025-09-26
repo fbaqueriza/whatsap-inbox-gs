@@ -32,9 +32,10 @@ export class PendingOrderMonitor {
       clearInterval(this.analysisInterval);
     }
     
-    this.analysisInterval = setInterval(() => {
-      this.analyzeDeletionPatterns();
-    }, 30000); // Analizar cada 30 segundos en lugar de en cada evento
+    // ❌ DESHABILITADO: No usar intervalos periódicos
+    // this.analysisInterval = setInterval(() => {
+    //   this.analyzeDeletionPatterns();
+    // }, 30000); // Analizar cada 30 segundos en lugar de en cada evento
   }
 
   /**

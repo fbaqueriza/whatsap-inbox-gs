@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, ShoppingCart, Upload, FileText, Calendar, CreditCard, Clock, ChevronDown } from 'lucide-react';
+import { X, ShoppingCart, Upload, FileText, Calendar, CreditCard, Clock, ChevronDown, CheckCircle } from 'lucide-react';
 import { Order, OrderItem, Provider, OrderFile } from '../types';
 import DeliveryDaysSelector from './DeliveryDaysSelector';
 import PaymentMethodSelector from './PaymentMethodSelector';
@@ -305,6 +305,84 @@ export default function EditOrderModal({
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="Instrucciones especiales o notas de entrega..."
               />
+            </div>
+
+            {/* 🔧 NUEVO: Sección de facturas */}
+            <div className="mb-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                <FileText className="h-5 w-5 mr-2 text-blue-600" />
+                Gestión de Facturas
+              </h3>
+              
+              {/* 🔧 NUEVO: Estado de factura */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Estado de Factura
+                </label>
+                <select
+                  value={order?.status === 'factura_recibida' ? 'factura_recibida' : 'pending'}
+                  onChange={(e) => {
+                    // 🔧 NUEVO: Actualizar estado de factura
+                    if (order) {
+                      const newStatus = e.target.value as 'factura_recibida' | 'pending';
+                      // Aquí se podría llamar a una función para actualizar el estado
+                      console.log('Estado de factura cambiado a:', newStatus);
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="pending">Pendiente de Factura</option>
+                  <option value="factura_recibida">Factura Recibida</option>
+                </select>
+              </div>
+
+              {/* 🔧 NUEVO: Subida de factura */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Subir Factura (PDF, imagen)
+                </label>
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={(e) => {
+                      const files = e.target.files;
+                      if (files && files.length > 0) {
+                        // 🔧 NUEVO: Procesar archivo de factura
+                        console.log('Archivo de factura seleccionado:', files[0].name);
+                        // Aquí se podría implementar la lógica de subida
+                      }
+                    }}
+                    className="flex-1 text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                  />
+                  <button
+                    type="button"
+                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors"
+                    onClick={() => {
+                      // 🔧 NUEVO: Marcar como factura recibida
+                      if (order) {
+                        console.log('Marcando orden como factura recibida:', order.id);
+                        // Aquí se podría implementar la lógica de actualización
+                      }
+                    }}
+                  >
+                    �� Marcar Factura Recibida
+                  </button>
+                </div>
+              </div>
+
+              {/* 🔧 NUEVO: Información de factura */}
+              {order?.status === 'factura_recibida' && (
+                <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center">
+                    <CheckCircle className="h-5 w-5 text-green-600 mr-2" />
+                    <div>
+                      <p className="text-sm font-medium text-green-800">Factura Recibida</p>
+                      <p className="text-xs text-green-600">Esta orden tiene factura procesada</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

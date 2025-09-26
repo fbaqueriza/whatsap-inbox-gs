@@ -1,8 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { Order, Provider, StockItem, WhatsAppMessage } from '../types';
 import { supabase } from '../lib/supabase/client';
+import { useRealtimeService } from '../services/realtimeService';
 import type { SupabaseClient } from '@supabase/supabase-js';
-
 interface DataContextType {
   orders: Order[];
   providers: Provider[];
@@ -21,15 +21,12 @@ interface DataContextType {
   setStockItems: React.Dispatch<React.SetStateAction<StockItem[]>>;
   setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
 }
-
 const DataContext = createContext<DataContextType | undefined>(undefined);
-
 export const useData = () => {
   const ctx = useContext(DataContext);
   if (!ctx) throw new Error('useData must be used within a DataProvider');
   return ctx;
 };
-
 // Función para mapear de snake_case a camelCase
 function mapStockItemFromDb(item: any): StockItem {
   return {
@@ -49,43 +46,38 @@ function mapStockItemFromDb(item: any): StockItem {
     user_id: item.user_id,
   };
 }
-
 // 🔧 SOLUCIÓN PERMANENTE: Función para mapear Order de snake_case a camelCase
-function mapOrderFromDb(order: any): Order {
-  // 🔧 DEBUG: Log para verificar qué datos llegan desde la BD
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🔧 DEBUG - Mapeando orden desde BD:', {
-      id: order.id,
-      provider_id: order.provider_id,
-      desired_delivery_date: order.desired_delivery_date,
-      desired_delivery_time: order.desired_delivery_time,
-      payment_method: order.payment_method,
-      additional_files: order.additional_files
-    });
-  }
+// 🔧 NUEVO: Función para normalizar estados
+import { normalizeOrderStatus, ORDER_STATUS } from '../lib/orderConstants';
 
+function normalizeStatus(status: string): string {
+  return normalizeOrderStatus(status);
+}
+
+function mapOrderFromDb(order: any): Order {
   return {
     ...order,
     providerId: order.provider_id,
     orderNumber: order.order_number, // Usar el valor real de la base de datos
-    totalAmount: order.total_amount,
-    orderDate: order.order_date,
-    dueDate: order.due_date,
+    totalAmount: order.total_amount || 0,
+    orderDate: order.order_date ? new Date(order.order_date) : new Date(),
+    dueDate: order.due_date ? new Date(order.due_date) : undefined,
     invoiceNumber: order.invoice_number,
     bankInfo: order.bank_info,
     receiptUrl: order.receipt_url,
+    // 🔧 CORRECCIÓN: Usar estado directo de la BD (ya está normalizado)
+    status: order.status,
     // 🔧 NUEVAS COLUMNAS NATIVAS: Mapear directamente desde la BD
     desiredDeliveryDate: order.desired_delivery_date ? new Date(order.desired_delivery_date) : undefined,
     desiredDeliveryTime: order.desired_delivery_time || undefined,
     paymentMethod: (order.payment_method as 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque') || 'efectivo',
     additionalFiles: order.additional_files || undefined,
-    createdAt: order.created_at,
-    updatedAt: order.updated_at,
+    createdAt: order.created_at ? new Date(order.created_at) : new Date(),
+    updatedAt: order.updated_at ? new Date(order.updated_at) : new Date(),
     id: order.id,
     user_id: order.user_id,
   };
 }
-
 // Función para mapear Provider de snake_case a camelCase
 function mapProviderFromDb(provider: any): Provider {
   return {
@@ -104,147 +96,77 @@ function mapProviderFromDb(provider: any): Provider {
     user_id: provider.user_id,
   };
 }
-
-// 🔧 FUNCIÓN DE VERIFICACIÓN: Para debug de datos
+// 🔧 FUNCIÓN DE VERIFICACIÓN: Para debug de datos (solo en desarrollo)
 function verifyOrderData(order: any, source: string) {
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`🔧 VERIFICACIÓN - ${source}:`, {
-      id: order.id,
-      provider_id: order.provider_id,
-      has_desired_delivery_date: !!order.desired_delivery_date,
-      desired_delivery_date: order.desired_delivery_date,
-      has_desired_delivery_time: !!order.desired_delivery_time,
-      desired_delivery_time: order.desired_delivery_time,
-      has_payment_method: !!order.payment_method,
-      payment_method: order.payment_method,
-      has_additional_files: !!order.additional_files,
-      additional_files: order.additional_files
-    });
-  }
+  // 🔧 LIMPIEZA: Comentar logs excesivos
+  // if (process.env.NODE_ENV === 'development') {
+  //   console.log(`🔧 VERIFICACIÓN - ${source}:`, order);
+  // }
 }
-
 export const DataProvider: React.FC<{ userEmail?: string; userId?: string; children: React.ReactNode }> = ({ userEmail, userId, children }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [stockItems, setStockItems] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(userId || null);
-
-  // Fetch user_id from email if not provided
-  useEffect(() => {
-    console.log('👤 DEBUG: useEffect de usuario ejecutándose:', { userEmail, userId });
-    if (!userEmail && !userId) {
-      console.log('❌ DEBUG: No hay userEmail ni userId');
-      return;
-    }
-    if (userId) {
-      console.log('✅ DEBUG: userId proporcionado directamente:', userId);
-      setCurrentUserId(userId);
-      return;
-    }
-    const fetchUserId = async () => {
-      if (!userEmail) return;
-      try {
-        const { data: userData, error: userError, status } = await supabase
-          .from('users')
-          .select('id')
-          .eq('email', userEmail)
-          .single();
-        if (!userError && userData) {
-          setCurrentUserId(userData.id as string);
-        } else if (status === 406 || (userError && userError.code === 'PGRST116')) {
-          // 406 Not Acceptable or not found: create user row
-          const { data: newUser, error: createError } = await supabase
-            .from('users')
-            .insert([{ email: userEmail }])
-            .select('id')
-            .single();
-          if (!createError && newUser) {
-            setCurrentUserId(newUser.id as string);
-          } else {
-            setCurrentUserId(null);
-            setLoading(false);
-            setErrorMsg('No se pudo crear el usuario en la base de datos.');
-          }
-        } else {
-          setCurrentUserId(null);
-          setLoading(false);
-          setErrorMsg('Error al buscar el usuario en la base de datos.');
-        }
-      } catch (err) {
-        setCurrentUserId(null);
-        setLoading(false);
-        setErrorMsg('Error inesperado al buscar/crear usuario.');
-      }
-    };
-    fetchUserId();
-  }, [userEmail, userId]);
-
-  // Error state for user fetch/creation
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
+  // 🔧 NUEVO: Conectar con RealtimeService para actualizaciones en tiempo real
+  const realtimeService = useRealtimeService();
+  
+  // 🔧 CORREGIDO: Usar el currentUserId del RealtimeService en lugar del local
+  const currentUserId = realtimeService.currentUserId || userId || null;
   // Fetch providers
   const fetchProviders = useCallback(async () => {
     if (!currentUserId) {
       return;
     }
-    
     try {
       const { data, error } = await supabase
         .from('providers')
         .select('*')
         .eq('user_id', currentUserId)
         .order('created_at', { ascending: false });
-
       if (error) {
         console.error('Error cargando proveedores:', error);
         setProviders([]);
         return;
       }
-
       setProviders(data?.map(mapProviderFromDb) || []);
     } catch (error) {
       console.error('Error cargando proveedores:', error);
       setProviders([]);
     }
   }, [currentUserId]);
-
   // Fetch all data for the user con optimización para items del proveedor
   const fetchAll = useCallback(async () => {
     if (!currentUserId) {
-      console.log('🚨 DEBUG: currentUserId es null, no ejecutando fetchAll');
       return;
     }
     setLoading(true);
-    setErrorMsg(null);
-    
-    console.log('🚀 DEBUG: Iniciando fetchAll para usuario:', currentUserId);
-    
     try {
-      // 🔧 OPTIMIZACIÓN: Cargar datos con información completa de items
-      console.log('📡 DEBUG: Ejecutando SELECT de órdenes...');
-      const [{ data: provs, error: provError }, { data: ords, error: ordError }, { data: stocks, error: stockError }] = await Promise.all([
-        supabase.from('providers').select('*').eq('user_id', currentUserId).order('created_at', { ascending: false }),
-        supabase.from('orders').select(`
-          *,
-          desired_delivery_date,
-          desired_delivery_time,
-          payment_method,
-          additional_files
-        `).eq('user_id', currentUserId).order('created_at', { ascending: false }),
+      // 🔧 NUEVO: Usar endpoints de API del servidor para evitar problemas de RLS
+      const [providersResponse, stockResponse] = await Promise.all([
+        fetch(`/api/data/providers?user_id=${currentUserId}`),
         supabase.from('stock').select(`
           *,
           associated_providers
         `).eq('user_id', currentUserId).order('preferred_provider', { ascending: true }).order('created_at', { ascending: false }),
       ]);
-      
-      if (provError) console.error('❌ Error fetching providers:', provError);
-      if (ordError) console.error('❌ Error fetching orders:', ordError);
+
+      // Procesar proveedores desde la API
+      if (providersResponse.ok) {
+        const providersData = await providersResponse.json();
+        if (providersData.success) {
+          const mappedProviders = (providersData.providers || []).map(mapProviderFromDb);
+          setProviders(mappedProviders);
+        } else {
+          console.error('❌ Error fetching providers from API:', providersData.error);
+        }
+      } else {
+        console.error('❌ Error fetching providers from API:', providersResponse.status);
+      }
+
+      // Procesar stock items (mantener acceso directo por ahora)
+      const { data: stocks, error: stockError } = await stockResponse;
       if (stockError) console.error('❌ Error fetching stock:', stockError);
-      
-      console.log(`📊 DEBUG: fetchAll retornó ${ords?.length || 0} órdenes`);
-      
-      const mappedProviders = (provs || []).map(mapProviderFromDb);
       
       // 🔧 OPTIMIZACIÓN: Validar y limpiar datos de stock items
       const validatedStockItems = (stocks || []).map(item => ({
@@ -253,165 +175,114 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
           ? item.associated_providers 
           : []
       }));
-      
-      setProviders(mappedProviders);
-      
-      // 🔧 DEBUG: Verificar datos de órdenes antes del mapeo
-      if (ords && ords.length > 0) {
-        console.log('🔍 DEBUG: Primera orden ANTES del mapeo:', {
-          id: ords[0].id,
-          order_number: ords[0].order_number,
-          desired_delivery_date: ords[0].desired_delivery_date,
-          desired_delivery_time: ords[0].desired_delivery_time,
-          payment_method: ords[0].payment_method,
-          additional_files: ords[0].additional_files
-        });
-        verifyOrderData(ords[0], 'BD antes del mapeo');
-      }
-      
-      console.log('🔄 DEBUG: Aplicando mapOrderFromDb...');
-      const mappedOrders = (ords || []).map(mapOrderFromDb);
-      
-      // 🔧 DEBUG: Verificar datos de órdenes después del mapeo
-      if (mappedOrders && mappedOrders.length > 0) {
-        console.log('🔍 DEBUG: Primera orden DESPUÉS del mapeo:', {
-          id: mappedOrders[0].id,
-          orderNumber: mappedOrders[0].orderNumber,
-          desiredDeliveryDate: mappedOrders[0].desiredDeliveryDate,
-          desiredDeliveryTime: mappedOrders[0].desiredDeliveryTime,
-          paymentMethod: mappedOrders[0].paymentMethod,
-          additionalFiles: mappedOrders[0].additionalFiles
-        });
-        verifyOrderData(mappedOrders[0], 'Después del mapeo');
-      }
-      
-      console.log('💾 DEBUG: Estableciendo órdenes en el estado...');
-      setOrders(mappedOrders);
       setStockItems(validatedStockItems);
       
-      console.log('✅ DEBUG: fetchAll completado exitosamente');
     } catch (error) {
       console.error('❌ Error in fetchAll:', error);
-      setErrorMsg('Error al cargar los datos. Por favor, recarga la página.');
     } finally {
       setLoading(false);
     }
   }, [currentUserId]);
-
   useEffect(() => {
-    console.log('🔄 DEBUG: useEffect ejecutándose, currentUserId:', currentUserId);
     if (currentUserId) {
-      console.log('✅ DEBUG: currentUserId válido, ejecutando fetchAll...');
       fetchAll();
     } else {
-      console.log('❌ DEBUG: currentUserId es null o undefined');
     }
   }, [currentUserId]); // Solo depende de currentUserId, no de fetchAll
 
+  // 🔧 NUEVO: Escuchar actualizaciones de órdenes en tiempo real
+  useEffect(() => {
+    if (!currentUserId) {
+      return;
+    }
+
+           const unsubscribeOrderUpdates = realtimeService.addOrderListener((updatedOrder) => {
+             // 🔧 OPTIMIZADO: Actualizar solo la orden específica en lugar de recargar todas
+             setOrders(prevOrders => {
+               const existingOrderIndex = prevOrders.findIndex(order => order.id === updatedOrder.id);
+               
+               if (existingOrderIndex >= 0) {
+                 // Actualizar orden existente
+                 const updatedOrders = [...prevOrders];
+                 updatedOrders[existingOrderIndex] = { ...updatedOrders[existingOrderIndex], ...updatedOrder };
+                 return updatedOrders;
+               } else {
+                 // Agregar nueva orden
+                 return [...prevOrders, updatedOrder];
+               }
+             });
+           });
+
+    return () => {
+      unsubscribeOrderUpdates();
+    };
+  }, [currentUserId]);
   // CRUD: Orders
   const addOrder = useCallback(async (order: Partial<Order>, user_id: string) => {
     try {
-      // 🔧 OPTIMIZACIÓN: Logging reducido
       
-      // Obtener información del proveedor para el número de orden
-      const providerId = (order as any).providerId;
-      let providerName = 'PROV';
+      // Generar número de orden único
+      const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+      const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+      const orderNumber = `ORD-${timestamp}-${randomSuffix}`;
       
-      if (providerId) {
-        const { data: provider } = await supabase
-          .from('providers')
-          .select('name')
-          .eq('id', providerId)
-          .single();
-        
-        if (provider) {
-          // Tomar las primeras 3 letras del nombre del proveedor
-          providerName = provider.name.substring(0, 3).toUpperCase();
-        }
-      }
-      
-      // Generar número de orden con fecha y proveedor
-      const now = new Date();
-      const dateStr = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
-      const randomStr = Math.random().toString(36).substr(2, 4).toUpperCase();
-      
-      const orderNumber = `ORD-${dateStr}-${providerName}-${randomStr}`;
-      
-      // 🔧 SOLUCIÓN PERMANENTE: Mapear campos a snake_case usando columnas nativas
-      const snakeCaseOrder = {
-        provider_id: (order as any).providerId,
-        user_id,
-        items: order.items || [],
-        status: order.status || 'pending', // Valor por defecto
-        order_number: orderNumber, // Número de orden generado
-        total_amount: (order as any).totalAmount || 0,
+      // Preparar datos de la orden para el servicio unificado
+      const orderData = {
+        ...order,
+        id: crypto.randomUUID(), // Generar ID único para la orden
+        orderNumber: orderNumber,
+        status: 'standby', // Estado inicial según el nuevo flujo
+        totalAmount: order.totalAmount || 0,
         currency: order.currency || 'ARS',
-        order_date: (order as any).orderDate || new Date().toISOString(),
-        due_date: (order as any).dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 días
-        invoice_number: (order as any).invoiceNumber || null,
-        bank_info: (order as any).bankInfo || null,
-        receipt_url: (order as any).receiptUrl || null,
-        notes: order.notes || '',
-        // 🔧 NUEVAS COLUMNAS NATIVAS para campos del modal
-        desired_delivery_date: order.desiredDeliveryDate ? order.desiredDeliveryDate.toISOString() : null,
-        desired_delivery_time: order.desiredDeliveryTime && order.desiredDeliveryTime.length > 0 ? order.desiredDeliveryTime : null,
-        payment_method: order.paymentMethod || 'efectivo',
-        additional_files: order.additionalFiles && order.additionalFiles.length > 0 ? order.additionalFiles : null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        orderDate: order.orderDate || new Date(),
+        dueDate: order.dueDate || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 días
+        paymentMethod: order.paymentMethod || 'efectivo',
+        additionalFiles: order.additionalFiles || [],
+        notes: order.notes || ''
       };
       
-      // 🔧 DEBUG: Log de los datos que se van a insertar
-      console.log('🔧 DEBUG - Datos a insertar en BD:', {
-        provider_id: snakeCaseOrder.provider_id,
-        items_count: snakeCaseOrder.items.length,
-        notes: snakeCaseOrder.notes,
-        desired_delivery_date: snakeCaseOrder.desired_delivery_date,
-        desired_delivery_time: snakeCaseOrder.desired_delivery_time,
-        payment_method: snakeCaseOrder.payment_method,
-        additional_files: snakeCaseOrder.additional_files
+      // 🚀 NUEVO: Llamar directamente a la API del servidor
+      const response = await fetch('/api/orders/send-notification', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          order: orderData,
+          userId: user_id
+        }),
       });
       
-      // 🔧 OPTIMIZACIÓN: Logging reducido
+      const result = await response.json();
       
-      const { data, error } = await supabase.from('orders').insert([snakeCaseOrder]).select();
-      
-      if (error) {
-        console.error('Error adding order:', error);
-        setErrorMsg('Error al agregar pedido: ' + (error.message || error.details || ''));
-        throw error;
-      }
-      
-      console.log('✅ Orden insertada exitosamente:', data);
-      
-      // 🔧 OPTIMIZACIÓN: Actualizar localmente inmediatamente
-      if (data && data.length > 0) {
-        // 🔧 DEBUG: Verificar datos antes del mapeo
-        verifyOrderData(data[0], 'BD después de insertar');
+      if (result.success && result.orderId) {
+        // Obtener la orden creada desde la base de datos
+        const { data: createdOrder, error: fetchError } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('id', result.orderId)
+          .single();
         
-        const createdOrder = mapOrderFromDb(data[0]);
-        console.log('📋 Orden mapeada:', createdOrder);
+        if (fetchError) {
+          console.error('Error obteniendo orden creada:', fetchError);
+          throw fetchError;
+        }
         
-        // 🔧 DEBUG: Verificar datos después del mapeo
-        verifyOrderData(createdOrder, 'Después de mapear orden creada');
+        const mappedOrder = mapOrderFromDb(createdOrder);
         
         // Actualizar el estado local inmediatamente
-        setOrders(prevOrders => [createdOrder, ...prevOrders]);
-        
-        return createdOrder;
+        setOrders(prevOrders => [mappedOrder, ...prevOrders]);
+        return mappedOrder;
+      } else {
+        throw new Error(result.errors?.join(', ') || 'Error creando orden');
       }
-      
-      return null;
     } catch (error) {
       console.error('Error in addOrder:', error);
       throw error;
     }
   }, []);
-
   const updateOrder = useCallback(async (order: Order) => {
     try {
-      console.log('🔄 Actualizando orden:', order.id, 'Estado:', order.status);
-      
       // 🔧 SOLUCIÓN PERMANENTE: Mapear campos a snake_case usando columnas nativas
       const snakeCaseOrder = {
         provider_id: (order as any).providerId,
@@ -434,33 +305,25 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         created_at: (order as any).createdAt,
         updated_at: new Date().toISOString(), // 🔧 MEJORA: Actualizar timestamp
       };
-      
       const { error } = await supabase.from('orders').update(snakeCaseOrder).eq('id', order.id);
       if (error) {
         console.error('Error updating order:', error);
-        setErrorMsg('Error al actualizar pedido: ' + (error.message || error.details || ''));
         throw error;
       }
-      
-      console.log('✅ Orden actualizada exitosamente:', order.id);
-      
       // 🔧 OPTIMIZACIÓN: Actualizar localmente sin fetchAll completo
       setOrders(prevOrders => 
         prevOrders.map(o => o.id === order.id ? { ...o, ...order, updatedAt: new Date() } : o)
       );
-      
     } catch (error) {
       console.error('Error in updateOrder:', error);
       throw error;
     }
   }, []);
-
   const deleteOrder = useCallback(async (id: string, user_id: string) => {
     try {
       const { error } = await supabase.from('orders').delete().eq('id', id).eq('user_id', user_id);
       if (error) {
         console.error('Error deleting order:', error);
-        setErrorMsg('Error al eliminar pedido: ' + (error.message || error.details || ''));
         throw error;
       }
       await fetchAll();
@@ -469,39 +332,32 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       throw error;
     }
   }, [fetchAll]);
-
   // CRUD: Providers
   // Permitir batch insert
   const addProvider = useCallback(async (providerOrProviders: Partial<Provider>|Partial<Provider>[], user_id: string, batch = false) => {
     try {
       console.log('addProvider called with:', { providerOrProviders, user_id, batch });
-      
       if (batch && Array.isArray(providerOrProviders)) {
         const result = await supabase.from('providers').insert(providerOrProviders);
         if (result.error) {
           console.error('Error adding providers (batch):', result.error);
-          setErrorMsg('Error al agregar proveedores: ' + (result.error.message || result.error.details || ''));
           throw result.error;
         }
-        
         // Agregar las nuevas filas al principio en lugar de recargar todo
         if (result.data && Array.isArray(result.data) && (result.data as any[]).length > 0) {
           const newProviders = (result.data as any[]).map(mapProviderFromDb);
           console.log('Adding batch providers to state:', newProviders);
           setProviders(prev => [...newProviders, ...prev]);
         }
-        
         return result;
       }
       const provider = Array.isArray(providerOrProviders) ? providerOrProviders[0] : providerOrProviders;
       console.log('Processing single provider:', provider);
-      
       // Manejar campos que pueden ser arrays o strings
       const categories = Array.isArray(provider.categories) ? provider.categories : 
                        (typeof provider.categories === 'string' ? [provider.categories] : []);
       const tags = Array.isArray(provider.tags) ? provider.tags : 
                   (typeof provider.tags === 'string' ? [provider.tags] : []);
-      
       const snakeCaseProvider = {
         name: provider.name,
         email: provider.email,
@@ -523,19 +379,14 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         updated_at: provider.updatedAt,
         user_id: user_id,
       };
-      
       console.log('📝 Datos a insertar en Supabase:', snakeCaseProvider);
       console.log('Inserting snakeCaseProvider:', snakeCaseProvider);
-      
       const result = await supabase.from('providers').insert([snakeCaseProvider]);
       console.log('Supabase result:', result);
-      
       if (result.error) {
         console.error('Error adding provider:', result.error);
-        setErrorMsg('Error al agregar proveedor: ' + (result.error.message || result.error.details || ''));
         throw result.error;
       }
-      
       // Agregar la nueva fila al principio de la lista en lugar de recargar todo
       if (result.data && Array.isArray(result.data) && (result.data as any[]).length > 0) {
         const newProvider = mapProviderFromDb((result.data as any[])[0]);
@@ -547,24 +398,19 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
           return updated;
         });
       }
-      
       return result;
     } catch (error) {
       console.error('Error in addProvider:', error);
       throw error;
     }
   }, []);
-
   const updateProvider = useCallback(async (provider: Provider) => {
     try {
-      
-      
       // Manejar campos que pueden ser arrays o strings
       const categories = Array.isArray(provider.categories) ? provider.categories : 
                        (typeof provider.categories === 'string' ? [provider.categories] : []);
       const tags = Array.isArray(provider.tags) ? provider.tags : 
                   (typeof provider.tags === 'string' ? [provider.tags] : []);
-      
       const snakeCaseProvider = {
         name: provider.name,
         email: provider.email,
@@ -584,15 +430,12 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         catalogs: provider.catalogs || [],
         updated_at: new Date(),
       };
-      
       console.log('📝 Datos a enviar a Supabase:', snakeCaseProvider);
       const { error } = await supabase.from('providers').update(snakeCaseProvider).eq('id', provider.id);
       if (error) {
         console.error('Error updating provider:', error);
-        setErrorMsg('Error al actualizar proveedor: ' + (error.message || error.details || ''));
         throw error;
       }
-      
       // Actualizar solo el proveedor específico en lugar de recargar todo
       setProviders(prev => prev.map(p => p.id === provider.id ? provider : p));
     } catch (error) {
@@ -600,7 +443,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       throw error;
     }
   }, []);
-
   // Permitir batch delete
   const deleteProvider = useCallback(async (idOrIds: string | string[], user_id: string, batch = false, forceDelete = false) => {
     try {
@@ -609,7 +451,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         let successCount = 0;
         let errorCount = 0;
         let deletedOrdersCount = 0;
-        
         for (const id of idOrIds) {
           try {
             // Primero verificar si el proveedor existe y pertenece al usuario
@@ -619,19 +460,16 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
               .eq('id', id)
               .eq('user_id', user_id)
               .single();
-            
             if (checkError || !provider) {
               console.error(`Provider ${id} no encontrado o no pertenece al usuario:`, checkError);
               errorCount++;
               continue;
             }
-            
             // Verificar si tiene pedidos asociados
             const { data: orders, error: ordersError } = await supabase
               .from('orders')
               .select('id')
               .eq('provider_id', id);
-            
             if (ordersError) {
               console.error(`Error checking orders for provider ${id}:`, ordersError);
             } else if (orders && orders.length > 0) {
@@ -643,7 +481,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
                   .delete()
                   .eq('provider_id', id)
                   .eq('user_id', user_id);
-                
                 if (deleteOrdersError) {
                   console.error(`Error deleting orders for provider ${id}:`, deleteOrdersError);
                   errorCount++;
@@ -658,7 +495,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
                 continue;
               }
             }
-            
             // Intentar borrar el proveedor
             const { error } = await supabase.from('providers').delete().eq('id', id).eq('user_id', user_id);
             if (error) {
@@ -673,17 +509,13 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
             errorCount++;
           }
         }
-        
         console.log(`Borrado completado: ${successCount} proveedores exitosos, ${errorCount} errores, ${deletedOrdersCount} pedidos eliminados`);
-        
         if (errorCount > 0) {
           console.warn(`⚠️ ${errorCount} proveedores no pudieron ser eliminados. Revisa los logs anteriores para más detalles.`);
         }
-        
         await fetchAll();
         return;
       }
-      
       const id = Array.isArray(idOrIds) ? idOrIds[0] : idOrIds;
       const { error } = await supabase.from('providers').delete().eq('id', id).eq('user_id', user_id);
       if (error) {
@@ -696,7 +528,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       throw error;
     }
   }, [fetchAll]);
-
   // CRUD: Stock
   // Permitir batch insert
   const addStockItem = useCallback(async (itemOrItems: Partial<StockItem>|Partial<StockItem>[], user_id: string, batch = false) => {
@@ -710,7 +541,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
           lastOrdered: item.lastOrdered && !isNaN(Date.parse(String(item.lastOrdered))) ? new Date(item.lastOrdered) : null,
           nextOrder: item.nextOrder && !isNaN(Date.parse(String(item.nextOrder))) ? new Date(item.nextOrder) : null,
         }));
-        
         // Convertir a snake_case para Supabase
         const snakeCaseItems = validatedItems.map(item => ({
           product_name: item.productName || '',
@@ -726,33 +556,26 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
           updated_at: item.updatedAt || new Date(),
           user_id: user_id,
         }));
-        
         // Insertar todos los items en un solo llamado
         const result = await supabase.from('stock').insert(snakeCaseItems);
         if (result.error) {
           console.error('Supabase error al insertar stock (batch):', result.error, itemOrItems);
-          setErrorMsg('Error al insertar stock: ' + (result.error.message || result.error.details || ''));
           throw result.error;
         }
-        
         // Agregar las nuevas filas al principio en lugar de recargar todo
         if (result.data && Array.isArray(result.data) && (result.data as any[]).length > 0) {
           const newStockItems = (result.data as any[]).map(mapStockItemFromDb);
           setStockItems(prev => [...newStockItems, ...prev]);
         }
-        
         return;
       }
-      
       // Comportamiento original: uno por uno
       const item = Array.isArray(itemOrItems) ? itemOrItems[0] : itemOrItems;
-      
       // Validaciones mejoradas
       const quantity = item.quantity === null || item.quantity === undefined ? 0 : Number(item.quantity);
       const associatedProviders = Array.isArray(item.associatedProviders) ? item.associatedProviders : [];
       const lastOrdered = item.lastOrdered && !isNaN(Date.parse(String(item.lastOrdered))) ? new Date(item.lastOrdered) : null;
       const nextOrder = item.nextOrder && !isNaN(Date.parse(String(item.nextOrder))) ? new Date(item.nextOrder) : null;
-      
       const snakeCaseItem = {
         product_name: item.productName || '',
         category: item.category || 'Other',
@@ -767,14 +590,11 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         updated_at: item.updatedAt || new Date(),
         user_id: user_id,
       };
-      
       const result = await supabase.from('stock').insert([snakeCaseItem]);
       if (result.error) {
         console.error('Supabase error al insertar stock:', result.error, snakeCaseItem);
-        setErrorMsg('Error al insertar stock: ' + (result.error.message || result.error.details || ''));
         throw result.error;
       }
-      
       // Agregar la nueva fila al principio de la lista en lugar de recargar todo
       if (result.data && Array.isArray(result.data) && (result.data as any[]).length > 0) {
         const newStockItem = mapStockItemFromDb((result.data as any[])[0]);
@@ -785,7 +605,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       throw error;
     }
   }, []);
-
   const updateStockItem = useCallback(async (item: StockItem) => {
     try {
       // Validaciones mejoradas
@@ -793,7 +612,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       const associatedProviders = Array.isArray(item.associatedProviders) ? item.associatedProviders : [];
       const lastOrdered = item.lastOrdered && !isNaN(Date.parse(String(item.lastOrdered))) ? new Date(item.lastOrdered) : null;
       const nextOrder = item.nextOrder && !isNaN(Date.parse(String(item.nextOrder))) ? new Date(item.nextOrder) : null;
-      
       const snakeCaseItem = {
         product_name: item.productName || '',
         category: item.category || 'Other',
@@ -806,14 +624,11 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         next_order: nextOrder,
         updated_at: new Date(),
       };
-      
       const { error } = await supabase.from('stock').update(snakeCaseItem).eq('id', item.id);
       if (error) {
         console.error('Error updating stock item:', error);
-        setErrorMsg('Error al actualizar producto: ' + (error.message || error.details || ''));
         throw error;
       }
-      
       // Actualizar solo el item específico en lugar de recargar todo
       setStockItems(prev => prev.map(s => s.id === item.id ? item : s));
     } catch (error) {
@@ -821,7 +636,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       throw error;
     }
   }, []);
-
   // Permitir batch delete
   const deleteStockItem = useCallback(async (idOrIds: string | string[], user_id: string, batch = false) => {
     try {
@@ -829,7 +643,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         const { error } = await supabase.from('stock').delete().in('id', idOrIds).eq('user_id', user_id);
         if (error) {
           console.error('Error deleting stock items (batch):', error);
-          setErrorMsg('Error al eliminar productos: ' + (error.message || error.details || ''));
           throw error;
         }
         // Remover items del estado en lugar de recargar todo
@@ -840,7 +653,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       const { error } = await supabase.from('stock').delete().eq('id', id).eq('user_id', user_id);
       if (error) {
         console.error('Error deleting stock item:', error);
-        setErrorMsg('Error al eliminar producto: ' + (error.message || error.details || ''));
         throw error;
       }
       // Remover item del estado en lugar de recargar todo
@@ -850,7 +662,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       throw error;
     }
   }, [fetchAll]);
-
   return (
     <DataContext.Provider value={{
       orders,
@@ -875,27 +686,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
             <p className="mt-4 text-gray-600">Cargando datos...</p>
-            {errorMsg && <div className="mt-4 text-red-500">{errorMsg}</div>}
-          </div>
-        </div>
-      ) : errorMsg ? (
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-red-500 mb-4">
-              <svg className="h-12 w-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
-            </div>
-            <p className="text-red-600 font-medium">{errorMsg}</p>
-            <button 
-              onClick={() => {
-                setErrorMsg(null);
-                fetchAll();
-              }}
-              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-            >
-              Reintentar
-            </button>
           </div>
         </div>
       ) : (
@@ -904,7 +694,6 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
     </DataContext.Provider>
   );
 };
-
 // ---
 // Recommended RLS policy for users table (add in Supabase SQL editor):
 //
@@ -913,4 +702,4 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
 // create policy "Allow insert for all" on users for insert with check (true);
 //
 // For production, restrict as needed (e.g. auth.uid() = id)
-// --- 
+// --- bisi

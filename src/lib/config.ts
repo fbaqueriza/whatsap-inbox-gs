@@ -13,9 +13,10 @@ export const config = {
   // Configuración de logging
   logging: {
     development: process.env.NODE_ENV === 'development',
-    showRealtimeLogs: false, // Deshabilitar logs de Realtime por defecto
-    showDebugLogs: false, // Deshabilitar logs de debug por defecto
-    showErrorLogs: true // Mantener logs de error
+    showRealtimeLogs: false, // Disabled to reduce spam
+    showDebugLogs: false, // Disabled to reduce spam
+    showErrorLogs: true, // Mantener logs de error
+    showInfoLogs: false // Disabled to reduce spam
   },
   
   // Configuración de WhatsApp
@@ -43,9 +44,10 @@ export const log = (level: 'debug' | 'info' | 'warn' | 'error', message: string,
   const shouldLog = 
     (level === 'error' && config.logging.showErrorLogs) ||
     (level === 'warn' && config.logging.showDebugLogs) ||
-    (level === 'info' && config.logging.showDebugLogs) ||
+    (level === 'info' && config.logging.showInfoLogs) ||
     (level === 'debug' && config.logging.showDebugLogs);
   
+  // Logs habilitados temporalmente para debug
   if (shouldLog) {
     const prefix = {
       debug: '🔍',

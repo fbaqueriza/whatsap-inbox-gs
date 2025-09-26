@@ -10,16 +10,19 @@ import { createClient } from '@supabase/supabase-js';
 export class SupabaseStorageService {
   private supabase: any;
   private requestId?: string;
+  private initialized: boolean = false;
 
   constructor(requestId?: string) {
     this.requestId = requestId;
-    this.initializeSupabase();
+    // No inicializar aquí para evitar errores durante el build
   }
 
   /**
-   * 🔧 INICIALIZAR CLIENTE SUPABASE
+   * 🔧 INICIALIZAR CLIENTE SUPABASE (LAZY INITIALIZATION)
    */
   private initializeSupabase() {
+    if (this.initialized) return;
+
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -28,6 +31,7 @@ export class SupabaseStorageService {
     }
 
     this.supabase = createClient(supabaseUrl, supabaseKey);
+    this.initialized = true;
   }
 
   /**
@@ -43,6 +47,9 @@ export class SupabaseStorageService {
     error?: string;
   }> {
     try {
+      // Inicializar solo cuando se necesite
+      this.initializeSupabase();
+      
       console.log(`🔍 [${this.requestId || 'storage'}] Verificando bucket: ${bucketName}`);
 
       // 🔧 PASO 1: Verificar si el bucket existe
@@ -99,6 +106,9 @@ export class SupabaseStorageService {
    */
   private async configureBucketPolicies(bucketName: string): Promise<void> {
     try {
+      // Inicializar solo cuando se necesite
+      this.initializeSupabase();
+      
       console.log(`🔧 [${this.requestId || 'storage'}] Configurando políticas para bucket: ${bucketName}`);
       
       // 🔧 POLÍTICA: Permitir lectura pública de archivos
@@ -201,6 +211,9 @@ export class SupabaseStorageService {
     error?: string;
   }> {
     try {
+      // Inicializar solo cuando se necesite
+      this.initializeSupabase();
+      
       console.log(`🗑️ [${this.requestId || 'storage'}] Eliminando archivo: ${filePath}`);
 
       const { error: deleteError } = await this.supabase.storage
@@ -238,6 +251,9 @@ export class SupabaseStorageService {
     error?: string;
   }> {
     try {
+      // Inicializar solo cuando se necesite
+      this.initializeSupabase();
+      
       console.log(`📋 [${this.requestId || 'storage'}] Listando archivos en: ${bucketName}/${folderPath}`);
 
       const { data: files, error: listError } = await this.supabase.storage

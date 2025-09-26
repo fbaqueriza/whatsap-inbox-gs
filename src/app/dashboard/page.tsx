@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Order, Provider, StockItem, OrderItem } from '../../types';
 import { useChat } from '../../contexts/ChatContext';
 import { useGlobalChat } from '../../contexts/GlobalChatContext';
-import { OrderNotificationService } from '../../lib/orderNotificationService';
+import { NotificationService } from '../../lib/notificationService';
 import { PhoneNumberService } from '../../lib/phoneNumberService';
 import { supabase } from '../../lib/supabase/client';
 import {
@@ -33,11 +33,15 @@ import SuggestedOrders from '../../components/SuggestedOrders';
 import CreateOrderModal from '../../components/CreateOrderModal';
 import ComprobanteButton from '../../components/ComprobanteButton';
 import OrdersModule from '../../components/OrdersModule';
-import { useOrdersRealtime } from '../../hooks/useSupabaseRealtime';
+import { useRealtimeService } from '../../services/realtimeService';
+import { useSessionValidator } from '../../hooks/useSessionValidator';
 
 export default function DashboardPageWrapper() {
   const { user, loading: authLoading } = useSupabaseAuth();
   const router = useRouter();
+  
+  // Validar sesión automáticamente
+  useSessionValidator();
   
   useEffect(() => {
     if (!authLoading && !user && typeof window !== 'undefined') {
@@ -192,6 +196,7 @@ function DashboardPageContent({
       // Cerrar modal inmediatamente para mejor UX
       setIsCreateModalOpen(false);
       setSuggestedOrder(null);
+      setSelectedProviderId(null);
       
       // Crear la orden con manejo de errores
       const createdOrder = await addOrder(newOrder, user.id);
@@ -225,9 +230,8 @@ function DashboardPageContent({
           console.error('Proveedor no encontrado para ID:', orderData.providerId);
         }
       } else {
-        console.error('No se pudo crear la orden');
-        // Reabrir modal si hay error
-        setIsCreateModalOpen(true);
+        console.error('No se pudo crear la orden - pero modal permanece cerrado para mejor UX');
+        // No reabrir modal - el usuario puede crear una nueva orden si es necesario
       }
       
       // Actualizar la lista de órdenes inmediatamente
@@ -240,9 +244,9 @@ function DashboardPageContent({
       
     } catch (error) {
       console.error('Error creando pedido:', error);
-      // Reabrir modal si hay error y mostrar mensaje
+      // Mostrar mensaje de error pero no reabrir modal para mejor UX
       alert('Error al crear el pedido. Por favor, inténtalo de nuevo.');
-      setIsCreateModalOpen(true);
+      // Modal permanece cerrado - usuario puede crear nueva orden si es necesario
     }
   };
   const handleSuggestedOrderCreate = (suggestedOrder: any) => {
@@ -296,21 +300,25 @@ function DashboardPageContent({
     }
   }, []);
 
-  // Suscripción realtime activa con manejo de errores
-  const realtimeData = useOrdersRealtime(
-    handleNewOrder,
-    handleOrderUpdate,
-    handleOrderDelete
-  );
+  // Usar nuestro RealtimeService unificado
+  const { orders: realtimeOrders, isConnected } = useRealtimeService();
+  
+  // Sincronizar con órdenes de tiempo real
+  useEffect(() => {
+    if (realtimeOrders && realtimeOrders.length > 0) {
+      setOrders(realtimeOrders);
+    }
+  }, [realtimeOrders]);
 
-  const isSubscribed = realtimeData.isSubscribed;
-  const connectionStatus = 'connectionStatus' in realtimeData ? realtimeData.connectionStatus : 'disconnected';
+  const isSubscribed = isConnected;
+  const connectionStatus = isConnected ? 'connected' : 'disconnected';
 
   // Sincronizar con lógica de página de órdenes
   const currentOrders = useMemo(() => {
     // Incluir órdenes activas (no finalizadas ni canceladas)
+    // TEMPORAL: Mostrar todas las órdenes para debug
     const activeOrders = orders.filter(order => 
-      !['finalizado', 'cancelled', 'pagado'].includes(order.status)
+      !['finalizado', 'cancelled'].includes(order.status)
     );
     
     // Ordenar por fecha de creación (más recientes primero)

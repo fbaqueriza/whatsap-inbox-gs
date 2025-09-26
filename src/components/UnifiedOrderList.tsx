@@ -80,21 +80,19 @@ export default function UnifiedOrderList({
     return sortedOrders;
   }, [orders, maxItems]);
 
-  // Helper functions
+  // 🔧 REFACTORIZADO: Estados estandarizados
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'pending':
+      case 'standby':
         return <Clock className="h-4 w-4 text-yellow-500" />;
       case 'enviado':
         return <Send className="h-4 w-4 text-blue-500" />;
-      case 'factura_recibida':
+      case 'esperando_factura':
+        return <FileText className="h-4 w-4 text-orange-500" />;
+      case 'pendiente_de_pago':
         return <FileText className="h-4 w-4 text-purple-500" />;
       case 'pagado':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'finalizado':
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
-      case 'cancelled':
-        return <X className="h-4 w-4 text-red-500" />;
       default:
         return <Clock className="h-4 w-4 text-gray-500" />;
     }
@@ -102,18 +100,16 @@ export default function UnifiedOrderList({
 
   const getStatusText = (status: string) => {
     switch (status) {
-      case 'pending':
-        return 'Pendiente';
+      case 'standby':
+        return 'Standby';
       case 'enviado':
         return 'Enviado';
-      case 'factura_recibida':
-        return 'Factura recibida';
+      case 'esperando_factura':
+        return 'Esperando Factura';
+      case 'pendiente_de_pago':
+        return 'Pendiente de Pago';
       case 'pagado':
         return 'Pagado';
-      case 'finalizado':
-        return 'Finalizado';
-      case 'cancelled':
-        return 'Cancelado';
       default:
         return status;
     }
@@ -141,29 +137,27 @@ export default function UnifiedOrderList({
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'pending':
+      case 'standby':
         return 'bg-yellow-100 text-yellow-800 border-yellow-200';
       case 'enviado':
         return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'factura_recibida':
+      case 'esperando_factura':
+        return 'bg-orange-100 text-orange-800 border-orange-200';
+      case 'pendiente_de_pago':
         return 'bg-purple-100 text-purple-800 border-purple-200';
       case 'pagado':
         return 'bg-green-100 text-green-800 border-green-200';
-      case 'finalizado':
-        return 'bg-green-100 text-green-800 border-green-200';
-      case 'cancelled':
-        return 'bg-red-100 text-red-800 border-red-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
     }
   };
 
   const canSendOrder = (order: Order) => {
-    return order.status === 'pending';
+    return order.status === 'standby';
   };
 
   const canUploadProof = (order: Order) => {
-    return order.status === 'factura_recibida';
+    return order.status === 'pendiente_de_pago';
   };
 
   const canConfirmReception = (order: Order) => {

@@ -40,11 +40,10 @@ export default function Navigation() {
   };
 
   const navigation = [
-    { name: 'Panel', href: '/dashboard' },
+    { name: 'Dashboard', href: '/dashboard' },
+    { name: 'Órdenes', href: '/orders' },
     { name: 'Proveedores', href: '/providers' },
     { name: 'Stock', href: '/stock' },
-    { name: 'Pedidos', href: '/orders' },
-    { name: 'Facturas', href: '/facturas' },
   ];
 
   // Debug: Log del contador de navegación (solo en desarrollo)

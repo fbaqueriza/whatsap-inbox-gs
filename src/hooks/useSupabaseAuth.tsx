@@ -19,6 +19,12 @@ interface SupabaseAuthContextType {
 
 const SupabaseAuthContext = createContext<SupabaseAuthContextType | undefined>(undefined);
 
+// Helper para detectar páginas protegidas
+const isProtectedPage = (pathname: string): boolean => {
+  const protectedPaths = ['/dashboard', '/orders', '/providers', '/stock', '/profile'];
+  return protectedPaths.some(path => pathname.startsWith(path));
+};
+
 export function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -26,6 +32,7 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
   const [emailVerified, setEmailVerified] = useState(false);
 
   useEffect(() => {
+    
     // Manejo de access_token en el hash de la URL tras confirmación de Supabase
     if (typeof window !== 'undefined' && window.location.hash.includes('access_token')) {
       const hash = window.location.hash.substring(1);
@@ -40,19 +47,63 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
             window.location.hash = '';
             // Redirigir a la página de verificación exitosa
             window.location.replace('/auth/email-verified');
+          } else {
+            console.error('🔐 SupabaseAuth: Error estableciendo sesión:', error);
           }
         });
       }
     }
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      // console.log('🔐 SupabaseAuth: Cambio de estado de autenticación:', event, session ? `Usuario: ${session.user?.id}` : 'Sin sesión');
+      
+      // Detectar si la sesión expiró
+      if (event === 'SIGNED_OUT' || (session && session.expires_at && session.expires_at < Date.now() / 1000)) {
+        console.log('🔐 SupabaseAuth: Sesión expirada o usuario deslogueado');
+        setUser(null);
+        setLoading(false);
+        
+        // Redirigir al login si estamos en una página protegida
+        if (typeof window !== 'undefined' && isProtectedPage(window.location.pathname)) {
+          window.location.href = '/auth/login';
+        }
+        return;
+      }
+      
       setUser(session?.user ?? null);
       setLoading(false);
     });
+    
     // Get initial user
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user ?? null);
-      setLoading(false);
+    supabase.auth.getUser().then(({ data, error }) => {
+      if (error) {
+        console.error('🔐 SupabaseAuth: Error obteniendo usuario:', error);
+        setUser(null);
+        setLoading(false);
+        
+        // Redirigir al login si estamos en una página protegida
+        if (typeof window !== 'undefined' && isProtectedPage(window.location.pathname)) {
+          window.location.href = '/auth/login';
+        }
+      } else {
+        // Verificar si la sesión está expirada
+        const session = data.session;
+        if (session && session.expires_at && session.expires_at < Date.now() / 1000) {
+          console.log('🔐 SupabaseAuth: Sesión inicial expirada');
+          setUser(null);
+          setLoading(false);
+          
+          // Redirigir al login si estamos en una página protegida
+          if (typeof window !== 'undefined' && window.location.pathname.startsWith('/dashboard')) {
+            window.location.href = '/auth/login';
+          }
+        } else {
+          setUser(data.user ?? null);
+          setLoading(false);
+        }
+      }
     });
+    
     return () => {
       listener?.subscription.unsubscribe();
     };

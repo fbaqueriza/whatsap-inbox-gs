@@ -1,27 +1,21 @@
 /**
  * Utilidades para normalizar y manejar números de teléfono
+ * 🔧 OPTIMIZADO: Usa el servicio centralizado PhoneNumberService
  */
+
+import { PhoneNumberService } from './phoneNumberService';
 
 /**
  * Normaliza un número de teléfono para uso consistente
  * @param phone - Número de teléfono en cualquier formato
- * @returns Número normalizado con formato +XXXXXXXXXX
+ * @returns Número normalizado con formato +549XXXXXXXXXX
  */
 export function normalizePhoneNumber(phone: string | null | undefined): string {
   if (!phone) return '';
   
-  // Remover todos los caracteres no numéricos excepto el +
-  let normalized = phone.replace(/[^\d+]/g, '');
-  
-  // Si no empieza con +, agregarlo
-  if (!normalized.startsWith('+')) {
-    normalized = `+${normalized}`;
-  }
-  
-  // Remover + duplicados
-  normalized = normalized.replace(/\++/g, '+');
-  
-  return normalized;
+  // 🔧 OPTIMIZACIÓN: Usar servicio centralizado
+  const normalized = PhoneNumberService.normalizePhoneNumber(phone);
+  return normalized || '';
 }
 
 /**
@@ -31,16 +25,8 @@ export function normalizePhoneNumber(phone: string | null | undefined): string {
  * @returns true si son el mismo número
  */
 export function phoneNumbersMatch(phone1: string | null | undefined, phone2: string | null | undefined): boolean {
-  const normalized1 = normalizePhoneNumber(phone1);
-  const normalized2 = normalizePhoneNumber(phone2);
-  
-  if (!normalized1 || !normalized2) return false;
-  
-  // Comparar sin el +
-  const clean1 = normalized1.replace('+', '');
-  const clean2 = normalized2.replace('+', '');
-  
-  return clean1 === clean2;
+  // 🔧 OPTIMIZACIÓN: Usar servicio centralizado
+  return PhoneNumberService.areEquivalent(phone1 || '', phone2 || '');
 }
 
 /**
@@ -72,9 +58,6 @@ export function formatPhoneForDisplay(phone: string | null | undefined): string 
  * @returns true si es válido
  */
 export function isValidPhoneNumber(phone: string | null | undefined): boolean {
-  const normalized = normalizePhoneNumber(phone);
-  
-  // Debe tener al menos 10 dígitos después del +
-  const digits = normalized.replace('+', '');
-  return digits.length >= 10 && digits.length <= 15 && /^\d+$/.test(digits);
+  // 🔧 OPTIMIZACIÓN: Usar servicio centralizado
+  return PhoneNumberService.isValidArgentinePhone(phone || '');
 }

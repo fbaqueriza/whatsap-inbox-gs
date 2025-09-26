@@ -235,6 +235,58 @@ export default function IntegratedChatPanel({
   const { isGlobalChatOpen, closeGlobalChat, currentGlobalContact } = useGlobalChat();
 
   const [contacts, setContacts] = useState<Contact[]>([]);
+
+  // 🔧 NUEVO: Escuchar evento para seleccionar proveedor automáticamente
+  useEffect(() => {
+    const handleSelectProviderInChat = (event: CustomEvent) => {
+      const { providerId, providerName, providerPhone } = event.detail;
+      
+      console.log('🔧 DEBUG - Seleccionando proveedor en chat:', {
+        providerId, providerName, providerPhone
+      });
+      
+      // Buscar el contacto del proveedor
+      const providerContact = contacts.find(contact => 
+        contact.phone === providerPhone || 
+        normalizeContactIdentifier(contact.phone) === normalizeContactIdentifier(providerPhone)
+      );
+      
+      if (providerContact) {
+        console.log('🔧 DEBUG - Proveedor encontrado en contactos, seleccionando:', providerContact.name);
+        selectContact(providerContact);
+      } else {
+        console.log('🔧 DEBUG - Proveedor no encontrado en contactos, creando contacto temporal');
+        // Crear un contacto temporal para el proveedor
+        const tempContact: Contact = {
+          id: `temp_${providerId}`,
+          name: providerName,
+          phone: providerPhone,
+          lastMessage: null,
+          unreadCount: 0,
+          isOnline: false,
+          lastSeen: null
+        };
+        
+        // Agregar el contacto temporal a la lista
+        setContacts(prev => {
+          const exists = prev.find(c => c.id === tempContact.id);
+          if (exists) return prev;
+          return [tempContact, ...prev];
+        });
+        
+        // Seleccionar el contacto temporal
+        selectContact(tempContact);
+      }
+    };
+
+    // Agregar listener para el evento
+    window.addEventListener('selectProviderInChat', handleSelectProviderInChat as EventListener);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('selectProviderInChat', handleSelectProviderInChat as EventListener);
+    };
+  }, [contacts, selectContact]);
   const [isLoading, setIsLoading] = useState(true);
   const [newMessage, setNewMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -250,6 +302,9 @@ export default function IntegratedChatPanel({
   // Usar el estado global del chat
   const isPanelOpen = isGlobalChatOpen || isOpen;
   const currentContact = selectedContact; // Usar solo selectedContact del contexto de chat
+
+  // Verificar si el usuario está autenticado
+  const { isUserAuthenticated } = useChat();
 
 
 
@@ -627,6 +682,32 @@ export default function IntegratedChatPanel({
           </button>
         </div>
         </div>
+
+        {/* Mensaje de autenticación */}
+        {!isUserAuthenticated && (
+          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <p className="text-sm text-yellow-700">
+                  <strong>Autenticación requerida:</strong> Para ver y enviar mensajes, necesitas iniciar sesión.
+                </p>
+                <div className="mt-2">
+                  <a 
+                    href="/auth/login" 
+                    className="text-sm font-medium text-yellow-800 hover:text-yellow-900 underline"
+                  >
+                    Iniciar sesión →
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
       <div className="flex flex-1 min-h-0">
         {/* Contactos */}

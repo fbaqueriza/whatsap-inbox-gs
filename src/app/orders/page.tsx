@@ -8,14 +8,12 @@ import { DataProvider, useData } from '../../components/DataProvider';
 import { ChatProvider } from '../../contexts/ChatContext';
 import { GlobalChatProvider } from '../../contexts/GlobalChatContext';
 import GlobalChatWrapper from '../../components/GlobalChatWrapper';
-import { useOrdersFlowRealtime } from '../../hooks/useSupabaseRealtime';
-
+import { useRealtimeService } from '../../services/realtimeService';
 
 // Lazy load components to reduce bundle size
-const SuggestedOrders = React.lazy(() => import('../../components/SuggestedOrders'));
 const CreateOrderModal = React.lazy(() => import('../../components/CreateOrderModal'));
 const EditOrderModal = React.lazy(() => import('../../components/EditOrderModal'));
-const OrdersModule = React.lazy(() => import('../../components/OrdersModule'));
+const InvoiceManagementSystem = React.lazy(() => import('../../components/InvoiceManagementSystem'));
 
 // Icons import
 import {
@@ -30,6 +28,7 @@ import {
   X,
   Edit,
   Search,
+  Upload,
 } from 'lucide-react';
 
 // Error boundary component
@@ -122,20 +121,27 @@ function OrdersPage({ user }: OrdersPageProps) {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [providerSearchTerm, setProviderSearchTerm] = useState('');
+  const [isProviderDropdownOpen, setIsProviderDropdownOpen] = useState(false);
 
   // Sync local orders with global data
   useEffect(() => {
     setLocalOrders(orders);
   }, [orders]);
 
-  // Periodic refresh as fallback
-  useEffect(() => {
-    const refreshInterval = setInterval(() => {
-      fetchAll();
-    }, 30000);
+  // Periodic refresh removed - using only realtime system as per user preference
 
-    return () => clearInterval(refreshInterval);
-  }, [fetchAll]);
+  // 🔧 NUEVO: Cerrar dropdown cuando se hace clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Element;
+      if (!target.closest('.provider-dropdown')) {
+        setIsProviderDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Realtime handlers
   const handleNewOrder = useCallback((payload: any) => {
@@ -168,44 +174,50 @@ function OrdersPage({ user }: OrdersPageProps) {
     }
   }, []);
 
-  // Realtime subscription - movido después de la definición de las funciones
-  const { isSubscribed, connectionStatus } = useOrdersFlowRealtime(
-    handleNewOrder,
-    handleOrderUpdate,
-    handleOrderDelete
-  );
+  // Usar nuestro RealtimeService unificado
+  const { orders: realtimeOrders, isConnected } = useRealtimeService();
+  
+  // Sincronizar con órdenes de tiempo real
+  useEffect(() => {
+    if (realtimeOrders && realtimeOrders.length > 0) {
+      setLocalOrders(realtimeOrders);
+    }
+  }, [realtimeOrders]);
+  
+  const connectionStatus = isConnected ? 'connected' : 'disconnected';
 
-  // Helper functions
+  // Helper functions - usando constantes estandarizadas
   const getStatusIcon = (status: string) => {
     const statusIcons = {
-      pending: <Clock className="h-4 w-4 text-yellow-500" />,
-      pending_confirmation: <AlertCircle className="h-4 w-4 text-orange-500" />,
-      confirmed: <CheckCircle className="h-4 w-4 text-green-500" />,
+      standby: <Clock className="h-4 w-4 text-yellow-500" />,
       enviado: <Send className="h-4 w-4 text-blue-500" />,
-      invoice_received: <FileText className="h-4 w-4 text-purple-500" />,
-      factura_recibida: <FileText className="h-4 w-4 text-purple-500" />,
+      esperando_factura: <FileText className="h-4 w-4 text-orange-500" />,
+      pendiente_de_pago: <FileText className="h-4 w-4 text-purple-500" />,
       pagado: <CheckCircle className="h-4 w-4 text-green-500" />,
-      finalizado: <CheckCircle className="h-4 w-4 text-green-500" />,
-      cancelled: <X className="h-4 w-4 text-red-500" />,
-      delivered: <CheckCircle className="h-4 w-4 text-green-500" />,
     };
-    return statusIcons[status as keyof typeof statusIcons] || <Clock className="h-4 w-4 text-gray-500" />;
+    return statusIcons[status as keyof typeof statusIcons] || <Clock className="h-4 w-4 text-yellow-500" />;
   };
 
   const getStatusBadgeClass = (status: string) => {
     const statusClasses = {
-      pending: 'bg-yellow-100 text-yellow-800',
-      pending_confirmation: 'bg-orange-100 text-orange-800',
-      confirmed: 'bg-green-100 text-green-800',
+      standby: 'bg-yellow-100 text-yellow-800',
       enviado: 'bg-blue-100 text-blue-800',
-      invoice_received: 'bg-purple-100 text-purple-800',
-      factura_recibida: 'bg-purple-100 text-purple-800',
+      esperando_factura: 'bg-orange-100 text-orange-800',
+      pendiente_de_pago: 'bg-purple-100 text-purple-800',
       pagado: 'bg-green-100 text-green-800',
-      finalizado: 'bg-green-100 text-green-800',
-      cancelled: 'bg-red-100 text-red-800',
-      delivered: 'bg-green-100 text-green-800',
     };
-    return statusClasses[status as keyof typeof statusClasses] || 'bg-gray-100 text-gray-800';
+    return statusClasses[status as keyof typeof statusClasses] || 'bg-yellow-100 text-yellow-800';
+  };
+
+  const getStatusText = (status: string) => {
+    const statusTexts = {
+      standby: 'Standby',
+      enviado: 'Enviado',
+      esperando_factura: 'Esperando Factura',
+      pendiente_de_pago: 'Pendiente de Pago',
+      pagado: 'Pagado',
+    };
+    return statusTexts[status as keyof typeof statusTexts] || status;
   };
 
   const getProviderName = (providerId: string) => {
@@ -253,23 +265,23 @@ function OrdersPage({ user }: OrdersPageProps) {
         setSuggestedOrder(null);
         
         // Send notification in background
-        console.log('🔧 DEBUG - Iniciando envío de notificación...');
-        console.log('🔧 DEBUG - Orden a notificar:', newOrder);
-        console.log('🔧 DEBUG - Usuario ID:', user.id);
+        // console.log('🔧 DEBUG - Iniciando envío de notificación...');
+        // console.log('🔧 DEBUG - Orden a notificar:', newOrder);
+        // console.log('🔧 DEBUG - Usuario ID:', user.id);
         
         try {
-          console.log('🔧 DEBUG - Llamando a /api/orders/send-notification...');
+          // console.log('🔧 DEBUG - Llamando a /api/orders/send-notification...');
           const response = await fetch('/api/orders/send-notification', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ order: newOrder, userId: user.id }),
           });
           
-          console.log('🔧 DEBUG - Respuesta recibida:', {
-            status: response.status,
-            statusText: response.statusText,
-            ok: response.ok
-          });
+          // console.log('🔧 DEBUG - Respuesta recibida:', {
+          //   status: response.status,
+          //   statusText: response.statusText,
+          //   ok: response.ok
+          // });
           
           if (!response.ok) {
             const errorText = await response.text();
@@ -321,6 +333,31 @@ function OrdersPage({ user }: OrdersPageProps) {
     }
   };
 
+  // 🔧 NUEVO: Manejador para abrir chat con proveedor
+  const handleOrderClick = (order: Order) => {
+    // console.log('🔧 DEBUG - Abriendo chat para orden:', order.id);
+    
+    // Buscar el proveedor de la orden
+    const provider = providers.find(p => p.id === order.providerId);
+    if (provider) {
+      // console.log('🔧 DEBUG - Proveedor encontrado:', provider.name, provider.phone);
+      
+      // Abrir el chat global con el proveedor específico
+      // Esto debería abrir el GlobalChatWrapper con el proveedor seleccionado
+      window.dispatchEvent(new CustomEvent('openChatWithProvider', {
+        detail: {
+          providerId: provider.id,
+          providerName: provider.name,
+          providerPhone: provider.phone,
+          orderId: order.id,
+          orderNumber: order.orderNumber
+        }
+      }));
+    } else {
+      console.error('❌ Proveedor no encontrado para orden:', order.id);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
@@ -328,201 +365,86 @@ function OrdersPage({ user }: OrdersPageProps) {
         <div className="px-4 py-6 sm:px-0">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-semibold text-gray-900">Órdenes</h1>
+              <h1 className="text-2xl font-semibold text-gray-900">Gestión de Órdenes</h1>
               <p className="mt-1 text-sm text-gray-500">
-                Gestión de pedidos y órdenes
+                Gestiona pedidos pendientes, genera resúmenes de pagos y accede al repositorio de documentos por proveedor.
               </p>
             </div>
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={() => setIsCreateModalOpen(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Nueva Orden
-              </button>
-            </div>
-          </div>
+            <div className="flex flex-col items-end space-y-4">
+              {/* 🔧 CORREGIDO: Título con letra más grande y alineado con el título principal */}
+              <div className="text-right">
+                <h2 className="text-2xl font-semibold text-gray-900">Nueva Orden</h2>
+                <p className="text-sm text-gray-500 mt-1">Selecciona proveedor y crea orden</p>
         </div>
 
-        {/* Layout principal con sidebar */}
-        <div className="flex flex-col lg:flex-row gap-6 max-w-full">
-          {/* Sidebar con proveedores */}
-          <div className="w-full lg:w-80 lg:flex-shrink-0">
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-4 py-5 border-b border-gray-200">
-                <h3 className="text-lg font-medium text-gray-900 mb-3">
-                  Proveedores ({filteredProviders.length})
-                </h3>
+              {/* 🔧 CORREGIDO: Buscador y botón en la misma línea horizontal */}
+              <div className="flex items-center space-x-3">
+                <div className="relative provider-dropdown">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <input
                     type="text"
                     placeholder="Buscar proveedor..."
                     value={providerSearchTerm}
                     onChange={(e) => setProviderSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
+                      onFocus={() => setIsProviderDropdownOpen(true)}
+                      className="w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
                   />
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 </div>
-              </div>
-              <div className="max-h-96 overflow-y-auto">
+                  
+                  {/* Dropdown de proveedores */}
+                  {isProviderDropdownOpen && filteredProviders.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-10 max-h-60 overflow-y-auto">
                 {filteredProviders.map((provider) => (
-                  <div key={provider.id} className="px-4 py-3 border-b border-gray-100 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-3">
-                        <div className="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center">
-                          <span className="text-sm font-medium text-white">
-                            {provider.name.charAt(0).toUpperCase()}
-                          </span>
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">{provider.name}</p>
-                          <p className="text-xs text-gray-500">{provider.phone}</p>
-                        </div>
-                      </div>
-                      <div className="flex space-x-1">
-                        <button
+                        <div
+                          key={provider.id}
+                          className="px-4 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
                           onClick={() => {
+                            setProviderSearchTerm(provider.name);
+                            setIsProviderDropdownOpen(false);
                             setSuggestedOrder({
                               providerId: provider.id,
                               providerName: provider.name
                             });
                             setIsCreateModalOpen(true);
                           }}
-                          className="p-1 text-gray-400 hover:text-blue-600"
-                          title="Crear pedido"
                         >
-                          <Plus className="h-4 w-4" />
-                        </button>
+                      <div className="flex items-center space-x-3">
+                            <div className="h-6 w-6 rounded-full bg-blue-500 flex items-center justify-center">
+                              <span className="text-xs font-medium text-white">
+                            {provider.name.charAt(0).toUpperCase()}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{provider.name}</p>
+                          <p className="text-xs text-gray-500">{provider.phone}</p>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
+                  )}
+                </div>
+                
+                {/* 🔧 CORREGIDO: Botón al lado del buscador */}
+                    <button
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="inline-flex items-center justify-center w-10 h-10 border border-transparent text-sm font-medium rounded-full text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  title="Nueva Orden"
+                >
+                  <Plus className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Contenido principal */}
-          <div className="flex-1 min-w-0">
-            {/* Órdenes sugeridas */}
-            <div className="bg-white shadow rounded-lg mb-6">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h2 className="text-xl font-semibold text-gray-900">Órdenes Sugeridas</h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Productos recomendados para reabastecer
-                </p>
-              </div>
-              <div className="p-4">
-                <SuggestedOrders 
-                  providers={providers}
-                  stockItems={stockItems}
-                  onCreateOrder={(orderData) => {
-                    setSuggestedOrder(orderData);
-                    setIsCreateModalOpen(true);
-                  }}
-                />
-              </div>
-            </div>
-            
-            {/* Órdenes actuales */}
-            <OrdersModule
-              orders={currentOrders}
-              providers={providers}
-              onEditOrder={handleEditOrder}
-              onCreateOrder={() => setIsCreateModalOpen(true)}
-              showCreateButton={true}
-              maxOrders={10}
-              title="Órdenes Actuales"
-              className="mb-6"
-            />
-
-            {/* Tabla completa de todas las órdenes */}
-            <div className="mt-8 bg-white shadow rounded-lg">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h2 className="text-lg font-semibold text-gray-900">
-                  Tabla Completa de Órdenes ({localOrders.length})
-                </h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Vista detallada de todos los pedidos con sus archivos y documentos
-                </p>
-              </div>
-              <div className="overflow-x-auto -mx-6 sm:mx-0">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Fecha
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Número
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Proveedor
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Estado
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Monto
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Acciones
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {sortedOrders.map((order) => (
-                      <tr key={order.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {formatDate(order.orderDate)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {order.orderNumber}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {getProviderName(order.providerId)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center">
-                            {getStatusIcon(order.status)}
-                            <span className="ml-2 text-sm text-gray-900">
-                              {order.status === 'pending' && 'Pendiente'}
-                              {order.status === 'pending_confirmation' && 'Pendiente de Confirmación'}
-                              {order.status === 'confirmed' && 'Confirmado'}
-                              {order.status === 'enviado' && 'Enviado'}
-                              {order.status === 'invoice_received' && 'Factura Recibida'}
-                              {order.status === 'factura_recibida' && 'Factura Recibida'}
-                              {order.status === 'pagado' && 'Pagado'}
-                              {order.status === 'finalizado' && 'Finalizado'}
-                              {order.status === 'cancelled' && 'Cancelado'}
-                              {order.status === 'delivered' && 'Entregado'}
-                              {!['pending', 'pending_confirmation', 'confirmed', 'enviado', 'invoice_received', 'factura_recibida', 'pagado', 'finalizado', 'cancelled', 'delivered'].includes(order.status) && order.status}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {['factura_recibida','pagado','enviado','finalizado'].includes(order.status) 
-                            ? `${order.totalAmount} ${order.currency}` 
-                            : '-'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <div className="flex items-center space-x-2">
-                            <button
-                              onClick={() => handleEditOrder(order)}
-                              className="p-1 text-gray-400 hover:text-blue-600"
-                              title="Editar orden"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+        {/* 🔧 NUEVO: Sistema de Gestión de Pedidos */}
+        <div className="mt-8">
+          <InvoiceManagementSystem 
+            onEdit={handleOrderClick}
+            onUploadReceipt={(orderId, file) => console.log('Upload receipt:', orderId, file)}
+          />
         </div>
 
         {/* Modales */}
@@ -550,8 +472,6 @@ function OrdersPage({ user }: OrdersPageProps) {
           order={editingOrder}
           providers={providers}
         />
-        
-
       </main>
     </div>
   );

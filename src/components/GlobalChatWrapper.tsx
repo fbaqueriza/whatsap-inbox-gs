@@ -89,6 +89,45 @@ export default function GlobalChatWrapper() {
     }
   }, [isGlobalChatOpen]);
 
+  // 🔧 NUEVO: Escuchar evento para abrir chat con proveedor específico
+  useEffect(() => {
+    const handleOpenChatWithProvider = (event: CustomEvent) => {
+      const { providerId, providerName, providerPhone, orderId, orderNumber } = event.detail;
+      
+      console.log('🔧 DEBUG - Evento recibido para abrir chat:', {
+        providerId, providerName, providerPhone, orderId, orderNumber
+      });
+      
+      // Abrir el chat global
+      if (typeof window !== 'undefined') {
+        // Importar dinámicamente el contexto para evitar problemas de SSR
+        import('../contexts/GlobalChatContext').then(({ useGlobalChat }) => {
+          // Aquí necesitaríamos acceso al contexto, pero como estamos en un componente
+          // vamos a usar un enfoque diferente: abrir el chat y luego seleccionar el proveedor
+          console.log('🔧 DEBUG - Abriendo chat global para proveedor:', providerName);
+          
+          // Disparar evento para abrir chat
+          window.dispatchEvent(new CustomEvent('openGlobalChat'));
+          
+          // Después de un breve delay, seleccionar el proveedor
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('selectProviderInChat', {
+              detail: { providerId, providerName, providerPhone }
+            }));
+          }, 100);
+        });
+      }
+    };
+
+    // Agregar listener para el evento personalizado
+    window.addEventListener('openChatWithProvider', handleOpenChatWithProvider as EventListener);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('openChatWithProvider', handleOpenChatWithProvider as EventListener);
+    };
+  }, []);
+
   return (
       <IntegratedChatPanel 
       providers={providers || []}

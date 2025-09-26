@@ -49,8 +49,8 @@ export function usePaymentReceipts() {
         .from('payment_receipts')
         .select(`
           *,
-          auto_assigned_provider:providers(name, phone),
-          auto_assigned_order:orders(order_number, total_amount, status)
+          auto_assigned_provider:providers!auto_assigned_provider_id(name, phone),
+          auto_assigned_order:orders!auto_assigned_order_id(order_number, total_amount, status)
         `)
         .eq('user_id', userId)
         .order('created_at', { ascending: false });

@@ -460,18 +460,21 @@ export class PaymentReceiptService {
               const receiptAmount = Number(receipt.payment_amount) || 0;
               const difference = Math.abs(orderAmount - receiptAmount);
               
-              matches.push({
-                order_id: order.id,
-                order_number: order.order_number,
-                confidence: 0.7, // Menor confianza por no tener info de proveedor
-                match_method: 'amount_match',
-                match_details: { 
-                  amount: receipt.payment_amount,
-                  order_amount: orderAmount,
-                  difference,
-                  reason: 'exact_amount_match_standalone'
-                }
-              });
+              // Solo coincidencias exactas o con tolerancia de ±1 peso
+              if (difference <= 1) {
+                matches.push({
+                  order_id: order.id,
+                  order_number: order.order_number,
+                  confidence: difference === 0 ? 0.8 : 0.7, // Mayor confianza para exactos
+                  match_method: difference === 0 ? 'exact_amount_match' : 'tolerance_amount_match',
+                  match_details: { 
+                    amount: receipt.payment_amount,
+                    order_amount: orderAmount,
+                    difference,
+                    reason: 'standalone_match'
+                  }
+                });
+              }
             }
           }
         }
@@ -518,14 +521,12 @@ export class PaymentReceiptService {
               }
             });
           }
-          // Coincidencia con tolerancia de ±5 (para diferencias pequeñas)
-          else if (difference <= 5) {
-            const confidence = Math.max(0.7, 0.95 - (difference / receiptAmount) * 10);
-            
+          // Coincidencia con tolerancia mínima de ±1 peso
+          else if (difference <= 1) {
             matches.push({
               order_id: order.id,
               order_number: order.order_number,
-              confidence: confidence,
+              confidence: 0.9, // Alta confianza para diferencias de 1 peso
               match_method: 'tolerance_amount_match',
               match_details: { 
                 amount: receipt.payment_amount,
@@ -539,32 +540,6 @@ export class PaymentReceiptService {
         }
       }
       
-      // 🔧 MEJORA: Si no hay matches por monto, buscar por fecha (órdenes recientes)
-      if (matches.length === 0 && receipt.payment_date) {
-        console.log('🔍 [PaymentReceiptService] No matches por monto, buscando por fecha...');
-        
-        for (const order of orders) {
-          const orderDate = new Date(order.created_at);
-          const paymentDate = new Date(receipt.payment_date);
-          const daysDifference = Math.abs(paymentDate.getTime() - orderDate.getTime()) / (1000 * 60 * 60 * 24);
-          
-          // Coincidencia por proximidad temporal (hasta 7 días de diferencia)
-          if (daysDifference <= 7) {
-            matches.push({
-              order_id: order.id,
-              order_number: order.order_number,
-              confidence: Math.max(0.6, 0.8 - (daysDifference / 7)), // Disminuye con el tiempo
-              match_method: 'date_proximity_match',
-              match_details: { 
-                payment_date: receipt.payment_date,
-                order_date: order.created_at,
-                days_difference: daysDifference,
-                provider_id: order.provider_id
-              }
-            });
-          }
-        }
-      }
       
       // 🔧 OPTIMIZACIÓN: Evitar duplicados y ordenar por confianza
       const uniqueMatches = Array.from(

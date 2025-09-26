@@ -432,7 +432,7 @@ export class PaymentReceiptService {
   }
   
   /**
-   * 🔧 SOLUCIÓN MEJORADA: Buscar órdenes que coincidan con el comprobante
+   * 🔧 SOLUCIÓN MEJORADA: Buscar órdenes que coincidan con el comprobante por proveedor Y monto
    */
   static async findMatchingOrders(
     receipt: PaymentReceiptData, 
@@ -441,45 +441,13 @@ export class PaymentReceiptService {
     try {
       const matches: OrderMatchResult[] = [];
       
+      // 🔧 RESTRICCIÓN: No hacer match sin proveedor asignado
       if (providerMatches.length === 0) {
-        console.log('⚠️ [PaymentReceiptService] No hay proveedores coincidentes, buscando órdenes por monto únicamente...');
+        console.log('⚠️ [PaymentReceiptService] No hay proveedores coincidentes, no se puede asignar el comprobante a ninguna orden');
         
-        // 🔧 OPTIMIZACIÓN: Buscar por monto aunque no haya proveedores asignados
-        if (receipt.payment_amount) {
-          const { data: ordersByAmount, error: amountError } = await supabase
-            .from('orders')
-            .select('*')
-            .eq('user_id', receipt.user_id)
-            .in('status', ['pendiente_de_pago', 'enviado'])
-            .gte('total_amount', receipt.payment_amount - 1)
-            .lte('total_amount', receipt.payment_amount + 1);
-          
-          if (!amountError && ordersByAmount) {
-            for (const order of ordersByAmount) {
-              const orderAmount = Number(order.total_amount) || 0;
-              const receiptAmount = Number(receipt.payment_amount) || 0;
-              const difference = Math.abs(orderAmount - receiptAmount);
-              
-              // Solo coincidencias exactas o con tolerancia de ±1 peso
-              if (difference <= 1) {
-                matches.push({
-                  order_id: order.id,
-                  order_number: order.order_number,
-                  confidence: difference === 0 ? 0.8 : 0.7, // Mayor confianza para exactos
-                  match_method: difference === 0 ? 'exact_amount_match' : 'tolerance_amount_match',
-                  match_details: { 
-                    amount: receipt.payment_amount,
-                    order_amount: orderAmount,
-                    difference,
-                    reason: 'standalone_match'
-                  }
-                });
-              }
-            }
-          }
-        }
-        
-        return matches.sort((a, b) => b.confidence - a.confidence);
+        // Si no hay proveedores asignados, no es posible hacer match con órdenes
+        // Esta es una restricción de seguridad para evitar asignaciones incorrectas
+        return [];
       }
       
       // 🔧 OPTIMIZACIÓN: Buscar órdenes pendientes de pago para los proveedores encontrados
@@ -500,40 +468,51 @@ export class PaymentReceiptService {
       
       console.log(`✅ [PaymentReceiptService] Órdenes encontradas para proveedores: ${orders.length}`);
       
-      // 🔧 SOLUCIÓN: Buscar coincidencias por monto (con tolerancia más inteligente)
+      // 🔧 SOLUCIÓN: Buscar coincidencias por monto Y proveedor asignado (solo si hay proveedores)
       if (receipt.payment_amount) {
         for (const order of orders) {
           const orderAmount = Number(order.total_amount) || 0;
           const receiptAmount = Number(receipt.payment_amount) || 0;
           const difference = Math.abs(orderAmount - receiptAmount);
           
-          // Coincidencia exacta (mayor prioridad)
+          // 🔧 CRÍTICO: Solo hacer match si el proveedor de la orden coincide con los proveedores encontrados
+          const hasValidProviderMatch = providerMatches.some(pm => 
+            pm.provider_id === order.provider_id && pm.confidence > 0.5
+          );
+          
+          if (!hasValidProviderMatch) {
+            continue; // Saltar esta orden si no coincide el proveedor
+          }
+          
+          // Coincidencia exacta (mayor prioridad) - CON proveedor validado
           if (orderAmount === receiptAmount) {
             matches.push({
               order_id: order.id,
               order_number: order.order_number,
               confidence: 0.95, // Alta confianza para coincidencias exactas
-              match_method: 'exact_amount_match',
+              match_method: 'exact_amount_and_provider_match',
               match_details: { 
                 amount: receipt.payment_amount,
                 provider_id: order.provider_id,
-                order_created: order.created_at
+                order_created: order.created_at,
+                is_provider_match: true
               }
             });
           }
-          // Coincidencia con tolerancia mínima de ±1 peso
+          // Coincidencia con tolerancia mínima de ±1 peso - CON proveedor validado
           else if (difference <= 1) {
             matches.push({
               order_id: order.id,
               order_number: order.order_number,
               confidence: 0.9, // Alta confianza para diferencias de 1 peso
-              match_method: 'tolerance_amount_match',
+              match_method: 'tolerance_amount_and_provider_match',
               match_details: { 
                 amount: receipt.payment_amount,
                 order_amount: orderAmount,
                 provider_id: order.provider_id,
                 difference: difference,
-                order_created: order.created_at
+                order_created: order.created_at,
+                is_provider_match: true
               }
             });
           }

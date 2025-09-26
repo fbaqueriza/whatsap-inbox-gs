@@ -1,7 +1,15 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { useRealtimeManager } from '../hooks/useRealtimeManager';
+import { useSupabaseAuth } from '../hooks/useSupabaseAuth';
+import { mapOrderFromDb } from '../lib/orderMapper';
+
+// Helper para detectar páginas protegidas
+const isProtectedPage = (pathname: string): boolean => {
+  const protectedPaths = ['/dashboard', '/orders', '/providers', '/stock', '/profile'];
+  return protectedPaths.some(path => pathname.startsWith(path));
+};
 import { supabase } from '../lib/supabase/client';
 
 // Tipos
@@ -9,7 +17,7 @@ interface RealtimeMessage {
   id: string;
   content: string;
   timestamp: Date;
-  type: 'sent' | 'received';
+  type: string;
   contact_id: string;
   status: string;
   user_id?: string;
@@ -18,6 +26,11 @@ interface RealtimeMessage {
 interface RealtimeOrder {
   id: string;
   status: string;
+  total_amount?: number;
+  invoice_number?: string;
+  receipt_url?: string;
+  invoice_data?: any;
+  updated_at?: string;
 }
 
 interface RealtimeServiceContextType {
@@ -32,10 +45,9 @@ interface RealtimeServiceContextType {
 // Contexto
 const RealtimeServiceContext = createContext<RealtimeServiceContextType | undefined>(undefined);
 
-// Hook personalizado
 export const useRealtimeService = () => {
   const context = useContext(RealtimeServiceContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useRealtimeService must be used within a RealtimeServiceProvider');
   }
   return context;
@@ -43,116 +55,112 @@ export const useRealtimeService = () => {
 
 // Provider
 export function RealtimeServiceProvider({ children }: { children: React.ReactNode }) {
+
   const [messages, setMessages] = useState<RealtimeMessage[]>([]);
   const [orders, setOrders] = useState<RealtimeOrder[]>([]);
   const [isConnected, setIsConnected] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  
+
+  // 🔧 CORREGIDO: Obtener currentUserId del usuario autenticado
+  const { user } = useSupabaseAuth();
+  const currentUserId = user?.id || null;
+
   const messageListeners = useRef<Set<(message: RealtimeMessage) => void>>(new Set());
   const orderListeners = useRef<Set<(order: RealtimeOrder) => void>>(new Set());
-  
+
   const { subscribe, unsubscribe } = useRealtimeManager();
 
-  // 🔧 OPTIMIZACIÓN: Obtener usuario actual una sola vez
-  useEffect(() => {
-    const getCurrentUser = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        setCurrentUserId(user?.id || null);
-      } catch (error) {
-        console.error('Error obteniendo usuario actual:', error);
-        setCurrentUserId(null);
-      }
-    };
 
-    getCurrentUser();
-
-    // Escuchar cambios de autenticación
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setCurrentUserId(session?.user?.id || null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+  // 🔧 CORREGIDO: Ya no necesitamos este useEffect porque currentUserId viene de useSupabaseAuth
 
   // Handlers para mensajes
   const handleNewMessage = async (payload: any) => {
     const newMessage = payload.new;
-    if (newMessage) {
-      // 🔧 CORRECCIÓN: Para mensajes de factura, siempre procesar si tienen user_id válido
-      if (newMessage.user_id && currentUserId && newMessage.user_id !== currentUserId) {
-        return; // Ignorar mensajes de otros usuarios
-      }
+    // console.log('🔍 [RealtimeService] Nuevo mensaje recibido:', newMessage?.id);
 
-      // 🔧 CORRECCIÓN: Para mensajes sin user_id (del proveedor), verificar que el contact_id corresponda a un proveedor del usuario
-      if (!newMessage.user_id && currentUserId) {
-        try {
-          // 🔧 MEJORA: Búsqueda más flexible para proveedores
-          const { data: providers } = await supabase
-            .from('providers')
-            .select('id, phone')
-            .eq('user_id', currentUserId);
-          
-          if (providers && providers.length > 0) {
-            // 🔧 MEJORA: Verificar si el contact_id coincide con algún proveedor del usuario
-            const isProvider = providers.some(provider => {
-              const normalizedProviderPhone = provider.phone.replace(/\D/g, '');
-              const normalizedContactId = newMessage.contact_id.replace(/\D/g, '');
-              return normalizedProviderPhone.includes(normalizedContactId.slice(-8)) || 
-                     normalizedContactId.includes(normalizedProviderPhone.slice(-8));
-            });
-            
-            if (!isProvider) {
-              console.log(`🔍 [RealtimeService] Contacto ${newMessage.contact_id} no es proveedor del usuario ${currentUserId}`);
-              return; // No es un proveedor del usuario actual
-            }
-          } else {
-            console.log(`🔍 [RealtimeService] Usuario ${currentUserId} no tiene proveedores`);
-            return;
-          }
-        } catch (error) {
-          console.error('Error verificando proveedores:', error);
-          return; // Error o no es un proveedor del usuario actual
-        }
-      }
-
-      const message: RealtimeMessage = {
-        id: newMessage.id,
-        content: newMessage.content,
-        timestamp: new Date(newMessage.timestamp),
-        type: newMessage.message_type,
-        contact_id: newMessage.contact_id,
-        status: newMessage.status || 'delivered',
-        user_id: newMessage.user_id
-      };
-      
-      setMessages(prev => {
-        const exists = prev.some(msg => msg.id === message.id);
-        if (exists) return prev;
-        return [...prev, message];
-      });
-      
-      messageListeners.current.forEach(callback => {
-        try {
-          callback(message);
-        } catch (error) {
-          console.error('Error en message listener:', error);
-        }
-      });
+    if (!newMessage || !currentUserId) {
+      console.log('🔐 RealtimeService: Ignorando mensaje - usuario no autenticado');
+      return;
     }
+
+    // 🔧 LÓGICA SIMPLIFICADA: Aceptar mensajes del usuario actual O mensajes sin user_id
+    const isValidMessage = newMessage.user_id === currentUserId || !newMessage.user_id;
+
+    // console.log('🔍 [RealtimeService] Validación de mensaje:', isValidMessage);
+
+    if (!isValidMessage) {
+      console.log('❌ [RealtimeService] Mensaje rechazado - user_id no coincide');
+      return; // Ignorar mensaje no válido
+    }
+
+    // 🔧 MEJORA: Crear mensaje y notificar listeners
+    const message: RealtimeMessage = {
+      id: newMessage.id,
+      content: newMessage.content,
+      timestamp: new Date(newMessage.timestamp),
+      type: newMessage.message_type,
+      contact_id: newMessage.contact_id,
+      status: newMessage.status || 'delivered',
+      user_id: newMessage.user_id
+    };
+
+    setMessages(prev => {
+      const exists = prev.some(msg => msg.id === message.id);
+      if (exists) {
+        console.log('🔄 [RealtimeService] Mensaje ya existe, ignorando:', message.id);
+        return prev;
+      }
+      // console.log('✅ [RealtimeService] Agregando nuevo mensaje al estado:', message.id);
+      return [...prev, message];
+    });
+
+    // 🔧 OPTIMIZACIÓN: Notificar a todos los listeners de forma segura
+    // console.log('📢 [RealtimeService] Notificando a', messageListeners.current.size, 'listeners');
+    messageListeners.current.forEach(callback => {
+      try {
+        callback(message);
+      } catch (error) {
+        console.error('Error en message listener:', error);
+      }
+    });
+
+    // 🔧 FALLBACK: Actualizar órdenes cuando se recibe un mensaje nuevo
+    try {
+      const response = await fetch(`/api/data/orders?user_id=${currentUserId}`);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.orders) {
+          const updatedOrders = result.orders.map(mapOrderFromDb);
+          setOrders(updatedOrders);
+          
+          // Notificar a los listeners sobre las órdenes actualizadas
+          updatedOrders.forEach(order => {
+            orderListeners.current.forEach(callback => {
+              try {
+                callback(order);
+              } catch (error) {
+                console.error('Error en order listener:', error);
+              }
+            });
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error actualizando órdenes en fallback:', error);
+    }
+
   };
 
   const handleMessageUpdate = (payload: any) => {
     const updatedMessage = payload.new;
     if (updatedMessage) {
-      // 🔧 OPTIMIZACIÓN: Filtrar actualizaciones por user_id
-      if (updatedMessage.user_id && currentUserId && updatedMessage.user_id !== currentUserId) {
+      // 🔧 CORRECCIÓN: Filtrar actualizaciones por user_id (solo si hay usuario autenticado)
+      if (currentUserId && updatedMessage.user_id && updatedMessage.user_id !== currentUserId) {
         return;
       }
 
-      setMessages(prev => 
-        prev.map(msg => 
-          msg.id === updatedMessage.id 
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === updatedMessage.id
             ? { ...msg, ...updatedMessage }
             : msg
         )
@@ -163,12 +171,12 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const handleMessageDelete = (payload: any) => {
     const deletedMessage = payload.old;
     if (deletedMessage) {
-      // 🔧 OPTIMIZACIÓN: Filtrar eliminaciones por user_id
-      if (deletedMessage.user_id && currentUserId && deletedMessage.user_id !== currentUserId) {
+      // 🔧 CORRECCIÓN: Filtrar eliminaciones por user_id (solo si hay usuario autenticado)
+      if (currentUserId && deletedMessage.user_id && deletedMessage.user_id !== currentUserId) {
         return;
       }
 
-      setMessages(prev => 
+      setMessages(prev =>
         prev.filter(msg => msg.id !== deletedMessage.id)
       );
     }
@@ -176,18 +184,23 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
   const handleNewOrder = (payload: any) => {
     const newOrder = payload.new;
-    if (newOrder) {
-      // 🔧 OPTIMIZACIÓN: Filtrar nuevas órdenes por user_id
-      if (newOrder.user_id && currentUserId && newOrder.user_id !== currentUserId) {
-        return;
-      }
+    if (!newOrder || !currentUserId) {
+      console.log('🔐 RealtimeService: Ignorando nueva orden - usuario no autenticado');
+      return;
+    }
+
+    // 🔧 OPTIMIZACIÓN: Filtrar nuevas órdenes por user_id
+    if (newOrder.user_id && newOrder.user_id !== currentUserId) {
+      console.log('🔍 RealtimeService: Orden filtrada - user_id no coincide');
+      return;
+    }
 
       setOrders(prev => {
         const exists = prev.some(order => order.id === newOrder.id);
         if (exists) return prev;
         return [...prev, newOrder];
       });
-      
+
       // 🔧 OPTIMIZACIÓN: Notificar a los listeners sobre la nueva orden
       orderListeners.current.forEach(callback => {
         try {
@@ -196,161 +209,225 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
           console.error('Error en order listener:', error);
         }
       });
-    }
   };
 
   const handleOrderUpdate = (payload: any) => {
     const updatedOrder = payload.new;
-    if (updatedOrder) {
-      // 🔧 OPTIMIZACIÓN: Filtrar actualizaciones por user_id
-      if (updatedOrder.user_id && currentUserId && updatedOrder.user_id !== currentUserId) {
-        return;
-      }
-
-      setOrders(prev => 
-        prev.map(order => 
-          order.id === updatedOrder.id 
-            ? { ...order, ...updatedOrder }
-            : order
-        )
-      );
-      
-      // 🔧 OPTIMIZACIÓN: Notificar a los listeners sobre la actualización
-      orderListeners.current.forEach(callback => {
-        try {
-          callback(updatedOrder);
-        } catch (error) {
-          console.error('Error en order listener:', error);
-        }
-      });
+    if (!updatedOrder || !currentUserId) {
+      return;
     }
+
+    // Filtrar actualizaciones por user_id
+    if (updatedOrder.user_id && updatedOrder.user_id !== currentUserId) {
+      return;
+    }
+
+    // Mapear la orden una sola vez
+    const mappedOrder = mapOrderFromDb(updatedOrder);
+    
+    setOrders(prev =>
+      prev.map(order =>
+        order.id === updatedOrder.id
+          ? { ...order, ...mappedOrder }
+          : order
+      )
+    );
+
+    // Notificar a los listeners sobre la actualización
+    orderListeners.current.forEach(callback => {
+      try {
+        callback(mappedOrder);
+      } catch (error) {
+        console.error('❌ [RealtimeService] Error en order listener:', error);
+      }
+    });
   };
 
   const handleOrderDelete = (payload: any) => {
     const deletedOrder = payload.old;
-    if (deletedOrder) {
-      // 🔧 OPTIMIZACIÓN: Filtrar eliminaciones por user_id
-      if (deletedOrder.user_id && currentUserId && deletedOrder.user_id !== currentUserId) {
-        return;
-      }
-
-      setOrders(prev => 
-        prev.filter(order => order.id !== deletedOrder.id)
-      );
-    }
-  };
-
-  // 🔧 OPTIMIZACIÓN: Configurar suscripciones solo cuando hay usuario autenticado
-  useEffect(() => {
-    if (!currentUserId) {
-      console.log('🔄 RealtimeService: Usuario no autenticado, no configurando suscripciones');
+    if (!deletedOrder || !currentUserId) {
+      console.log('🔐 RealtimeService: Ignorando eliminación de orden - usuario no autenticado');
       return;
     }
 
-    console.log(`🔗 RealtimeService: Configurando suscripciones para usuario ${currentUserId}`);
+    // 🔧 OPTIMIZACIÓN: Filtrar eliminaciones por user_id
+    if (deletedOrder.user_id && deletedOrder.user_id !== currentUserId) {
+      console.log('🔍 RealtimeService: Eliminación de orden filtrada - user_id no coincide');
+      return;
+    }
 
-    // Suscripción a mensajes con filtro por user_id Y contact_id de proveedores
-    subscribe(
-      { 
-        table: 'whatsapp_messages', 
-        event: '*',
-        filter: `user_id=eq.${currentUserId}` // 🔧 FILTRO CRÍTICO: Solo mensajes del usuario actual
-      },
-      {
-        onInsert: handleNewMessage,
-        onUpdate: handleMessageUpdate,
-        onDelete: handleMessageDelete
-      },
-      {
-        debounceMs: 150,
-        retryConfig: {
-          maxRetries: 5,
-          retryDelay: 2000,
-          backoffMultiplier: 1.5
-        }
-      }
+    setOrders(prev =>
+      prev.filter(order => order.id !== deletedOrder.id)
     );
+  };
 
-    // 🔧 NUEVA SUSCRIPCIÓN: Mensajes de proveedores (donde contact_id corresponde a proveedores del usuario)
-    subscribe(
-      { 
-        table: 'whatsapp_messages', 
-        event: '*',
-        filter: `user_id=is.null` // 🔧 FILTRO CRÍTICO: Mensajes sin user_id (del proveedor)
-      },
-      {
-        onInsert: handleNewMessage,
-        onUpdate: handleMessageUpdate,
-        onDelete: handleMessageDelete
-      },
-      {
-        debounceMs: 150,
-        retryConfig: {
-          maxRetries: 5,
-          retryDelay: 2000,
-          backoffMultiplier: 1.5
-        }
+  // 🔧 FUNCIÓN: Cargar órdenes iniciales
+  const loadInitialOrders = useCallback(async () => {
+    if (!currentUserId) return;
+
+    try {
+      // 🔧 NUEVO: Usar endpoint de API del servidor para evitar problemas de RLS
+      const response = await fetch(`/api/data/orders?user_id=${currentUserId}`);
+      
+      if (!response.ok) {
+        console.error('❌ [RealtimeService] Error cargando órdenes iniciales:', response.status);
+        return;
       }
-    );
 
-    // Suscripción a órdenes con filtro por user_id
-    subscribe(
-      { 
-        table: 'orders', 
-        event: '*',
-        filter: `user_id=eq.${currentUserId}` // 🔧 FILTRO CRÍTICO: Solo órdenes del usuario actual
-      },
-      {
-        onInsert: handleNewOrder,
-        onUpdate: handleOrderUpdate,
-        onDelete: handleOrderDelete
-      },
-      {
-        debounceMs: 300,
-        retryConfig: {
-          maxRetries: 3,
-          retryDelay: 1000,
-          backoffMultiplier: 2
-        }
+      const result = await response.json();
+      
+      if (!result.success) {
+        console.error('❌ [RealtimeService] Error cargando órdenes iniciales:', result.error);
+        return;
       }
-    );
 
+
+      // 🔧 MAPEAR: Mapear órdenes antes de establecerlas
+      const mappedOrders = (result.orders || []).map(mapOrderFromDb);
+      
+      // Órdenes iniciales cargadas
+      setOrders(mappedOrders);
+      
+        // 🔧 NUEVO: Pasar órdenes iniciales al DataProvider
+        if (mappedOrders && mappedOrders.length > 0) {
+          // Notificar a los listeners de órdenes con las órdenes iniciales mapeadas
+          mappedOrders.forEach(order => {
+            orderListeners.current.forEach(callback => {
+              callback(order);
+            });
+          });
+        }
+    } catch (error) {
+      console.error('❌ [RealtimeService] Error inesperado cargando órdenes:', error);
+    }
+  }, [currentUserId, supabase]);
+
+  // 🔧 OPTIMIZACIÓN: Configurar suscripciones una sola vez por usuario
+  const subscriptionsInitializedRef = useRef<Set<string>>(new Set());
+  
+  useEffect(() => {
+    if (!currentUserId) {
+      // console.log('🔐 RealtimeService: Esperando autenticación...');
+      setIsConnected(false);
+      return;
+    }
+
+    // ✅ SOLUCIÓN: Evitar crear múltiples suscripciones para el mismo usuario
+    if (subscriptionsInitializedRef.current.has(currentUserId)) {
+      return;
+    }
+
+    subscriptionsInitializedRef.current.add(currentUserId);
+    
+    // console.log('✅ RealtimeService: Usuario autenticado, configurando tiempo real...');
     setIsConnected(true);
 
-    return () => {
-      console.log(`🔌 RealtimeService: Desuscribiendo de mensajes y órdenes para usuario ${currentUserId}`);
-      unsubscribe({ 
-        table: 'whatsapp_messages', 
-        event: '*',
-        filter: `user_id=eq.${currentUserId}`
-      });
-      unsubscribe({ 
-        table: 'whatsapp_messages', 
-        event: '*',
-        filter: `user_id=is.null`
-      });
-      unsubscribe({ 
-        table: 'orders', 
-        event: '*',
-        filter: `user_id=eq.${currentUserId}`
-      });
+    // 🔧 CARGAR ÓRDENES INICIALES
+    loadInitialOrders();
+
+    // 🔧 SOLUCIÓN OPTIMIZADA: Una sola llamada de suscripción por tipo
+    const setupWhatsAppSuscription = async () => {
+      try {
+        await subscribe(
+          {
+            table: 'whatsapp_messages',
+            event: '*'
+          },
+          {
+            onInsert: handleNewMessage,
+            onUpdate: handleMessageUpdate,
+            onDelete: handleMessageDelete
+          },
+          {
+            debounceMs: 150,
+            retryConfig: {
+              maxRetries: 5,
+              retryDelay: 2000,
+              backoffMultiplier: 1.5
+            }
+          }
+        );
+        setIsConnected(true);
+      } catch (error) {
+        console.error(`❌ RealtimeService: Error configurando suscripción a whatsapp_messages:`, error);
+        setIsConnected(false);
+      }
     };
-  }, [currentUserId, subscribe, unsubscribe]); // 🔧 DEPENDENCIA CRÍTICA: currentUserId
+
+    setupWhatsAppSuscription();
+
+    // 🔧 SOLUCIÓN OPTIMIZADA: Suscripción a órdenes con configuración única
+    const setupOrdersSuscription = async () => {
+      try {
+        await subscribe(
+          {
+            table: 'orders',
+            event: '*',
+            filter: currentUserId ? `user_id=eq.${currentUserId}` : undefined
+          },
+          {
+            onInsert: handleNewOrder,
+            onUpdate: handleOrderUpdate,
+            onDelete: handleOrderDelete
+          },
+          {
+            debounceMs: 100,
+            retryConfig: {
+              maxRetries: 3,
+              retryDelay: 1000,
+              backoffMultiplier: 2
+            }
+          }
+        );
+      } catch (error) {
+        console.error(`❌ [RealtimeService] Error configurando suscripción a orders:`, error);
+      }
+    };
+
+    setupOrdersSuscription();
+
+
+
+
+    return () => {
+      // ✅ SOLUCIÓN: Limpiar suscripciones cuando el usuario cambie
+      if (currentUserId && subscriptionsInitializedRef.current.has(currentUserId)) {
+        console.log(`🔌 RealtimeService: Desuscribiendo de mensajes y órdenes para usuario ${currentUserId}`);
+        
+        // Remover del conjunto de usuarios inicializados
+        subscriptionsInitializedRef.current.delete(currentUserId);
+        
+        // Una sola llamada de desuscripción por tabla
+        unsubscribe({
+          table: 'whatsapp_messages',
+          event: '*'
+        });
+        
+        unsubscribe({
+          table: 'orders', 
+          event: '*',
+          filter: currentUserId ? `user_id=eq.${currentUserId}` : undefined
+        });
+      }
+    };
+  }, [currentUserId, subscribe, unsubscribe]);
 
   // Funciones para agregar/remover listeners
-  const addMessageListener = (callback: (message: RealtimeMessage) => void) => {
+  // 🔧 SOLUCIÓN UNIFICADA: addMessageListener con referencia estable
+  const addMessageListener = useCallback((callback: (message: RealtimeMessage) => void) => {
     messageListeners.current.add(callback);
     return () => {
       messageListeners.current.delete(callback);
     };
-  };
+  }, []); // ✅ DEPENDENCIAS VACÍAS para mantener referencia estable
 
-  const addOrderListener = (callback: (order: RealtimeOrder) => void) => {
+  // 🔧 SOLUCIÓN UNIFICADA: addOrderListener con referencia estable
+  const addOrderListener = useCallback((callback: (order: RealtimeOrder) => void) => {
     orderListeners.current.add(callback);
     return () => {
       orderListeners.current.delete(callback);
     };
-  };
+  }, []); // ✅ DEPENDENCIAS VACÍAS para mantener referencia estable
 
   const value = {
     messages,
@@ -360,6 +437,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     isConnected,
     currentUserId
   };
+
 
   return (
     <RealtimeServiceContext.Provider value={value}>

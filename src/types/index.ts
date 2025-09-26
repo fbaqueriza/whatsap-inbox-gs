@@ -60,8 +60,9 @@ export interface Order {
   user_id: string;
   orderNumber: string;
   providerId: string;
+  provider?: Provider; // 🔧 NUEVO: Información del proveedor incluida
   items: OrderItem[];
-  status: 'pending' | 'pending_confirmation' | 'factura_recibida' | 'pagado' | 'enviado' | 'finalizado' | 'sent' | 'confirmed' | 'delivered' | 'cancelled';
+  status: 'standby' | 'enviado' | 'esperando_factura' | 'pendiente_de_pago' | 'pagado';
   totalAmount: number;
   currency: string;
   orderDate: Date;

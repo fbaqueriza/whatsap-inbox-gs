@@ -41,25 +41,19 @@ export default function OrdersModule({
   className = ""
 }: OrdersModuleProps) {
   
-  // Helper functions - EXACTAMENTE como en la página original
+  // 🔧 REFACTORIZADO: Estados estandarizados
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'pending':
+      case 'standby':
         return <Clock className="h-4 w-4 text-yellow-500" />;
-      case 'pending_confirmation':
-        return <AlertCircle className="h-4 w-4 text-orange-500" />;
-      case 'confirmed':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
       case 'enviado':
         return <Send className="h-4 w-4 text-blue-500" />;
-      case 'factura_recibida':
+      case 'esperando_factura':
+        return <FileText className="h-4 w-4 text-orange-500" />;
+      case 'pendiente_de_pago':
         return <FileText className="h-4 w-4 text-purple-500" />;
       case 'pagado':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'finalizado':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'cancelled':
-        return <X className="h-4 w-4 text-red-500" />;
       default:
         return <Clock className="h-4 w-4 text-gray-500" />;
     }
@@ -67,22 +61,16 @@ export default function OrdersModule({
 
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
-      case 'pending':
+      case 'standby':
         return 'bg-yellow-100 text-yellow-800';
-      case 'pending_confirmation':
-        return 'bg-orange-100 text-orange-800';
-      case 'confirmed':
-        return 'bg-green-100 text-green-800';
       case 'enviado':
         return 'bg-blue-100 text-blue-800';
-      case 'factura_recibida':
+      case 'esperando_factura':
+        return 'bg-orange-100 text-orange-800';
+      case 'pendiente_de_pago':
         return 'bg-purple-100 text-purple-800';
       case 'pagado':
         return 'bg-green-100 text-green-800';
-      case 'finalizado':
-        return 'bg-green-100 text-green-800';
-      case 'cancelled':
-        return 'bg-red-100 text-red-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
@@ -165,17 +153,16 @@ export default function OrdersModule({
                         {order.orderNumber}
                       </span>
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(order.status)}`}>
-                        {order.status === 'pending' ? 'Pendiente' :
-                         order.status === 'pending_confirmation' ? 'Pendiente de Confirmación' :
-                         order.status === 'confirmed' ? 'Confirmado' :
+                        {order.status === 'standby' ? 'Standby' :
                          order.status === 'enviado' ? 'Enviado' :
-                         order.status === 'factura_recibida' ? 'Factura Recibida' :
+                         order.status === 'esperando_factura' ? 'Esperando Factura' :
+                         order.status === 'pendiente_de_pago' ? 'Pendiente de Pago' :
                          order.status === 'pagado' ? 'Pagado' :
                          order.status}
                       </span>
                     </div>
                     <p className="text-sm text-gray-500">
-                      {getProviderName(order.providerId)} • {order.items.length} ítems • {formatDate(order.orderDate)}
+                      {getProviderName(order.providerId)} • {order.items?.length || 0} ítems • {formatDate(order.orderDate)}
                     </p>
                   </div>
                 </div>

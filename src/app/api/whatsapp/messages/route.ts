@@ -34,10 +34,10 @@ export async function GET(request: NextRequest) {
        .order('timestamp', { ascending: false })
        .limit(parseInt(limit));
      
-     // 🔧 CORRECCIÓN: Lógica simplificada y escalable
-     // Solo incluir mensajes del usuario específico (ya tienen user_id asignado)
+     // 🔧 CORRECCIÓN: Lógica más robusta para incluir mensajes del usuario
      if (currentUserId) {
-       query = query.eq('user_id', currentUserId);
+       // Incluir mensajes con user_id específico O mensajes de proveedores del usuario
+       query = query.or(`user_id.eq.${currentUserId},user_id.is.null`);
      }
     
     // Si hay providerId específico, filtrar por él
@@ -52,9 +52,46 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ messages: [] });
     }
 
+    // 🔧 MEJORA: Filtrar mensajes sin user_id para incluir solo los de proveedores del usuario
+    let filteredMessages = messages || [];
+    
+    if (currentUserId && messages) {
+      // Obtener proveedores del usuario para filtrar mensajes sin user_id
+      const { data: userProviders } = await supabase
+        .from('providers')
+        .select('phone')
+        .eq('user_id', currentUserId);
+      
+      if (userProviders && userProviders.length > 0) {
+        const userProviderPhones = userProviders.map(p => p.phone);
+        
+        filteredMessages = messages.filter((msg: any) => {
+          // Incluir mensajes con user_id del usuario actual
+          if (msg.user_id === currentUserId) {
+            return true;
+          }
+          
+          // Para mensajes sin user_id, verificar si el contact_id corresponde a un proveedor del usuario
+          if (!msg.user_id && msg.contact_id) {
+            return userProviderPhones.some((providerPhone: string) => {
+              const normalizedProviderPhone = providerPhone.replace(/\D/g, '');
+              const normalizedContactId = msg.contact_id.replace(/\D/g, '');
+              return normalizedProviderPhone.includes(normalizedContactId.slice(-8)) || 
+                     normalizedContactId.includes(normalizedProviderPhone.slice(-8));
+            });
+          }
+          
+          return false;
+        });
+      } else {
+        // Si no hay proveedores, solo incluir mensajes con user_id específico
+        filteredMessages = messages.filter((msg: any) => msg.user_id === currentUserId);
+      }
+    }
+
     return NextResponse.json({ 
-      messages: messages || [],
-      count: messages?.length || 0
+      messages: filteredMessages,
+      count: filteredMessages.length
     });
   } catch (error) {
     console.error('❌ Error en GET /api/whatsapp/messages:', error);

@@ -1,66 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseServer } from '@/lib/supabase/serverClient';
-
-// Forzar que esta ruta sea dinámica
-export const dynamic = 'force-dynamic';
+import { getSupabaseServerClient } from '../../../../lib/supabase/serverClient';
 
 export async function GET(request: NextRequest) {
   try {
-    // Verificar que Supabase esté inicializado
-    if (!supabaseServer) {
-      console.error('❌ Supabase no inicializado');
+    const supabase = getSupabaseServerClient();
+    if (!supabase) {
       return NextResponse.json({
         success: false,
-        error: 'Database not configured',
-        providers: []
+        error: 'No se pudo conectar a Supabase'
       }, { status: 500 });
     }
-    
-    // Obtener el token de autorización del header
-    const authHeader = request.headers.get('authorization');
-    let userId = null;
-    
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      try {
-        // Verificar el token y obtener el usuario
-        const { data: { user }, error: authError } = await supabaseServer.auth.getUser(token);
-        if (user && !authError) {
-          userId = user.id;
-        }
-      } catch (error) {
-        console.log('⚠️ API data/providers - Error verificando token:', error);
-      }
-    }
-    
-    // Construir la consulta
-    let query = supabaseServer.from('providers').select('*').order('name');
-    
-    // Si hay usuario autenticado, filtrar por user_id
-    if (userId) {
-      query = query.eq('user_id', userId);
-    }
-    
-    const { data: providers, error } = await query;
-    
-    if (error) {
-      console.error('❌ Error obteniendo providers:', error);
-      return NextResponse.json(
-        { error: 'Error obteniendo providers' },
-        { status: 500 }
-      );
+
+    // Obtener user_id de los headers o query params
+    const { searchParams } = new URL(request.url);
+    const userId = searchParams.get('user_id');
+
+    if (!userId) {
+      return NextResponse.json({
+        success: false,
+        error: 'user_id es requerido'
+      }, { status: 400 });
     }
 
-    return NextResponse.json({ 
+    // Obtener proveedores del usuario
+    const { data: providers, error: providersError } = await supabase
+      .from('providers')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (providersError) {
+      return NextResponse.json({
+        success: false,
+        error: 'Error obteniendo proveedores',
+        details: providersError.message
+      }, { status: 500 });
+    }
+
+    return NextResponse.json({
       success: true,
-      providers: providers || [] 
+      providers: providers || [],
+      count: providers?.length || 0
     });
 
   } catch (error) {
-    console.error('❌ Error en API data/providers:', error);
-    return NextResponse.json(
-      { error: 'Error interno del servidor' },
-      { status: 500 }
-    );
+    return NextResponse.json({
+      success: false,
+      error: 'Error interno del servidor',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    }, { status: 500 });
   }
 }

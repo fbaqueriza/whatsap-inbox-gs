@@ -4,7 +4,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import SpreadsheetGrid from '../../components/DataGrid';
 import { Provider } from '../../types';
-import { Plus, Upload, Download, FileText, Eye, CreditCard, Edit } from 'lucide-react';
+import { Plus, Upload, Download, FileText, CreditCard, Edit, FolderOpen } from 'lucide-react';
 import {
   createNewProvider,
   processProviderData,
@@ -17,6 +17,7 @@ import { DataProvider, useData } from '../../components/DataProvider';
 import es from '../../locales/es';
 import { useRouter } from 'next/navigation';
 import ProviderConfigModal from '../../components/ProviderConfigModal';
+import ProviderDocumentsModal from '../../components/ProviderDocumentsModal';
 import { uploadCatalogFile } from '../../lib/supabase/storage';
 
 export default function ProvidersPageWrapper() {
@@ -54,6 +55,8 @@ function ProvidersPage() {
   const [currentProvider, setCurrentProvider] = useState<Provider | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingInTable, setIsEditingInTable] = useState<string | null>(null);
+  const [isDocumentsModalOpen, setIsDocumentsModalOpen] = useState(false);
+  const [selectedProviderForDocuments, setSelectedProviderForDocuments] = useState<Provider | null>(null);
   
   // Chat state - now enabled
   const { openChat, isChatOpen } = useChat();
@@ -199,43 +202,16 @@ function ProvidersPage() {
       render: (value: any, row: Provider) => (
         <div className="flex gap-1 justify-center items-center" style={{ width: 120, minWidth: 120, maxWidth: 120 }}>
           <button
-            className={`inline-flex items-center justify-center w-7 h-7 rounded focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-              row?.catalogs?.length 
-                ? 'hover:bg-blue-100 text-blue-600' 
-                : 'text-gray-400 hover:bg-gray-100 cursor-not-allowed'
-            }`}
-            title={row?.catalogs?.length ? "Ver catálogo del proveedor" : "Sin catálogo disponible"}
-            aria-label={row?.catalogs?.length ? "Ver catálogo del proveedor" : "Sin catálogo disponible"}
+            className="inline-flex items-center justify-center w-7 h-7 rounded hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-400"
+            title="Ver documentos del proveedor"
+            aria-label="Ver documentos del proveedor"
             onClick={() => {
-              if (!row?.catalogs || row.catalogs.length === 0) {
-                alert('Este proveedor no tiene catálogos cargados.');
-                return;
-              }
-              
-              const pdf = row.catalogs[0];
-              if (!pdf?.fileUrl) {
-                alert('El catálogo existe pero la URL no está disponible.');
-                return;
-              }
-              try {
-                // Verificar si es una URL válida (incluye data URLs)
-                if (pdf.fileUrl.startsWith('blob:') || 
-                    pdf.fileUrl.startsWith('http') || 
-                    pdf.fileUrl.startsWith('data:')) {
-                  window.open(pdf.fileUrl, '_blank');
-                } else {
-                  console.log('DEBUG: Invalid URL format in table:', pdf.fileUrl);
-                  alert('El formato de la URL del catálogo no es válido.');
-                }
-              } catch (error) {
-                console.error('DEBUG: Error opening catalog from table:', error);
-                alert('Error al abrir el catálogo. Verifica que la URL sea válida.');
-              }
+              setSelectedProviderForDocuments(row);
+              setIsDocumentsModalOpen(true);
             }}
-            disabled={!row?.catalogs?.length}
             tabIndex={0}
           >
-            <Eye className={`h-4 w-4 ${row?.catalogs?.length ? 'text-blue-600' : 'text-gray-400'}`} />
+            <FolderOpen className="h-4 w-4 text-green-600" />
           </button>
           <button
             className="inline-flex items-center justify-center w-7 h-7 rounded hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -767,6 +743,19 @@ function ProvidersPage() {
         onAdd={handleAddProvider}
         onCatalogUpload={handleCatalogUploadLocal}
       />
+
+      {/* Modal de documentos del proveedor */}
+      {selectedProviderForDocuments && (
+        <ProviderDocumentsModal
+          isOpen={isDocumentsModalOpen}
+          onClose={() => {
+            setIsDocumentsModalOpen(false);
+            setSelectedProviderForDocuments(null);
+          }}
+          provider={selectedProviderForDocuments}
+          userId={user?.id || ''}
+        />
+      )}
     </div>
   );
 }

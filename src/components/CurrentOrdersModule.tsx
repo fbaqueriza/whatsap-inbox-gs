@@ -60,39 +60,37 @@ export default function CurrentOrdersModule({
     }
   };
 
-  // 🔧 FUNCIÓN UNIFICADA: Obtener icono de estado
+  // 🔧 REFACTORIZADO: Estados estandarizados
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'pending':
+      case 'standby':
         return <Clock className="h-4 w-4 text-yellow-500" />;
       case 'enviado':
         return <Send className="h-4 w-4 text-blue-500" />;
-      case 'factura_recibida':
+      case 'esperando_factura':
+        return <FileText className="h-4 w-4 text-orange-500" />;
+      case 'pendiente_de_pago':
         return <FileText className="h-4 w-4 text-purple-500" />;
       case 'pagado':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'finalizado':
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
-      case 'cancelled':
-        return <AlertCircle className="h-4 w-4 text-red-500" />;
       default:
         return <Clock className="h-4 w-4 text-gray-500" />;
     }
   };
 
-  // 🔧 FUNCIÓN UNIFICADA: Obtener color de estado
+  // 🔧 REFACTORIZADO: Colores de estado estandarizados
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "pending":
+      case "standby":
         return "bg-yellow-100 text-yellow-800";
-      case "sent":
+      case "enviado":
         return "bg-blue-100 text-blue-800";
-      case "confirmed":
+      case "esperando_factura":
+        return "bg-orange-100 text-orange-800";
+      case "pendiente_de_pago":
+        return "bg-purple-100 text-purple-800";
+      case "pagado":
         return "bg-green-100 text-green-800";
-      case "delivered":
-        return "bg-green-100 text-green-800";
-      case "cancelled":
-        return "bg-red-100 text-red-800";
       default:
         return "bg-gray-100 text-gray-800";
     }
@@ -114,7 +112,7 @@ export default function CurrentOrdersModule({
 
   // 🔧 FUNCIÓN UNIFICADA: Mostrar orden de pago
   const showPaymentOrder = (order: Order) => {
-    if (order.status !== 'factura_recibida' || !order.bankInfo) return null;
+    if (order.status !== 'pendiente_de_pago' || !order.bankInfo) return null;
     
     return (
       <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
@@ -169,11 +167,10 @@ export default function CurrentOrdersModule({
                         {formatDate(order.createdAt || order.orderDate)}
                       </div>
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
-                        {order.status === 'pending' ? 'Pendiente' :
-                         order.status === 'pending_confirmation' ? 'Pendiente de Confirmación' :
-                         order.status === 'confirmed' ? 'Confirmado' :
+                        {order.status === 'standby' ? 'Standby' :
                          order.status === 'enviado' ? 'Enviado' :
-                         order.status === 'factura_recibida' ? 'Factura Recibida' :
+                         order.status === 'esperando_factura' ? 'Esperando Factura' :
+                         order.status === 'pendiente_de_pago' ? 'Pendiente de Pago' :
                          order.status === 'pagado' ? 'Pagado' :
                          order.status}
                       </span>
@@ -191,8 +188,8 @@ export default function CurrentOrdersModule({
                     <MessageSquare className="h-3 w-3" />
                   </button>
                   
-                  {/* Enviar pedido - solo en estado pending */}
-                  {order.status === 'pending' && (
+                  {/* Enviar pedido - solo en estado standby */}
+                  {order.status === 'standby' && (
                     <button
                       onClick={() => onSendOrder(order.id)}
                       className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 focus:ring-2 focus:ring-blue-500"
@@ -202,9 +199,9 @@ export default function CurrentOrdersModule({
                   )}
                   
                   {/* Descargar factura - cuando hay factura disponible */}
-                  {['factura_recibida','pagado','enviado','finalizado'].includes(order.status) && (
+                  {['pendiente_de_pago','pagado','enviado'].includes(order.status) && order.receipt_url && (
                     <a
-                      href="/mock-factura.pdf"
+                      href={order.receipt_url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-gray-400"
@@ -213,8 +210,8 @@ export default function CurrentOrdersModule({
                     </a>
                   )}
                   
-                  {/* Subir comprobante - solo en estado factura_recibida */}
-                  {order.status === 'factura_recibida' && (
+                  {/* Subir comprobante - solo en estado pendiente_de_pago */}
+                  {order.status === 'pendiente_de_pago' && (
                     <ComprobanteButton
                       comprobante={null}
                       onUpload={(file) => onUploadPaymentProof(order.id, file)}
@@ -257,7 +254,7 @@ export default function CurrentOrdersModule({
                 </div>
               )}
                
-              {/* Orden de pago - solo en estado factura_recibida */}
+              {/* Orden de pago - solo en estado pendiente_de_pago */}
               {showPaymentOrder(order)}
             </div>
           ))}

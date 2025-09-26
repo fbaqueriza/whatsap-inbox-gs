@@ -24,14 +24,24 @@ interface RetryConfig {
 }
 
 const DEFAULT_RETRY_CONFIG: RetryConfig = {
-  maxRetries: 5,
-  retryDelay: 1000,
+  maxRetries: 3, // 🔧 OPTIMIZACIÓN: Reducir reintentos para respuestas más rápidas
+  retryDelay: 500, // 🔧 OPTIMIZACIÓN: Reducir delay inicial
   backoffMultiplier: 1.5
 };
 
-// 🔧 OPTIMIZACIÓN: Usar logging centralizado
+// 🔧 OPTIMIZACIÓN: Usar logging centralizado con control de nivel
 const realtimeLog = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: any[]) => {
-  configLog(level, `[Realtime] ${message}`, ...args);
+  // Usar configuración centralizada de logging
+  const { config } = require('../lib/config');
+  const shouldLog = 
+    (level === 'error' && config.logging.showErrorLogs) ||
+    (level === 'warn' && config.logging.showDebugLogs) ||
+    (level === 'info' && config.logging.showInfoLogs) ||
+    (level === 'debug' && config.logging.showDebugLogs);
+  
+  if (shouldLog) {
+    configLog(level, `[Realtime] ${message}`, ...args);
+  }
 };
 
 export function useRealtimeManager() {
@@ -104,9 +114,10 @@ export function useRealtimeManager() {
         throw new Error(`No se puede conectar a la tabla ${config.table}`);
       }
 
-      realtimeLog('info', `Creando suscripción para ${channelName}`);
+      // console.log(`🔍 [RealtimeManager] Creando suscripción para ${channelName}`);
 
       // Crear el canal con configuración optimizada
+      // console.log('🔍 [RealtimeManager] Creando canal:', channelName, 'con filtro:', config.filter);
       const channel = supabase
         .channel(channelName)
         .on(
@@ -118,22 +129,16 @@ export function useRealtimeManager() {
             filter: config.filter
           },
           (payload: any) => {
-            realtimeLog('debug', `Evento recibido en ${channelName}:`, payload);
+            // console.log('🔍 [RealtimeManager] Evento recibido:', payload.eventType, 'en', channelName, 'para orden:', payload.new?.order_number);
+            // Only log important events, not every single update
+            if (payload.eventType === 'INSERT' || payload.eventType === 'DELETE') {
+              realtimeLog('info', `Evento ${payload.eventType} en ${channelName}`);
+            }
             
             // 🔧 OPTIMIZACIÓN: Debounce para evitar múltiples actualizaciones
-            if (options.debounceMs) {
-              clearTimeout((global as any)[`debounce_${channelName}`]);
-              (global as any)[`debounce_${channelName}`] = setTimeout(() => {
-                if (payload.eventType === 'INSERT' && handlers.onInsert) {
-                  handlers.onInsert(payload);
-                } else if (payload.eventType === 'UPDATE' && handlers.onUpdate) {
-                  handlers.onUpdate(payload);
-                } else if (payload.eventType === 'DELETE' && handlers.onDelete) {
-                  handlers.onDelete(payload);
-                }
-              }, options.debounceMs);
-            } else {
-              // Sin debounce
+            const debounceMs = options.debounceMs || 100; // Default debounce
+            clearTimeout((global as any)[`debounce_${channelName}`]);
+            (global as any)[`debounce_${channelName}`] = setTimeout(() => {
               if (payload.eventType === 'INSERT' && handlers.onInsert) {
                 handlers.onInsert(payload);
               } else if (payload.eventType === 'UPDATE' && handlers.onUpdate) {
@@ -141,7 +146,7 @@ export function useRealtimeManager() {
               } else if (payload.eventType === 'DELETE' && handlers.onDelete) {
                 handlers.onDelete(payload);
               }
-            }
+            }, debounceMs);
           }
         )
         .subscribe((status) => {
@@ -153,22 +158,30 @@ export function useRealtimeManager() {
             retryCounts.current.delete(channelName);
             realtimeLog('info', `✅ Suscripción ${channelName} activa`);
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            // 🔧 OPTIMIZACIÓN: Manejar errores de Realtime sin reintentos infinitos
+            // 🔧 OPTIMIZACIÓN: Manejar errores de Realtime con reintentos limitados
             realtimeLog('warn', `Conexión Realtime falló para ${channelName}: ${status}`);
             isSubscribing.current.delete(channelName);
             subscriptions.current.delete(channelName);
             
-            // Solo reintentar si no es un error de configuración
-            if (status !== 'CHANNEL_ERROR') {
-              attemptReconnection(config, handlers, options);
-            }
+            // Reintentar conexión para errores de canal (pueden ser temporales)
+            attemptReconnection(config, handlers, options);
           }
         });
 
     } catch (error) {
       realtimeLog('error', `Error creando suscripción ${channelName}:`, error);
       isSubscribing.current.delete(channelName);
-      attemptReconnection(config, handlers, options);
+      
+      // 🔧 OPTIMIZACIÓN: No reintentar errores de configuración de Supabase
+      const isConfigError = error.message?.includes('transport') || 
+                           error.message?.includes('constructor') ||
+                           error.message?.includes('TypeError');
+      
+      if (!isConfigError) {
+        attemptReconnection(config, handlers, options);
+      } else {
+        realtimeLog('warn', `Error de configuración detectado para ${channelName}, no reintentando`);
+      }
     }
   }, [clearRetryTimeout, attemptReconnection]);
 

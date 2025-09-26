@@ -60,18 +60,18 @@ export default function CreateOrderModal({
       const provider = providers.find(p => p.id === selectedProvider);
       if (provider) {
         // 🔧 MEJORA: Log para verificar que el proveedor se encontró correctamente
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔧 DEBUG - Proveedor seleccionado:', {
-            id: provider.id,
-            name: provider.name,
-            notes: provider.notes,
-            hasNotes: !!provider.notes,
-            notesLength: provider.notes?.length || 0,
-            defaultDeliveryDays: provider.defaultDeliveryDays,
-            defaultDeliveryTime: provider.defaultDeliveryTime,
-            defaultPaymentMethod: provider.defaultPaymentMethod
-          });
-        }
+        // if (process.env.NODE_ENV === 'development') {
+        //   console.log('🔧 DEBUG - Proveedor seleccionado:', {
+        //     id: provider.id,
+        //     name: provider.name,
+        //     notes: provider.notes,
+        //     hasNotes: !!provider.notes,
+        //     notesLength: provider.notes?.length || 0,
+        //     defaultDeliveryDays: provider.defaultDeliveryDays,
+        //     defaultDeliveryTime: provider.defaultDeliveryTime,
+        //     defaultPaymentMethod: provider.defaultPaymentMethod
+        //   });
+        // }
         // Set default payment method
         if (provider.defaultPaymentMethod) {
           setPaymentMethod(provider.defaultPaymentMethod);
@@ -80,10 +80,10 @@ export default function CreateOrderModal({
         // 🔧 CORRECCIÓN: Pre-poblar notas del proveedor
         if (provider.notes && provider.notes.trim()) {
           setNotes(provider.notes);
-          console.log('🔧 DEBUG - Notas del proveedor pre-pobladas:', provider.notes);
+          // console.log('🔧 DEBUG - Notas del proveedor pre-pobladas:', provider.notes);
         } else {
           setNotes('');
-          console.log('🔧 DEBUG - No hay notas del proveedor disponibles');
+          // console.log('🔧 DEBUG - No hay notas del proveedor disponibles');
         }
         
         // 🔧 MEJORA: Limpiar campos al cambiar de proveedor
@@ -138,17 +138,17 @@ export default function CreateOrderModal({
           const { date: nextDeliveryDate, daysToAdd } = calculateNextDeliveryDate();
           
           // 🔧 DEBUG: Log mejorado para verificar el cálculo de fecha
-          if (process.env.NODE_ENV === 'development') {
-            console.log('🔧 DEBUG - Cálculo de fecha por defecto:', {
-              providerName: provider.name,
-              deliveryDays: deliveryDays,
-              calculatedDate: nextDeliveryDate.toISOString().split('T')[0],
-              today: today.toISOString().split('T')[0],
-              daysToAdd: daysToAdd,
-              dayName: nextDeliveryDate.toLocaleDateString('en-US', { weekday: 'short' }),
-              dayNameSpanish: nextDeliveryDate.toLocaleDateString('es-ES', { weekday: 'short' })
-            });
-          }
+          // if (process.env.NODE_ENV === 'development') {
+          //   console.log('🔧 DEBUG - Cálculo de fecha por defecto:', {
+          //     providerName: provider.name,
+          //     deliveryDays: deliveryDays,
+          //     calculatedDate: nextDeliveryDate.toISOString().split('T')[0],
+          //     today: today.toISOString().split('T')[0],
+          //     daysToAdd: daysToAdd,
+          //     dayName: nextDeliveryDate.toLocaleDateString('en-US', { weekday: 'short' }),
+          //     dayNameSpanish: nextDeliveryDate.toLocaleDateString('es-ES', { weekday: 'short' })
+          //   });
+          // }
           
           setDesiredDeliveryDate(nextDeliveryDate.toISOString().split('T')[0]);
           
@@ -175,7 +175,7 @@ export default function CreateOrderModal({
         }
       }
     }
-  }, [selectedProvider, providers]);
+  }, [selectedProvider]); // Remover providers de dependencias para evitar re-renders innecesarios
 
   // 🔧 OPTIMIZACIÓN: Precarga mejorada de items de proveedores
   useEffect(() => {
@@ -327,6 +327,9 @@ export default function CreateOrderModal({
       paymentMethod,
       additionalFiles,
     });
+    
+    // Cerrar modal inmediatamente después del submit
+    onClose();
   };
 
   const totalAmount = parseOrderText(orderText).reduce((sum, item) => sum + item.total, 0);
@@ -618,16 +621,7 @@ export default function CreateOrderModal({
             {/* Footer */}
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
               <button
-                onClick={() => {
-                  // 🔧 MEJORA: Actualizar datos al cerrar modal
-                  onClose();
-                  // Trigger refresh después de cerrar
-                  setTimeout(() => {
-                    if (typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('orderModalClosed'));
-                    }
-                  }, 100);
-                }}
+                onClick={onClose}
                 className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
               >
                 Cancelar

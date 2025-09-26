@@ -17,13 +17,15 @@ if (supabaseUrl && supabaseKey) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { to, message, templateVariables, userId } = body;
+    const { to, message, templateVariables, userId, mediaUrl, mediaType } = body;
 
     console.log('📥 Recibiendo solicitud de envío:', {
       to,
       message,
       templateVariables,
-      userId
+      userId,
+      mediaUrl,
+      mediaType
     });
 
     if (!to || !message) {
@@ -39,7 +41,19 @@ export async function POST(request: NextRequest) {
     let result;
     let messageContent = message;
     
-    if (isTemplate) {
+    // Verificar si se debe enviar un documento adjunto
+    if (mediaUrl && mediaType) {
+      // Enviar mensaje con documento adjunto
+      messageContent = processTextMessage(message, templateVariables);
+      
+      console.log('📋 Enviando mensaje con documento adjunto:', {
+        mediaUrl,
+        mediaType,
+        message: messageContent
+      });
+      
+      result = await metaWhatsAppService.sendMessageWithDocument(to, messageContent, mediaUrl, mediaType, userId);
+    } else if (isTemplate) {
       // 🔧 CORRECCIÓN: Generar contenido para guardar en BD
       messageContent = generateTemplateContent(message, templateVariables);
       
@@ -85,8 +99,10 @@ export async function POST(request: NextRequest) {
     }
 
     // 🔧 MEJORA: Guardar mensaje en la base de datos
-    if (supabase && userId) {
+    if (supabase) {
+      console.log('💾 [POST /api/whatsapp/send] Llamando a saveMessageToDatabase...');
       await saveMessageToDatabase(to, messageContent, result, userId);
+      console.log('✅ [POST /api/whatsapp/send] saveMessageToDatabase completado');
     }
 
     return NextResponse.json({
@@ -112,9 +128,10 @@ function generateTemplateContent(templateName: string, variables?: Record<string
     case 'evio_orden':
       const providerName = variables?.['provider_name'] || 'Proveedor';
       const contactName = variables?.['contact_name'] || 'Contacto';
+      // 🔧 CORRECCIÓN: Generar el contenido real del template que se envía a WhatsApp
       return `🛒 *NUEVA ORDEN - ${providerName}*
 
-Buen día ${contactName}! En cuanto me confirmes, paso el pedido de esta semana`;
+Buen día ${contactName}! En cuanto me confirmes, paso el pedido de esta semana.`;
     
     case 'hello_world':
       return '👋 ¡Hola! Este es un mensaje de prueba.';
@@ -123,6 +140,13 @@ Buen día ${contactName}! En cuanto me confirmes, paso el pedido de esta semana`
       return '🚀 Iniciando conversación...';
     
     default:
+      // 🔧 CORRECCIÓN: Para templates no definidos, mostrar información más útil
+      if (variables && Object.keys(variables).length > 0) {
+        const variableList = Object.entries(variables)
+          .map(([key, value]) => `${key}: ${value}`)
+          .join(', ');
+        return `📋 Template: ${templateName} (${variableList})`;
+      }
       return `📋 Template: ${templateName}`;
   }
 }
@@ -142,49 +166,104 @@ function processTextMessage(message: string, variables?: Record<string, string>)
   return processedMessage;
 }
 
-async function saveMessageToDatabase(to: string, content: string, result: any, userId: string): Promise<void> {
+async function saveMessageToDatabase(to: string, content: string, result: any, userId?: string): Promise<void> {
   try {
-    // Buscar el user_id del proveedor basado en el número de teléfono
-    const { data: providers, error: providerError } = await supabase
-      .from('providers')
-      .select('user_id, phone')
-      .or(`phone.eq.${to},phone.eq.${to.replace('+', '')}`);
-
-    if (!providerError && providers && providers.length > 0) {
-      const providerUserId = providers[0].user_id;
-      const messageSid = result.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      console.log('💾 Guardando mensaje en BD:', {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 [saveMessageToDatabase] Iniciando guardado de mensaje:', {
+        to,
         content,
-        message_type: 'sent',
-        contact_id: to,
-        user_id: providerUserId,
-        message_sid: messageSid
+        providedUserId: userId,
+        resultId: result?.id
+      });
+    }
+
+    let targetUserId = userId;
+    
+    // Si no se proporciona userId, buscar el user_id del proveedor basado en el número de teléfono
+    if (!targetUserId) {
+      console.log('🔍 [saveMessageToDatabase] Buscando proveedor para número:', to);
+      
+      const { data: providers, error: providerError } = await supabase
+        .from('providers')
+        .select('user_id, phone')
+        .or(`phone.eq.${to},phone.eq.${to.replace('+', '')}`);
+
+      console.log('🔍 [saveMessageToDatabase] Resultado de búsqueda:', {
+        providers,
+        error: providerError,
+        count: providers?.length || 0
       });
 
-      const { error: saveError } = await supabase
-        .from('whatsapp_messages')
-        .insert([{
-          content,
-          message_type: 'sent',
-          status: 'sent',
-          contact_id: to,
-          user_id: providerUserId,
-          message_sid: messageSid,
-          timestamp: new Date().toISOString(),
-          created_at: new Date().toISOString()
-        }]);
+      if (providerError || !providers || providers.length === 0) {
+        console.log('⚠️ [saveMessageToDatabase] No se encontró proveedor para el número:', to);
+        return;
+      }
+      
+      targetUserId = providers[0].user_id;
+      console.log('✅ [saveMessageToDatabase] Proveedor encontrado, user_id:', targetUserId);
+    } else {
+      console.log('✅ [saveMessageToDatabase] Usando user_id proporcionado:', targetUserId);
+    }
 
-      if (saveError) {
-        console.error('❌ Error guardando mensaje enviado:', saveError);
-      } else {
-        console.log('✅ Mensaje enviado guardado en la base de datos:', {
-          messageSid,
-          to,
+    const messageSid = result.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // 🔧 SOLUCIÓN: Verificar si el mensaje ya existe antes de insertar
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 [saveMessageToDatabase] Verificando duplicados...');
+    }
+    
+    const { data: existingMessages, error: checkError } = await supabase
+      .from('whatsapp_messages')
+      .select('id, message_sid, content, contact_id, user_id')
+      .eq('content', content)
+      .eq('contact_id', to)
+      .eq('message_type', 'sent')
+      .gte('created_at', new Date(Date.now() - 30000).toISOString()); // Últimos 30 segundos
+    
+    if (checkError) {
+      console.error('❌ [saveMessageToDatabase] Error verificando duplicados:', checkError);
+    } else if (existingMessages && existingMessages.length > 0) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('⚠️ [saveMessageToDatabase] Mensaje duplicado detectado, ignorando inserción:', {
+          existingCount: existingMessages.length,
+          existingIds: existingMessages.map(m => m.message_sid),
           content,
-          userId: providerUserId
+          contact_id: to
         });
       }
+      return; // No insertar si ya existe
+    }
+    
+    console.log('💾 Guardando mensaje en BD:', {
+      content,
+      message_type: 'sent',
+      contact_id: to,
+      user_id: targetUserId,
+      message_sid: messageSid
+    });
+
+    const { error: saveError } = await supabase
+      .from('whatsapp_messages')
+      .insert([{
+        content,
+        message_type: 'sent',
+        status: 'sent',
+        contact_id: to,
+        user_id: targetUserId,
+        message_sid: messageSid,
+        timestamp: new Date().toISOString(),
+        created_at: new Date().toISOString()
+      }]);
+
+    if (saveError) {
+      console.error('❌ Error guardando mensaje enviado:', saveError);
+    } else {
+      console.log('✅ Mensaje enviado guardado en la base de datos:', {
+        messageSid,
+        to,
+        content,
+        userId: targetUserId
+      });
     }
   } catch (dbError) {
     console.error('❌ Error en operación de base de datos:', dbError);

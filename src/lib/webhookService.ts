@@ -1,6 +1,7 @@
 import { metaWhatsAppService } from './metaWhatsAppService';
-import { OrderNotificationService } from './orderNotificationService';
+import { NotificationService } from './notificationService';
 import { templateStateService } from './templateStateService';
+import { PhoneNumberService } from './phoneNumberService';
 
 // Tipos para los eventos de webhook
 interface WebhookEvent {
@@ -261,8 +262,8 @@ export class WebhookService {
         processedMessageIds.add(message.id);
 
         // Validar y normalizar el número de teléfono
-        const normalizedFrom = this.normalizePhoneNumber(message.from);
-        if (!this.isValidPhoneNumber(normalizedFrom)) {
+        const normalizedFrom = PhoneNumberService.normalizePhoneNumber(message.from);
+        if (!PhoneNumberService.isValidArgentinePhone(normalizedFrom || '')) {
           console.error('❌ Formato de teléfono inválido en webhook:', normalizedFrom);
           continue;
         }
@@ -424,25 +425,44 @@ export class WebhookService {
     try {
       console.log(`🔍 Verificando si es respuesta de proveedor: ${phoneNumber}`);
       
-      const pendingOrder = await OrderNotificationService.checkPendingOrder(phoneNumber);
+      const notificationService = NotificationService.getInstance();
       
-      if (pendingOrder?.orderData) {
+      // 🔧 MEJORA: Verificar tanto órdenes pendientes como órdenes enviadas
+      const pendingOrder = await notificationService.checkPendingOrder(phoneNumber);
+      const sentOrder = await notificationService.checkSentOrder(phoneNumber);
+      
+      if (pendingOrder?.order_data) {
         console.log(`📝 Encontrado pedido pendiente para ${phoneNumber}:`, {
-          orderId: pendingOrder.orderId,
-          providerId: pendingOrder.providerId,
+          orderId: pendingOrder.order_id,
+          providerId: pendingOrder.provider_id,
           status: pendingOrder.status
         });
         
         console.log(`📝 Procesando respuesta del proveedor para: ${phoneNumber}`);
-        const result = await OrderNotificationService.processProviderResponse(phoneNumber, messageContent);
+        const result = await notificationService.processProviderResponse(phoneNumber, messageContent);
         
         if (result) {
           console.log(`✅ Respuesta del proveedor procesada exitosamente para: ${phoneNumber}`);
         } else {
           console.error(`❌ Error procesando respuesta del proveedor para: ${phoneNumber}`);
         }
+      } else if (sentOrder) {
+        console.log(`🔧 DEBUG: Encontrada orden enviada para ${phoneNumber}:`, {
+          orderId: sentOrder.id,
+          status: sentOrder.status
+        });
+        
+        // 🔧 NUEVA FUNCIONALIDAD: Procesar respuesta de orden enviada
+        console.log(`📝 Procesando respuesta de orden enviada para: ${phoneNumber}`);
+        const result = await notificationService.processSentOrderResponse(phoneNumber, messageContent, sentOrder);
+        
+        if (result) {
+          console.log(`✅ Respuesta de orden enviada procesada exitosamente para: ${phoneNumber}`);
+        } else {
+          console.error(`❌ Error procesando respuesta de orden enviada para: ${phoneNumber}`);
+        }
       } else {
-        console.log(`ℹ️ No hay pedidos pendientes para: ${phoneNumber}`);
+        console.log(`ℹ️ No hay pedidos pendientes o enviados para: ${phoneNumber}`);
       }
 
     } catch (error) {
@@ -450,23 +470,7 @@ export class WebhookService {
     }
   }
 
-  /**
-   * Normaliza un número de teléfono
-   */
-  private normalizePhoneNumber(phone: string): string {
-    if (!phone.startsWith('+')) {
-      return '+' + phone;
-    }
-    return phone;
-  }
-
-  /**
-   * Valida el formato de un número de teléfono
-   */
-  private isValidPhoneNumber(phone: string): boolean {
-    const phoneRegex = /^\+54\d{9,11}$/;
-    return phoneRegex.test(phone);
-  }
+  // 🔧 OPTIMIZACIÓN: Funciones normalizePhoneNumber e isValidPhoneNumber eliminadas - usa PhoneNumberService
 
   /**
    * Extrae el contenido de un mensaje

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { supabase } from '../lib/supabase/client';
 import { WhatsAppMessage, Contact } from '../types/whatsapp';
@@ -22,6 +22,7 @@ interface ChatContextType {
   isConnected: boolean;
   connectionStatus: 'connected' | 'disconnected' | 'connecting';
   isChatOpen: boolean;
+  isUserAuthenticated: boolean;
   openChat: () => void;
   closeChat: () => void;
   sendMessage: (contactId: string, content: string) => Promise<void>;
@@ -63,12 +64,39 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [userProviderPhones, setUserProviderPhones] = useState<string[]>([]);
   const [lastMessageCount, setLastMessageCount] = useState<number>(0);
+  const [isUserAuthenticated, setIsUserAuthenticated] = useState<boolean>(false);
 
   // Hook de notificaciones push
   const { sendNotification } = usePushNotifications();
   
   // Hook del servicio global de Realtime
   const { addMessageListener, isConnected: realtimeConnected } = useRealtimeService();
+
+  // Verificar estado de autenticación
+  useEffect(() => {
+    const checkAuthStatus = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const authenticated = !!user;
+        setIsUserAuthenticated(authenticated);
+      } catch (error) {
+        console.error('📱 ChatContext: Error verificando autenticación:', error);
+        setIsUserAuthenticated(false);
+      }
+    };
+
+    checkAuthStatus();
+
+    // Escuchar cambios de autenticación
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      const authenticated = !!session?.user;
+      setIsUserAuthenticated(authenticated);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   // Funciones de notificación push
   const sendWhatsAppNotification = useCallback((contactName: string, message: string) => {
@@ -93,6 +121,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (!currentUserId) {
         return;
       }
+      
       
       // Obtener los proveedores del usuario actual
       const { data: userProviders, error: providersError } = await supabase
@@ -126,34 +155,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const data = await response.json();
       
       if (data.messages && Array.isArray(data.messages)) {
-        // 🔧 OPTIMIZACIÓN: Filtrado inteligente y robusto
+
+        // 🔧 MEJORA: Filtrado simplificado y más robusto
         const transformedMessages = data.messages
           .filter((msg: any) => {
-                    const contactId = normalizeContactIdentifier(msg.contact_id || msg.from);
-        
-        // Usar normalización más permisiva para comparaciones
-        const normalizedContactId = PhoneNumberService.normalizePhoneNumber(contactId) || contactId;
-        const normalizedProviderPhones = userProviderPhones.map(phone => 
-          PhoneNumberService.normalizePhoneNumber(phone) || phone
-        );
-        
-        // Incluir TODOS los mensajes recibidos
-        if (msg.message_type === 'received') {
-          return true;
-        }
-        
-        // Para mensajes enviados, verificar si son de proveedores registrados
-        const isFromRegisteredProvider = normalizedProviderPhones.includes(normalizedContactId);
-        
-        // Incluir mensajes enviados del proveedor registrado
-        if (msg.message_type === 'sent' && isFromRegisteredProvider) {
-          return true;
-        }
-        
-        // Para otros mensajes enviados, verificar si son argentinos
-        const isArgentineNumber = normalizedContactId.includes('+54');
-        
-        return isArgentineNumber;
+            // Incluir todos los mensajes que ya pasaron el filtro de la API
+            // La API ya filtró por user_id y proveedores del usuario
+            return true;
           })
           .map((msg: any) => {
             // 🔧 OPTIMIZACIÓN: Mapeo simplificado y consistente
@@ -199,7 +207,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           if (lastMessageCount !== currentCount && currentCount % 5 === 0) { // Solo cada 5 mensajes
             const receivedMessages = transformedMessages.filter((m: any) => m.type === 'received');
             const sentMessages = transformedMessages.filter((m: any) => m.type === 'sent');
-            console.log(`📱 Chat: ${transformedMessages.length} mensajes totales (${receivedMessages.length} recibidos, ${sentMessages.length} enviados)`);
             setLastMessageCount(currentCount);
           }
         }
@@ -254,6 +261,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       Notification.requestPermission();
     }
 
+
     // 🔧 OPTIMIZACIÓN: Listeners con debounce
     const handleOrderSent = () => {
       if (isMounted) {
@@ -277,8 +285,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     };
   }, []); // ✅ DEPENDENCIAS VACÍAS - Solo ejecutar una vez al montar
 
-  // CONFIGURAR LISTENER DE MENSAJES REALTIME
+  // 🔧 SOLUCIÓN UNIFICADA: Listener de mensajes realtime optimizado
+  // Usar useRef para mantener referencia estable del listener
+  const realtimeListenerRef = useRef<(() => void) | null>(null);
+  
   useEffect(() => {
+    // Si ya hay un listener configurado, limpiarlo
+    if (realtimeListenerRef.current) {
+      realtimeListenerRef.current();
+      realtimeListenerRef.current = null;
+    }
+
+    // Crear nuevo listener estable
     const removeListener = addMessageListener((realtimeMessage) => {
       // Convertir mensaje del servicio global al formato del chat
       const chatMessage: ChatWhatsAppMessage = {
@@ -291,36 +309,48 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       };
 
       setMessages(prev => {
-        // Verificar duplicados por ID exacto
-        const messageExists = prev.some(msg => msg.id === chatMessage.id);
+        // Verificar duplicados por ID exacto - verificación más estricta
+        const messageExists = prev.some(msg => 
+          msg.id === chatMessage.id && 
+          msg.contact_id === chatMessage.contact_id
+        );
         
         if (messageExists) {
           return prev;
         }
         
+        // Verificar duplicados por contenido y contacto en los últimos 30 segundos
+        const recentDuplicate = prev.find(msg => 
+          msg.content === chatMessage.content &&
+          msg.contact_id === chatMessage.contact_id &&
+          msg.type === 'sent' &&
+          Math.abs(new Date(msg.timestamp).getTime() - new Date(chatMessage.timestamp).getTime()) < 30000
+        );
+        
+        if (recentDuplicate) {
+          return prev;
+        }
+        
         // Para mensajes enviados, buscar si hay un mensaje temporal que debe ser reemplazado
         if (chatMessage.type === 'sent') {
-          // Buscar mensaje temporal con criterios más flexibles
           const tempMessageIndex = prev.findIndex(msg => {
-            // Debe ser un mensaje temporal
             if (!msg.id.startsWith('temp_')) return false;
-            
-            // Debe tener el mismo contenido
             if (msg.content !== chatMessage.content) return false;
             
-            // Debe ser del mismo contacto
-            if (msg.contact_id !== chatMessage.contact_id) return false;
+            // Comparar contactos normalizados
+            const normalizedTempContact = normalizeContactIdentifier(msg.contact_id);
+            const normalizedRealContact = normalizeContactIdentifier(chatMessage.contact_id);
+            if (normalizedTempContact !== normalizedRealContact) return false;
             
-            // Debe estar dentro de una ventana de tiempo más amplia (30 segundos)
+            // Verificar ventana de tiempo
             const tempTime = new Date(msg.timestamp).getTime();
             const realTime = new Date(chatMessage.timestamp).getTime();
             const timeDiff = Math.abs(tempTime - realTime);
             
-            return timeDiff < 30000; // 30 segundos
+            return timeDiff < 60000; // 60 segundos
           });
           
           if (tempMessageIndex !== -1) {
-            // Reemplazar mensaje temporal con el real
             const updatedMessages = [...prev];
             updatedMessages[tempMessageIndex] = {
               ...chatMessage,
@@ -331,14 +361,21 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           }
         }
         
-        // Agregar el nuevo mensaje
-        const updatedMessages = [...prev, chatMessage];
-        return updatedMessages;
+        // Agregar el nuevo mensaje sin duplicados
+        return [...prev, chatMessage];
       });
     });
 
-    return removeListener;
-  }, [addMessageListener]);
+    // Almacenar referencia para cleanup
+    realtimeListenerRef.current = removeListener;
+
+    return () => {
+      if (realtimeListenerRef.current) {
+        realtimeListenerRef.current();
+        realtimeListenerRef.current = null;
+      }
+    };
+  }, [addMessageListener]); // ✅ DEPENDENCIA CORRECTA: Solo cambia cuando cambia el servicio
 
   // SIMULAR CONEXIÓN EXITOSA - REALTIME FUNCIONA
   useEffect(() => {
@@ -399,7 +436,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         // Solo marcar como enviado si hay error en Realtime
         setTimeout(() => {
           setMessages(prev => {
-            // Si después de 5 segundos el mensaje temporal sigue ahí, marcarlo como enviado
+            // Si después de 10 segundos el mensaje temporal sigue ahí, marcarlo como enviado
             const tempMessageStillExists = prev.some(msg => msg.id === tempId);
             if (tempMessageStillExists) {
               return prev.map(msg => 
@@ -410,7 +447,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             }
             return prev;
           });
-        }, 5000);
+        }, 10000); // Aumentar a 10 segundos para dar más tiempo
       } else {
         console.error('❌ Error enviando mensaje:', result.error);
         // Marcar como fallido si hay error
@@ -652,6 +689,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       isConnected,
       connectionStatus,
       isChatOpen,
+      isUserAuthenticated,
       openChat,
       closeChat,
       sendMessage,
@@ -671,6 +709,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     isConnected,
     connectionStatus,
     isChatOpen,
+    isUserAuthenticated,
     openChat,
     closeChat,
     sendMessage,

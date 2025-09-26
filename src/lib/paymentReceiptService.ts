@@ -270,6 +270,21 @@ export class PaymentReceiptService {
           console.error('❌ [PaymentReceiptService] Error actualizando orden a pagado:', orderUpdateError);
         } else {
           console.log('✅ [PaymentReceiptService] Orden actualizada a "pagado" exitosamente');
+          
+          // 📱 ENVIAR COMPROBANTE AUTOMÁTICAMENTE cuando se asigna
+          if (bestProviderMatch) {
+            console.log('📱 [PaymentReceiptService] Enviando comprobante automáticamente...');
+            try {
+              const sendResult = await this.sendReceiptToProvider(receiptId, bestProviderMatch.provider_id);
+              if (sendResult.success) {
+                console.log('✅ [PaymentReceiptService] Comprobante enviado automáticamente con éxito');
+              } else {
+                console.error('❌ [PaymentReceiptService] Error enviando comprobante automáticamente:', sendResult.error);
+              }
+            } catch (sendError) {
+              console.error('❌ [PaymentReceiptService] Error en envío automático:', sendError);
+            }
+          }
         }
       } else {
         console.log('⚠️ [PaymentReceiptService] No se encontró orden para asignar');

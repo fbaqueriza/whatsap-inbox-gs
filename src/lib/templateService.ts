@@ -36,23 +36,23 @@ export class TemplateService {
   /**
    * Obtiene el contenido de un template específico
    */
-  static async getTemplateContent(templateName: string, params?: any[]) {
+  static async getTemplateContent(templateName: string, params?: any[] | Record<string, string>) {
     try {
       // Por ahora, siempre usar el sistema de fallback ya que getTemplates() retorna array vacío
-      console.log(`ℹ️ Usando fallback para template: ${templateName}`);
-      return this.getFallbackTemplateContent(templateName);
+      console.log(`ℹ️ Usando fallback para template: ${templateName}`, params ? 'con parámetros' : 'sin parámetros');
+      return this.getFallbackTemplateContent(templateName, params);
       
     } catch (error) {
       console.error('❌ Error obteniendo contenido del template:', error);
-      return this.getFallbackTemplateContent(templateName);
+      return this.getFallbackTemplateContent(templateName, params);
     }
   }
 
   /**
    * Obtiene contenido de fallback para templates
-   * VERSIÓN MEJORADA: Contenido más detallado y útil
+   * VERSIÓN MEJORADA: Contenido más detallado y útil con variables dinámicas
    */
-  static getFallbackTemplateContent(templateName: string): string {
+  static getFallbackTemplateContent(templateName: string, params?: any[] | Record<string, string>): string {
     const fallbackTemplates: { [key: string]: string } = {
       'envio_de_orden': `🛒 *NUEVO PEDIDO*
 
@@ -71,22 +71,7 @@ Se ha recibido un nuevo pedido para procesar.
 
 _Por favor confirma la recepción de este pedido y proporciona los detalles solicitados._`,
       'inicializador_de_conv': '👋 ¡Hola! Iniciando conversación para coordinar pedidos.',
-      'evio_orden': `🛒 *NUEVA ORDEN*
-
-Se ha recibido una nueva orden para procesar. 
-
-*Detalles de la orden:*
-• Fecha: ${new Date().toLocaleDateString('es-AR')}
-• Estado: Pendiente de confirmación
-• Tipo: Orden automática
-
-*Acciones requeridas:*
-1. Revisar los productos solicitados
-2. Confirmar disponibilidad
-3. Proporcionar precio final
-4. Confirmar fecha de entrega
-
-_Por favor confirma la recepción de esta orden y proporciona los detalles solicitados._`,
+      'evio_orden': this.getEvioOrdenTemplate(params),
       'notificacion_pedido': '📋 Notificación de nuevo pedido recibido.',
       'confirmacion_pedido': '✅ Pedido confirmado y en proceso.',
       'recordatorio_pedido': '⏰ Recordatorio: Pedido pendiente de confirmación.',
@@ -122,5 +107,53 @@ _Por favor confirma la recepción de esta orden y proporciona los detalles solic
       console.error('❌ Error obteniendo información del template:', error);
       return null;
     }
+  }
+
+  /**
+   * Genera el contenido del template evio_orden con variables dinámicas
+   */
+  private static getEvioOrdenTemplate(params?: any[] | Record<string, string>): string {
+    // Extraer variables del parámetro
+    let providerName = 'Proveedor';
+    let orderNumber = 'N/A';
+    let items = 'Productos solicitados';
+    let total = 'Pendiente';
+
+    if (params) {
+      if (Array.isArray(params)) {
+        // Si es un array, asumir orden: [providerName, orderNumber, items, total]
+        providerName = params[0] || providerName;
+        orderNumber = params[1] || orderNumber;
+        items = params[2] || items;
+        total = params[3] || total;
+      } else if (typeof params === 'object') {
+        // Si es un objeto, extraer por keys
+        providerName = params.provider_name || params.providerName || providerName;
+        orderNumber = params.order_number || params.orderNumber || orderNumber;
+        items = params.items || items;
+        total = params.total || total;
+      }
+    }
+
+    return `🛒 *NUEVA ORDEN PARA ${providerName.toUpperCase()}*
+
+Se ha recibido una nueva orden para procesar.
+
+*Detalles de la orden:*
+• 🆔 Número: ${orderNumber}
+• 📅 Fecha: ${new Date().toLocaleDateString('es-AR')}
+• 📦 Items: ${items}
+• 💰 Total: ${total}
+• ⏰ Estado: Pendiente de confirmación
+
+*Acciones requeridas:*
+1. Revisar los productos solicitados
+2. Confirmar disponibilidad
+3. Proporcionar precio final
+4. Confirmar fecha de entrega
+
+_Por favor confirma la recepción de esta orden y proporciona los detalles solicitados._
+
+¡Gracias por tu colaboración!`;
   }
 }

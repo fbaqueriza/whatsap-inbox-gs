@@ -651,17 +651,23 @@ export class MetaWhatsAppService {
           console.log('✅ [REAL] Template enviado exitosamente');
         }
 
-        // Guardar mensaje enviado en base de datos
+        // 🔧 OBTENER CONTENIDO REAL DEL TEMPLATE: Para guardar en base de datos
+        const { TemplateService } = await import('./templateService');
+        const templateContent = await TemplateService.getTemplateContent(templateName, variables);
+        
+        // Guardar mensaje enviado en base de datos con contenido real
         await this.saveMessage({
           id: result.messages?.[0]?.id || `msg_${Date.now()}`,
           from: this.config?.phoneNumberId || '123456789',
           to,
-          content: `Template: ${templateName}`,
+          content: templateContent,
           timestamp: new Date(),
           status: 'sent',
           isAutomated: false,
           isSimulated: false,
-          messageType: 'sent'
+          messageType: 'sent',
+          isTemplate: true,
+          templateName: templateName
         });
 
         return result;
@@ -917,17 +923,23 @@ export class MetaWhatsAppService {
           console.log('✅ [REAL] Template con variables enviado exitosamente');
         }
 
-        // Guardar mensaje enviado en base de datos
+        // 🔧 OBTENER CONTENIDO REAL DEL TEMPLATE: Para guardar en base de datos
+        const { TemplateService } = await import('./templateService');
+        const templateContent = await TemplateService.getTemplateContent(templateName, variables);
+        
+        // Guardar mensaje enviado en base de datos con contenido real
         await this.saveMessage({
           id: result.messages?.[0]?.id || `msg_${Date.now()}`,
           from: this.config?.phoneNumberId || '123456789',
           to,
-          content: `Template: ${templateName} con variables`,
+          content: templateContent,
           timestamp: new Date(),
           status: 'sent',
           isAutomated: false,
           isSimulated: false,
-          messageType: 'sent'
+          messageType: 'sent',
+          isTemplate: true,
+          templateName: templateName
         });
 
         return result;

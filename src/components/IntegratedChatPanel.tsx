@@ -271,6 +271,56 @@ export default function IntegratedChatPanel({
     alert(`Contactos disponibles: ${contactosInfo.sortedContacts.length}\nProveedores: ${contactosInfo.providers.length}\nContactos finales: ${contactosInfo.contacts.length}\nRevisa la consola para más detalles.`);
   };
 
+  // 🔧 FUNCIÓN TEMPORAL: Actualizar mensajes de template existentes
+  const actualizarMensajesTemplate = async () => {
+    try {
+      console.log('🔄 Actualizando mensajes de template existentes...');
+      
+      const response = await fetch('/api/whatsapp/update-template-messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const result = await response.json();
+      
+      if (response.ok) {
+        console.log('✅ Resultado de actualización:', result);
+        if ((window as any).showToast) {
+          (window as any).showToast({
+            type: 'success',
+            title: '✅ Mensajes actualizados',
+            message: result.message || `Se actualizaron ${result.updated} mensajes de template`,
+            duration: 5000
+          });
+        }
+        // Recargar la página para mostrar los cambios
+        setTimeout(() => window.location.reload(), 1500);
+      } else {
+        console.error('❌ Error actualizando mensajes:', result);
+        if ((window as any).showToast) {
+          (window as any).showToast({
+            type: 'error',
+            title: '❌ Error actualizando mensajes',
+            message: result.error || 'Error desconocido',
+            duration: 5000
+          });
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error en actualización:', error);
+      if ((window as any).showToast) {
+        (window as any).showToast({
+          type: 'error',
+          title: '❌ Error de conexión',
+          message: 'No se pudieron actualizar los mensajes de template',
+          duration: 5000
+        });
+      }
+    }
+  };
+
   const { isGlobalChatOpen, closeGlobalChat, currentGlobalContact } = useGlobalChat();
 
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -825,6 +875,14 @@ export default function IntegratedChatPanel({
                      </button>
                      <button className="p-2 text-gray-500 hover:text-gray-700 transition-colors">
                        <MoreVertical className="h-4 w-4" />
+                     </button>
+                     {/* 🔧 BOTÓN TEMPORAL: Actualizar mensajes de template */}
+                     <button
+                       onClick={actualizarMensajesTemplate}
+                       className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors ml-2"
+                       title="Actualizar mensajes de template existentes"
+                     >
+                       🔄 Templates
                      </button>
                 </div>
             </div>

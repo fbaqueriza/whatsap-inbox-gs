@@ -32,8 +32,10 @@ export default function DataGrid({
   onDataChange,
   onExport,
   onImport,
+  onDownloadTemplate,
   onAddRow,
   onDeleteRows,
+  onAssignProviders,
   searchable = true,
   selectable = true,
   loading = false,
@@ -353,6 +355,19 @@ export default function DataGrid({
               </button>
             )}
 
+            {onAssignProviders && selectedRows.size > 0 && (
+              <button
+                onClick={() => {
+                  const selectedItems = Array.from(selectedRows).map(id => data.find((row: any) => row.id === id)).filter(Boolean);
+                  onAssignProviders(selectedItems);
+                }}
+                className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                <Clipboard className="h-4 w-4 mr-1" />
+                {'Actualizar Productos'} ({selectedRows.size})
+              </button>
+            )}
+
             {onDeleteRows && selectedRows.size > 0 && (
               <button
                 onClick={handleDeleteSelected}
@@ -418,11 +433,11 @@ export default function DataGrid({
               </button>
             )}
 
-            {/* Botón de descargar plantilla - solo mostrar si hay onImport */}
+            {/* Botón de descargar plantilla - usar función personalizada si está disponible */}
             {onImport && (
               <button
-                onClick={() => {
-                  // Crear contenido de plantilla basado en las columnas
+                onClick={onDownloadTemplate || (() => {
+                  // Fallback: crear contenido de plantilla basado en las columnas
                   const templateHeaders = columns.map(col => col.key).join(',');
                   const templateRow = columns.map(col => {
                     // Valores de ejemplo según el tipo de columna
@@ -446,7 +461,7 @@ export default function DataGrid({
                   a.download = 'template.csv';
                   a.click();
                   window.URL.revokeObjectURL(url);
-                }}
+                })}
                 className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
               >
                 <Download className="h-4 w-4 mr-1" />

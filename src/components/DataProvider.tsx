@@ -143,12 +143,13 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
     setLoading(true);
     try {
       // 🔧 NUEVO: Usar endpoints de API del servidor para evitar problemas de RLS
-      const [providersResponse, stockResponse] = await Promise.all([
+      const [providersResponse, stockResponse, ordersResponse] = await Promise.all([
         fetch(`/api/data/providers?user_id=${currentUserId}`),
         supabase.from('stock').select(`
           *,
           associated_providers
         `).eq('user_id', currentUserId).order('preferred_provider', { ascending: true }).order('created_at', { ascending: false }),
+        supabase.from('orders').select('*').eq('user_id', currentUserId).order('created_at', { ascending: false })
       ]);
 
       // Procesar proveedores desde la API
@@ -176,6 +177,16 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
           : []
       }));
       setStockItems(validatedStockItems);
+
+      // Procesar órdenes
+      const { data: ordersData, error: ordersError } = ordersResponse;
+      if (ordersError) {
+        console.error('❌ Error fetching orders:', ordersError);
+        setOrders([]);
+      } else {
+        const validatedOrders = (ordersData || []).map(mapOrderFromDb);
+        setOrders(validatedOrders);
+      }
       
     } catch (error) {
       console.error('❌ Error in fetchAll:', error);

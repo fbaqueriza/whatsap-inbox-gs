@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import SpreadsheetGrid from '../../components/DataGrid';
 import { StockItem } from '../../types';
@@ -61,6 +61,15 @@ function StockPage({ user }: StockPageProps) {
     type: 'frequency' | 'preferred' | 'associated';
     rowData: any;
     currentValue: any;
+  } | null>(null);
+
+  const [bulkUpdateModal, setBulkUpdateModal] = useState<{
+    isOpen: boolean;
+    selectedItems: any[];
+    preferredProvider: string;
+    associatedProviders: string[];
+    restockFrequency: string;
+    category: string;
   } | null>(null);
   
   // Chat state
@@ -193,8 +202,38 @@ function StockPage({ user }: StockPageProps) {
         );
       },
     },
-    { key: 'lastOrdered', name: 'Última orden', width: 150, editable: false },
-    { key: 'nextOrder', name: 'Próxima orden', width: 150, editable: false },
+    { 
+      key: 'lastOrdered', 
+      name: 'Última orden', 
+      width: 150, 
+      editable: false,
+      render: (value: any) => {
+        if (!value) return '';
+        const date = new Date(value);
+        if (isNaN(date.getTime())) return '';
+        return date.toLocaleDateString('es-ES', { 
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit' 
+        });
+      }
+    },
+    { 
+      key: 'nextOrder', 
+      name: 'Próxima orden', 
+      width: 150, 
+      editable: false,
+      render: (value: any) => {
+        if (!value) return '';
+        const date = new Date(value);
+        if (isNaN(date.getTime())) return '';
+        return date.toLocaleDateString('es-ES', { 
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit' 
+        });
+      }
+    },
   ];
 
   const allowedRestockFrequencies = [
@@ -318,18 +357,87 @@ function StockPage({ user }: StockPageProps) {
     [deleteStockItem, user]
   );
 
+  const handleBulkUpdate = useCallback(
+    async (
+      selectedItems: any[], 
+      preferredProvider: string, 
+      associatedProviders: string[],
+      restockFrequency: string,
+      category: string
+    ) => {
+      if (!selectedItems || selectedItems.length === 0) return;
+      setLoading(true);
+      try {
+        console.log('📝 Actualizando', selectedItems.length, 'items');
+        
+        // Actualizar cada item seleccionado
+        for (const item of selectedItems) {
+          const updatedItem = {
+            ...item,
+            ...(preferredProvider === 'none' && { preferredProvider: '' }),
+            ...(preferredProvider !== '' && preferredProvider !== 'none' && { preferredProvider }),
+            ...(associatedProviders.length > 0 && { associatedProviders }),
+            ...(restockFrequency !== '' && { restockFrequency }),
+            ...(category !== '' && { category }),
+            updatedAt: new Date(),
+          };
+          await updateStockItem(updatedItem);
+        }
+        
+        const changes = [];
+        if (preferredProvider === 'none') changes.push('proveedor preferido (sin preferido)');
+        else if (preferredProvider !== '') changes.push('proveedor preferido');
+        if (associatedProviders.length > 0) changes.push('proveedores asociados');
+        if (restockFrequency !== '') changes.push('frecuencia de reposición');
+        if (category !== '') changes.push('categoría');
+        
+        setImportMessage(`✅ ¡${changes.join(', ')} actualizados exitosamente en ${selectedItems.length} productos!`);
+        
+        // Actualizar los datos después de la asignación
+        setTimeout(() => {
+          fetchAll();
+        }, 500);
+        
+      } catch (err) {
+        console.error('Error updating items:', selectedItems, err);
+        setImportMessage(`❌ Error al actualizar productos: ${err}`);
+      }
+      setLoading(false);
+    },
+    [updateStockItem, user, fetchAll]
+  );
+
   const handleExport = useCallback(() => {
     const headers = [
       'Producto',
       'Categoría',
       'Cantidad',
       'Unidad',
-      'Frecuencia de reposición',
-      'Proveedores asociados',
-      'Proveedor preferido',
-      'Última orden',
-      'Próxima orden',
+      'Frecuencia de Reposición',
+      'Proveedores Asociados',
+      'Proveedor Preferido',
+      'Última Orden',
+      'Próxima Orden',
     ];
+    
+    // Función para convertir frecuencia al español
+    const frequencyToSpanish = (freq: string) => {
+      const freqMap: Record<string, string> = {
+        'daily': 'Diario',
+        'weekly': 'Semanal',
+        'monthly': 'Mensual',
+        'custom': 'Personalizado',
+      };
+      return freqMap[freq] || freq;
+    };
+    
+    // Función para convertir ID de proveedor a nombre
+    const getProviderName = (providerId: string) => {
+      if (!providerId) return '';
+      const provider = providers?.find((p: any) => p.id === providerId);
+      return provider ? provider.name : providerId;
+    };
+    
     const csvContent = [
       headers.join(','),
       ...stockItems.map((item) =>
@@ -338,12 +446,22 @@ function StockPage({ user }: StockPageProps) {
           item.category ?? '',
           item.quantity ?? '',
           item.unit ?? '',
-          item.restockFrequency ?? '',
-          (item.associatedProviders ?? []).join(';'),
-          item.preferredProvider ?? '',
-          item.lastOrdered ? new Date(item.lastOrdered).toLocaleDateString() : '',
-          item.nextOrder ? new Date(item.nextOrder).toLocaleDateString() : '',
-        ].map(v => `"${String(v).replace(/"/g, '""')}` ).join(',')
+          frequencyToSpanish(item.restockFrequency ?? ''),
+          (item.associatedProviders ?? [])
+            .map(getProviderName)
+            .filter(Boolean)
+            .join(';'),
+          getProviderName(item.preferredProvider ?? ''),
+          item.lastOrdered ? new Date(item.lastOrdered).toISOString().split('T')[0] : '',
+          item.nextOrder ? new Date(item.nextOrder).toISOString().split('T')[0] : '',
+        ].map(v => {
+          const stringValue = String(v ?? '');
+          // Si contiene comas, comillas, saltos de línea o espacios, encerrar en comillas
+          if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n') || stringValue.includes(' ')) {
+            return `"${stringValue.replace(/"/g, '""')}"`;
+          }
+          return stringValue;
+        }).join(',')
       ),
     ].join('\n');
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -353,17 +471,69 @@ function StockPage({ user }: StockPageProps) {
     a.download = 'stock.csv';
     a.click();
     window.URL.revokeObjectURL(url);
-  }, [stockItems]);
+  }, [stockItems, providers]);
 
   const handleDownloadTemplate = useCallback(() => {
-    const templateContent = `productName,category,quantity,unit,restockFrequency,associatedProviders,preferredProvider,lastOrdered,nextOrder
-Harina de trigo,Harinas,50,kg,weekly,Proveedor A;Proveedor B,Proveedor A,2025-07-20,2025-07-27
-Aceite de oliva,Aceites,20,lt,monthly,Proveedor C,Proveedor C,2025-07-15,2025-08-15
-Sal fina,Especias,100,kg,daily,Proveedor A,Proveedor A,2025-07-25,2025-07-26
-Azúcar blanca,Endulzantes,75,kg,weekly,Proveedor B,Proveedor B,2025-07-18,2025-07-25
-Huevos,Proteínas,200,unidades,daily,Proveedor D,Proveedor D,2025-07-25,2025-07-26`;
+    const headers = [
+      'Producto',
+      'Categoría',
+      'Cantidad',
+      'Unidad',
+      'Frecuencia de Reposición',
+      'Proveedores Asociados',
+      'Proveedor Preferido',
+      'Última Orden',
+      'Próxima Orden'
+    ];
     
-    const blob = new Blob([templateContent], { type: 'text/csv;charset=utf-8;' });
+    const exampleRow = [
+      'Harina de trigo',
+      'Harinas',
+      '50',
+      'kg',
+      'Semanal',
+      'Proveedor A;Proveedor B',
+      'Proveedor A',
+      '2025-01-20',
+      '2025-01-27'
+    ];
+    
+    // Función para escapar valores CSV
+    const escapeCSV = (value: string) => {
+      const stringValue = String(value);
+      // Si contiene comas, comillas, saltos de línea, encerrar en comillas y escapar comillas internas
+      if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n') || stringValue.includes(':')) {
+        return `"${stringValue.replace(/"/g, '""')}"`;
+      }
+      return stringValue;
+    };
+    
+    const csvLines = [
+      headers.map(escapeCSV).join(','),
+      exampleRow.map(escapeCSV).join(','),
+      '', // Línea vacía
+      '"INSTRUCCIONES:"',
+      '"Producto: Nombre del producto (OBLIGATORIO)"',
+      '"Categoría: Categoría del producto (OBLIGATORIO)"',
+      '"Cantidad: Cantidad en stock (OBLIGATORIO, número)"',
+      '"Unidad: Unidad de medida (ej: kg, lt, unidades)"',
+      '"Frecuencia de Reposición: Diario, Semanal, Mensual, Personalizado"',
+      '"Proveedores Asociados: Nombres de proveedores separados por ;"',
+      '"Proveedor Preferido: Nombre del proveedor preferido"',
+      '"Última Orden: Fecha de última orden (YYYY-MM-DD)"',
+      '"Próxima Orden: Fecha de próxima orden (YYYY-MM-DD)"',
+      '',
+      '"EJEMPLO DE USO:"',
+      '"Agrega tus productos debajo de la fila de ejemplo, una fila por producto."',
+      '"Los proveedores deben existir en tu sistema para que se asignen correctamente."',
+      '"Las fechas deben estar en formato YYYY-MM-DD (año-mes-día)."'
+    ];
+    
+    const templateContent = csvLines.join('\n');
+    
+    // Crear el blob con BOM para UTF-8
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + templateContent], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -398,36 +568,49 @@ Huevos,Proteínas,200,unidades,daily,Proveedor D,Proveedor D,2025-07-25,2025-07-
         .replace(/\s+/g, '')
         .replace(/[^a-z0-9]/g, '');
       const headerMap: Record<string, string> = {
+        // Producto
         'producto': 'productName',
         'productname': 'productName',
         'product_name': 'productName',
+        // Categoría
         'categoria': 'category',
         'categoría': 'category',
         'category': 'category',
+        // Cantidad
         'cantidad': 'quantity',
         'quantity': 'quantity',
+        // Unidad
         'unidad': 'unit',
         'unit': 'unit',
+        // Frecuencia de Reposición
         'frecuenciadereposicion': 'restockFrequency',
         'frecuenciadereposición': 'restockFrequency',
+        'frecuenciadereposicion': 'restockFrequency',
         'restockfrequency': 'restockFrequency',
         'restock_frequency': 'restockFrequency',
         'frecuencia': 'restockFrequency',
         'frecuenciaderepocicion': 'restockFrequency',
         'frecuenciareposicion': 'restockFrequency',
+        // Proveedores Asociados
         'proveedoresasociados': 'associatedProviders',
         'associatedproviders': 'associatedProviders',
         'associated_providers': 'associatedProviders',
+        // Proveedor Preferido
         'proveedorpreferido': 'preferredProvider',
         'proveedorpreferído': 'preferredProvider',
         'preferredprovider': 'preferredProvider',
         'preferred_provider': 'preferredProvider',
+        // Última Orden
         'ultimaorden': 'lastOrdered',
         'últimaorden': 'lastOrdered',
         'lastordered': 'lastOrdered',
+        'last_order': 'lastOrdered',
+        // Próxima Orden
         'proximaorden': 'nextOrder',
         'próximaorden': 'nextOrder',
         'nextorder': 'nextOrder',
+        'next_order': 'nextOrder',
+        // Otros
         'createdat': 'createdAt',
         'created_at': 'createdAt',
         'updatedat': 'updatedAt',
@@ -439,7 +622,7 @@ Huevos,Proteínas,200,unidades,daily,Proveedor D,Proveedor D,2025-07-25,2025-07-
       const required = ['productName', 'category', 'quantity', 'unit', 'restockFrequency'];
       const missing = required.filter(r => !headers.includes(r));
       if (missing.length > 0) {
-        setImportMessage(`Faltan columnas requeridas: ${missing.join(', ')}. El archivo debe contener las columnas: productName, category, quantity, unit, restockFrequency. Puedes descargar la plantilla desde el botón "Descargar plantilla" para ver el formato correcto.`);
+        setImportMessage(`Faltan columnas requeridas: ${missing.join(', ')}. El archivo debe contener las columnas: Producto, Categoría, Cantidad, Unidad, Frecuencia de Reposición. Puedes descargar la plantilla desde el botón "Descargar plantilla" para ver el formato correcto.`);
         return;
       }
       const importedStock = lines.slice(1).map(line => {
@@ -453,7 +636,15 @@ Huevos,Proteínas,200,unidades,daily,Proveedor D,Proveedor D,2025-07-25,2025-07-
         }
         const providerNameToId = (name: string) => {
           if (!name) return '';
-          const prov = providers?.find((p: any) => p.name?.toLowerCase().trim() === name.toLowerCase().trim());
+          // Buscar por nombre exacto primero
+          let prov = providers?.find((p: any) => p.name?.toLowerCase().trim() === name.toLowerCase().trim());
+          // Si no encuentra, buscar por coincidencia parcial
+          if (!prov) {
+            prov = providers?.find((p: any) => 
+              p.name?.toLowerCase().includes(name.toLowerCase().trim()) || 
+              name.toLowerCase().trim().includes(p.name?.toLowerCase())
+            );
+          }
           return prov ? prov.id : name;
         };
         associatedProviders = associatedProviders.map(providerNameToId);
@@ -464,14 +655,22 @@ Huevos,Proteínas,200,unidades,daily,Proveedor D,Proveedor D,2025-07-25,2025-07-
         const quantity = row.quantity && !isNaN(Number(row.quantity)) ? Number(row.quantity) : 0;
         const freqMap: Record<string, string> = {
           'diario': 'daily',
+          'Diario': 'daily',
+          'daily': 'daily',
           'semanal': 'weekly',
+          'Semanal': 'weekly',
+          'weekly': 'weekly',
           'mensual': 'monthly',
+          'Mensual': 'monthly',
+          'monthly': 'monthly',
           'personalizado': 'custom',
+          'Personalizado': 'custom',
+          'custom': 'custom',
         };
-        let restockFrequency = row.restockFrequency?.toLowerCase();
-        restockFrequency = freqMap[restockFrequency] || restockFrequency;
+        let restockFrequency = row.restockFrequency?.trim();
+        restockFrequency = freqMap[restockFrequency] || freqMap[restockFrequency?.toLowerCase()] || restockFrequency;
         const allowedFrequencies = ['daily','weekly','monthly','custom'];
-        const finalRestockFrequency = allowedFrequencies.includes(restockFrequency) ? restockFrequency : '';
+        const finalRestockFrequency = allowedFrequencies.includes(restockFrequency) ? restockFrequency : 'weekly';
         return {
           productName: row.productName || '',
           category: row.category || '',
@@ -490,13 +689,37 @@ Huevos,Proteínas,200,unidades,daily,Proveedor D,Proveedor D,2025-07-25,2025-07-
       setLoading(true);
       let successCount = 0;
       let errorCount = 0;
+      const errors: string[] = [];
+      
       try {
         if (importedStock.length > 0) {
-          await addStockItem(importedStock, user.id, true); // batch insert
-          successCount = importedStock.length;
+          console.log('📦 Importando stock:', importedStock.length, 'productos');
+          
+          // Validar datos antes de insertar
+          const validItems = importedStock.filter((item, index) => {
+            if (!item.productName || item.productName.trim() === '') {
+              errors.push(`Fila ${index + 2}: Falta nombre del producto`);
+              return false;
+            }
+            if (!item.category || item.category.trim() === '') {
+              errors.push(`Fila ${index + 2}: Falta categoría para "${item.productName}"`);
+              return false;
+            }
+            if (isNaN(item.quantity) || item.quantity < 0) {
+              errors.push(`Fila ${index + 2}: Cantidad inválida para "${item.productName}"`);
+              return false;
+            }
+            return true;
+          });
+          
+          if (validItems.length > 0) {
+            await addStockItem(validItems, user.id, true); // batch insert
+            successCount = validItems.length;
+          }
+          
+          errorCount = importedStock.length - validItems.length;
         }
       } catch (err: any) {
-        errorCount = importedStock.length;
         console.error('Error importing stock batch:', err);
         let errorMsg = 'Error desconocido';
         if (err && (err.message || err.details)) {
@@ -506,22 +729,32 @@ Huevos,Proteínas,200,unidades,daily,Proveedor D,Proveedor D,2025-07-25,2025-07-
         } else if (err && err.toString) {
           errorMsg = err.toString();
         }
-        console.error('Error importing stock batch:', errorMsg);
-        setImportMessage(`Error al importar productos. Detalle: ${errorMsg}`);
+        errors.push(`Error general: ${errorMsg}`);
+        errorCount = importedStock.length;
       }
+      
       setLoading(false);
+      
       if (errorCount === 0) {
-        setImportMessage(`¡Importación exitosa! Se importaron ${successCount} productos de stock.`);
+        setImportMessage(`✅ ¡Importación exitosa! Se importaron ${successCount} productos de stock.`);
         // Actualizar los datos después de la importación exitosa
         setTimeout(() => {
           fetchAll();
         }, 500);
+      } else if (successCount > 0) {
+        setImportMessage(`⚠️ Importación parcial: ${successCount} éxitos, ${errorCount} errores. ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? '...' : ''}`);
       } else {
-        setImportMessage(`Importación completada con ${successCount} éxitos y ${errorCount} errores. Revisa la consola para detalles.`);
+        setImportMessage(`❌ Error en la importación: ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? '...' : ''}`);
       }
     };
     reader.readAsText(file);
   }, [addStockItem, providers, user, fetchAll]);
+
+  // Get unique categories from stock items
+  const uniqueCategories = useMemo(() => {
+    const categories = stockItems.map(item => item.category).filter(Boolean);
+    return Array.from(new Set(categories)).sort();
+  }, [stockItems]);
 
   // Remove lowStockItems and quick stats that depend on removed columns
 
@@ -647,14 +880,37 @@ Huevos,Proteínas,200,unidades,daily,Proveedor D,Proveedor D,2025-07-25,2025-07-
                 completa tus datos y luego "Importar" para cargarlos de manera masiva.
               </p>
             </div>
+            
+            {importMessage && (
+              <div className={`mb-4 p-3 rounded-md border ${
+                importMessage.includes('✅') 
+                  ? 'bg-green-50 border-green-200 text-green-800'
+                  : importMessage.includes('⚠️')
+                  ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                  : 'bg-red-50 border-red-200 text-red-800'
+              }`}>
+                <p className="text-sm">{importMessage}</p>
+              </div>
+            )}
             <SpreadsheetGrid
               columns={columns}
               data={stockItems}
               onDataChange={handleDataChange}
               onExport={handleExport}
               onImport={handleImport}
+              onDownloadTemplate={handleDownloadTemplate}
               onAddRow={handleAddRow}
               onDeleteRows={handleDeleteRows}
+              onAssignProviders={(selectedItems) => {
+                setBulkUpdateModal({
+                  isOpen: true,
+                  selectedItems,
+                  preferredProvider: '',
+                  associatedProviders: [],
+                  restockFrequency: '',
+                  category: '',
+                });
+              }}
               loading={loading}
             />
           </div>
@@ -763,6 +1019,162 @@ Huevos,Proteínas,200,unidades,daily,Proveedor D,Proveedor D,2025-07-25,2025-07-
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Actualización Masiva */}
+      {bulkUpdateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-96 max-w-md max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">
+              Actualizar {bulkUpdateModal.selectedItems.length} Productos
+            </h3>
+            
+            <div className="space-y-4">
+              <div className="bg-yellow-50 p-3 rounded-md">
+                <p className="text-sm text-yellow-800">
+                  <strong>💡 Tip:</strong> Deja los campos vacíos para mantener los valores actuales
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Categoría
+                </label>
+                <select
+                  value={bulkUpdateModal.category}
+                  onChange={(e) => {
+                    setBulkUpdateModal(prev => prev ? {
+                      ...prev,
+                      category: e.target.value
+                    } : null);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Mantener categoría actual</option>
+                  {uniqueCategories.map((category: string) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Frecuencia de Reposición
+                </label>
+                <select
+                  value={bulkUpdateModal.restockFrequency}
+                  onChange={(e) => {
+                    setBulkUpdateModal(prev => prev ? {
+                      ...prev,
+                      restockFrequency: e.target.value
+                    } : null);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Mantener frecuencia actual</option>
+                  <option value="daily">Diario</option>
+                  <option value="weekly">Semanal</option>
+                  <option value="monthly">Mensual</option>
+                  <option value="custom">Personalizado</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Proveedor Preferido
+                </label>
+                <select
+                  value={bulkUpdateModal.preferredProvider}
+                  onChange={(e) => {
+                    setBulkUpdateModal(prev => prev ? {
+                      ...prev,
+                      preferredProvider: e.target.value
+                    } : null);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Mantener proveedor actual</option>
+                  <option value="none">Sin preferido</option>
+                  {providers.map((provider: any) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Proveedores Asociados
+                </label>
+                <select
+                  multiple
+                  value={bulkUpdateModal.associatedProviders}
+                  onChange={(e) => {
+                    const selectedOptions = Array.from(e.target.selectedOptions, option => option.value);
+                    setBulkUpdateModal(prev => prev ? {
+                      ...prev,
+                      associatedProviders: selectedOptions
+                    } : null);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  size={Math.min(providers.length, 6)}
+                >
+                  {providers.map((provider: any) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Mantén Ctrl (Cmd en Mac) para seleccionar múltiples. Vacío = mantener actual
+                </p>
+              </div>
+
+              <div className="bg-blue-50 p-3 rounded-md">
+                <p className="text-sm text-blue-800">
+                  <strong>Productos seleccionados:</strong>
+                </p>
+                <ul className="text-sm text-blue-700 mt-1">
+                  {bulkUpdateModal.selectedItems.slice(0, 3).map((item: any) => (
+                    <li key={item.id}>• {item.productName}</li>
+                  ))}
+                  {bulkUpdateModal.selectedItems.length > 3 && (
+                    <li>• y {bulkUpdateModal.selectedItems.length - 3} más...</li>
+                  )}
+                </ul>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={() => setBulkUpdateModal(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (bulkUpdateModal) {
+                    handleBulkUpdate(
+                      bulkUpdateModal.selectedItems,
+                      bulkUpdateModal.preferredProvider,
+                      bulkUpdateModal.associatedProviders,
+                      bulkUpdateModal.restockFrequency,
+                      bulkUpdateModal.category
+                    );
+                    setBulkUpdateModal(null);
+                  }
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+              >
+                Actualizar Productos
               </button>
             </div>
           </div>

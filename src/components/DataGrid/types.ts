@@ -12,8 +12,10 @@ export interface DataGridProps {
   onDataChange: (newData: any[]) => void;
   onExport?: () => void;
   onImport?: (file: File) => void;
+  onDownloadTemplate?: () => void;
   onAddRow?: () => void;
   onDeleteRows?: (selectedRows: any[]) => void;
+  onAssignProviders?: (selectedRows: any[]) => void;
   searchable?: boolean;
   selectable?: boolean;
   loading?: boolean;

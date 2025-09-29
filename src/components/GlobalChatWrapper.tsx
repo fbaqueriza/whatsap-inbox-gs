@@ -29,7 +29,7 @@ export default function GlobalChatWrapper() {
             return;
           }
 
-          fetch('/api/data/providers', {
+          fetch(`/api/data/providers?user_id=${user.id}`, {
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
               'Content-Type': 'application/json'

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { metaWhatsAppService } from '../../../../lib/metaWhatsAppService';
+import { templateService } from '../../../../lib/templateService';
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,6 +18,10 @@ export async function POST(request: NextRequest) {
 
     console.log(`📤 Enviando template ${template_name} a ${to} para reiniciar conversación`);
     
+    // 🔧 OBTENER CONTENIDO DEL TEMPLATE: Para mostrar en el chat
+    const templateContent = await templateService.getTemplateContent(template_name);
+    console.log(`📋 Contenido del template ${template_name}:`, templateContent);
+    
     // 🔧 CORRECCIÓN: Enviar template real usando el servicio de WhatsApp
     const result = await metaWhatsAppService.sendTemplateMessage(
       to,
@@ -31,6 +36,7 @@ export async function POST(request: NextRequest) {
       success: true,
       result: result,
       template_sent: template_name,
+      template_content: templateContent,
       recipient: to
     });
 

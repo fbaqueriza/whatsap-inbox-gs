@@ -207,6 +207,23 @@ export default function IntegratedChatPanel({
       const result = await response.json();
       
       if (response.ok) {
+        // 🔧 CREAR MENSAJE EN EL CHAT: Con el contenido del template
+        if (result.template_content) {
+          const templateMessage = {
+            id: `template_${Date.now()}`,
+            content: result.template_content,
+            type: 'sent' as const,
+            timestamp: new Date(),
+            status: 'sent' as const,
+            isTemplate: true,
+            templateName: result.template_sent,
+            contact_id: normalizedPhone
+          };
+          
+          addMessage(normalizedPhone, templateMessage);
+          console.log('📱 Template agregado al chat con contenido real:', result.template_content);
+        }
+        
         // Usar toast en lugar de alert
         if ((window as any).showToast) {
           (window as any).showToast({

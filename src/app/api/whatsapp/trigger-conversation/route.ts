@@ -1,33 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { metaWhatsAppService } from '../../../../lib/metaWhatsAppService';
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('🚀 ===== API TRIGGER-CONVERSATION INICIADO =====');
+    
     const body = await request.json();
-    const { to, template_name, baseUrl } = body;
+    const { to, template_name = 'inicializador_de_conv' } = body;
 
-    if (!to || !template_name) {
+    if (!to) {
       return NextResponse.json(
-        { error: 'to y template_name son requeridos' },
+        { error: 'to es requerido' },
         { status: 400 }
       );
     }
 
-    // Simular envío de template (en producción esto conectaría con Meta API)
-    console.log(`📤 Enviando template ${template_name} a ${to}`);
+    console.log(`📤 Enviando template ${template_name} a ${to} para reiniciar conversación`);
     
-    // Simular respuesta exitosa
-    const response = {
+    // 🔧 CORRECCIÓN: Enviar template real usando el servicio de WhatsApp
+    const result = await metaWhatsAppService.sendTemplateMessage(
+      to,
+      template_name,
+      'es_AR'
+    );
+
+    console.log('📊 Resultado del envío de template:', result);
+    console.log('🏁 ===== API TRIGGER-CONVERSATION FINALIZADO =====');
+
+    return NextResponse.json({
       success: true,
-      message_id: `msg_${Date.now()}`,
+      result: result,
       template_sent: template_name,
       recipient: to
-    };
+    });
 
-    return NextResponse.json(response);
   } catch (error) {
-    console.error('Error en POST /api/whatsapp/trigger-conversation:', error);
+    console.error('❌ Error en POST /api/whatsapp/trigger-conversation:', error);
     return NextResponse.json(
-      { error: 'Error interno del servidor' },
+      { 
+        success: false,
+        error: error instanceof Error ? error.message : 'Error interno del servidor' 
+      },
       { status: 500 }
     );
   }

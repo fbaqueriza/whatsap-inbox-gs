@@ -207,15 +207,37 @@ export default function IntegratedChatPanel({
       const result = await response.json();
       
       if (response.ok) {
-        alert('✅ Inicializador de conversación enviado exitosamente\n\nSe ha reiniciado la ventana de 24 horas. Ahora puedes enviar mensajes manuales.');
+        // Usar toast en lugar de alert
+        if ((window as any).showToast) {
+          (window as any).showToast({
+            type: 'success',
+            title: '✅ Inicializador enviado',
+            message: 'Se ha reiniciado la ventana de 24 horas. Ahora puedes enviar mensajes manuales.',
+            duration: 6000
+          });
+        }
         // Recargar la página para mostrar el nuevo mensaje
-        window.location.reload();
+        setTimeout(() => window.location.reload(), 1500);
       } else {
-        alert('❌ Error enviando inicializador: ' + (result.error || 'Error desconocido'));
+        if ((window as any).showToast) {
+          (window as any).showToast({
+            type: 'error',
+            title: '❌ Error enviando inicializador',
+            message: result.error || 'Error desconocido',
+            duration: 5000
+          });
+        }
       }
     } catch (error) {
       console.error('Error enviando inicializador:', error);
-      alert('❌ Error enviando inicializador de conversación');
+      if ((window as any).showToast) {
+        (window as any).showToast({
+          type: 'error',
+          title: '❌ Error de conexión',
+          message: 'No se pudo enviar el inicializador de conversación',
+          duration: 5000
+        });
+      }
     }
   };
 

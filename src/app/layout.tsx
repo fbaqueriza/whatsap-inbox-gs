@@ -9,6 +9,7 @@ import { GlobalChatProvider } from '../contexts/GlobalChatContext';
 import GlobalChatWrapper from '../components/GlobalChatWrapper';
 import ChatInitializer from '../components/ChatInitializer';
 import { RealtimeServiceProvider } from '../services/realtimeService';
+import ToastContainer from '../components/Toast';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -57,6 +58,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   {children}
                 </main>
                 <GlobalChatWrapper />
+                <ToastContainer />
               </GlobalChatProvider>
             </ChatProvider>
           </RealtimeServiceProvider>

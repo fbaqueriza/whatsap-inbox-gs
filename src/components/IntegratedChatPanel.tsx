@@ -162,12 +162,23 @@ export default function IntegratedChatPanel({
 
   // Función para verificar si han pasado 24 horas desde el último mensaje (enviado O recibido)
   const hanPasado24Horas = (): boolean => {
-    if (!currentContact) return false;
+    if (!currentContact) {
+      console.log('🔍 DEBUG hanPasado24Horas: No hay currentContact');
+      return false;
+    }
     
     const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
     const contactMessages = messagesByContact[normalizedPhone];
     
+    console.log('🔍 DEBUG hanPasado24Horas:', {
+      currentContact: currentContact.name,
+      normalizedPhone,
+      contactMessages: contactMessages?.length || 0,
+      messagesByContactKeys: Object.keys(messagesByContact)
+    });
+    
     if (!contactMessages || contactMessages.length === 0) {
+      console.log('🔍 DEBUG hanPasado24Horas: No hay mensajes, permitir envío');
       return false; // Si no hay mensajes, permitir envío (no bloquear)
     }
     
@@ -176,12 +187,21 @@ export default function IntegratedChatPanel({
     const lastMessage = contactMessages[contactMessages.length - 1];
     
     if (!lastMessage) {
+      console.log('🔍 DEBUG hanPasado24Horas: No hay último mensaje');
       return false; // Si no hay mensajes, permitir envío
     }
     
     const lastMessageTime = new Date(lastMessage.timestamp);
     const now = new Date();
     const hoursDiff = (now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60);
+    
+    console.log('🔍 DEBUG hanPasado24Horas:', {
+      lastMessage: lastMessage.content?.substring(0, 50) + '...',
+      lastMessageTime: lastMessageTime.toISOString(),
+      now: now.toISOString(),
+      hoursDiff: hoursDiff.toFixed(2),
+      shouldShowButton: hoursDiff >= 24
+    });
     
     return hoursDiff >= 24;
   };

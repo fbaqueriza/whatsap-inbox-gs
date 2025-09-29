@@ -860,8 +860,19 @@ export default function IntegratedChatPanel({
                     </span>
                       </div>
                   <div className="flex-1">
-                    <h3 className="font-medium text-gray-900">{currentContact.name}</h3>
-                    <p className="text-sm text-gray-500">{currentContact.phone}</p>
+                    {/* Mostrar nombre del proveedor y contacto por separado */}
+                    {currentContact.name.includes(' - ') ? (
+                      <>
+                        <h3 className="font-medium text-gray-900">{currentContact.name.split(' - ')[0]}</h3>
+                        <p className="text-sm text-blue-600 font-medium">{currentContact.name.split(' - ')[1]}</p>
+                        <p className="text-xs text-gray-500">{currentContact.phone}</p>
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="font-medium text-gray-900">{currentContact.name}</h3>
+                        <p className="text-sm text-gray-500">{currentContact.phone}</p>
+                      </>
+                    )}
                     {isTyping && (
                       <p className="text-xs text-green-600 mt-1">escribiendo...</p>
                     )}

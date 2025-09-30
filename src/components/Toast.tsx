@@ -67,31 +67,29 @@ function ToastComponent({ toast, onRemove }: ToastProps) {
   };
 
   return (
-    <div className={`max-w-sm w-full ${getBgColor()} border rounded-lg shadow-lg pointer-events-auto transition-all duration-300 ease-in-out transform hover:scale-105`}>
-      <div className="p-4">
-        <div className="flex items-start">
-          <div className="flex-shrink-0">
-            {getIcon()}
-          </div>
-          <div className="ml-3 w-0 flex-1">
-            <p className={`text-sm font-medium ${getTextColor()}`}>
-              {toast.title}
+    <div className={`max-w-sm w-full min-h-[60px] ${getBgColor()} border rounded-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105`}>
+      <div className="p-4 min-h-[60px] flex items-start">
+        <div className="flex-shrink-0">
+          {getIcon()}
+        </div>
+        <div className="ml-3 w-0 flex-1">
+          <p className={`text-sm font-medium ${getTextColor()}`}>
+            {toast.title}
+          </p>
+          {toast.message && (
+            <p className={`mt-1 text-sm ${getTextColor()} opacity-75 leading-relaxed`}>
+              {toast.message}
             </p>
-            {toast.message && (
-              <p className={`mt-1 text-sm ${getTextColor()} opacity-75`}>
-                {toast.message}
-              </p>
-            )}
-          </div>
-          <div className="ml-4 flex-shrink-0 flex">
-            <button
-              className={`inline-flex ${getTextColor()} hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-gray-400 rounded-md`}
-              onClick={() => onRemove(toast.id)}
-            >
-              <span className="sr-only">Cerrar</span>
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          )}
+        </div>
+        <div className="ml-4 flex-shrink-0 flex">
+          <button
+            className={`inline-flex ${getTextColor()} hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-gray-400 rounded-md`}
+            onClick={() => onRemove(toast.id)}
+          >
+            <span className="sr-only">Cerrar</span>
+            <X className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </div>
@@ -119,13 +117,14 @@ export default function ToastContainer() {
   }, []);
 
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2">
+    <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
       {toasts.map(toast => (
-        <ToastComponent
-          key={toast.id}
-          toast={toast}
-          onRemove={removeToast}
-        />
+        <div key={toast.id} className="pointer-events-auto">
+          <ToastComponent
+            toast={toast}
+            onRemove={removeToast}
+          />
+        </div>
       ))}
     </div>
   );

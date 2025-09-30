@@ -180,6 +180,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               content: msg.content,
               timestamp: new Date(msg.timestamp || msg.created_at),
               type: messageType,
+              messageType: messageType, // 🔧 CORRECCIÓN: Agregar messageType para consistencia
               contact_id: msg.contact_id || msg.from,
               status: msg.status || 'delivered'
             };

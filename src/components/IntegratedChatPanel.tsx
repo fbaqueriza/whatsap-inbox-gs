@@ -178,8 +178,8 @@ export default function IntegratedChatPanel({
     });
     
     if (!contactMessages || contactMessages.length === 0) {
-      console.log('🔍 DEBUG hanPasado24Horas: No hay mensajes, permitir envío');
-      return false; // Si no hay mensajes, permitir envío (no bloquear)
+      console.log('🔍 DEBUG hanPasado24Horas: No hay mensajes, mostrar botón de inicializador');
+      return true; // Si no hay mensajes, mostrar botón para iniciar conversación
     }
     
     // Obtener el último mensaje (enviado O recibido)
@@ -187,8 +187,8 @@ export default function IntegratedChatPanel({
     const lastMessage = contactMessages[contactMessages.length - 1];
     
     if (!lastMessage) {
-      console.log('🔍 DEBUG hanPasado24Horas: No hay último mensaje');
-      return false; // Si no hay mensajes, permitir envío
+      console.log('🔍 DEBUG hanPasado24Horas: No hay último mensaje, mostrar botón de inicializador');
+      return true; // Si no hay mensajes, mostrar botón para iniciar conversación
     }
     
     const lastMessageTime = new Date(lastMessage.timestamp);

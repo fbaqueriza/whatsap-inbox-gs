@@ -197,6 +197,39 @@ export default function IntegratedChatPanel({
   };
 
 
+  // Función helper para obtener icono de archivo
+  const getFileIcon = (filename: string) => {
+    const extension = filename.split('.').pop()?.toLowerCase();
+    
+    switch (extension) {
+      case 'pdf':
+        return <span className="text-red-600 text-lg">📄</span>;
+      case 'doc':
+      case 'docx':
+        return <span className="text-blue-600 text-lg">📝</span>;
+      case 'xls':
+      case 'xlsx':
+        return <span className="text-green-600 text-lg">📊</span>;
+      case 'txt':
+        return <span className="text-gray-600 text-lg">📃</span>;
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+        return <span className="text-purple-600 text-lg">🖼️</span>;
+      default:
+        return <span className="text-gray-600 text-lg">📎</span>;
+    }
+  };
+
+  // Función helper para formatear tamaño de archivo
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
   // Función para enviar inicializador de conversación
   const enviarInicializadorConversacion = async () => {
     if (!currentContact) return;
@@ -640,24 +673,62 @@ export default function IntegratedChatPanel({
 
     setUploadingDocument(true);
     try {
+      console.log('📤 Enviando documento:', file.name);
+      
       const formData = new FormData();
       formData.append('file', file);
       formData.append('recipient', currentContact.phone);
+      formData.append('message', `📎 ${file.name}`);
 
       const response = await fetch('/api/whatsapp/send-document', {
-          method: 'POST',
+        method: 'POST',
         body: formData,
       });
 
-      if (response.ok) {
-        const result = await response.json();
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        console.log('✅ Documento enviado exitosamente:', result.data);
         
-        // Documento enviado exitosamente
-        } else {
-        throw new Error('Error al enviar documento');
+        // Agregar mensaje al chat localmente
+        const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
+        const documentMessage = {
+          id: result.data.messageId || `doc_${Date.now()}`,
+          content: result.data.filename,
+          timestamp: new Date(),
+          type: 'sent',
+          messageType: 'sent',
+          contact_id: normalizedPhone,
+          isDocument: true,
+          mediaUrl: result.data.mediaUrl,
+          filename: result.data.filename,
+          fileSize: result.data.fileSize
+        };
+        
+        addMessage(normalizedPhone, documentMessage);
+        
+        // Mostrar notificación de éxito
+        if ((window as any).showToast) {
+          (window as any).showToast({
+            type: 'success',
+            title: 'Documento enviado',
+            message: `Se envió ${result.data.filename} correctamente`
+          });
+        }
+      } else {
+        throw new Error(result.error || 'Error al enviar documento');
       }
     } catch (error) {
-      alert('Error al enviar documento. Inténtalo de nuevo.');
+      console.error('❌ Error enviando documento:', error);
+      
+      // Mostrar notificación de error
+      if ((window as any).showToast) {
+        (window as any).showToast({
+          type: 'error',
+          title: 'Error',
+          message: error instanceof Error ? error.message : 'Error al enviar documento'
+        });
+      }
     } finally {
       setUploadingDocument(false);
     }
@@ -882,6 +953,36 @@ export default function IntegratedChatPanel({
                          )}
                          <div className="whitespace-pre-wrap">
                            {message.content}
+                           
+                           {/* 🔧 NUEVO: Mostrar documentos adjuntos */}
+                           {(message as any).isDocument && (message as any).mediaUrl && (
+                             <div className="mt-2 pt-2 border-t border-gray-200">
+                               <div className="flex items-center space-x-2 p-2 bg-gray-50 rounded-lg">
+                                 <div className="flex-shrink-0">
+                                   {getFileIcon((message as any).filename)}
+                                 </div>
+                                 <div className="flex-1 min-w-0">
+                                   <p className="text-sm font-medium text-gray-900 truncate">
+                                     {(message as any).filename}
+                                   </p>
+                                   {(message as any).fileSize && (
+                                     <p className="text-xs text-gray-500">
+                                       {formatFileSize((message as any).fileSize)}
+                                     </p>
+                                   )}
+                                 </div>
+                                 <button
+                                   onClick={() => window.open((message as any).mediaUrl, '_blank')}
+                                   className="flex-shrink-0 p-1 text-blue-600 hover:text-blue-800 transition-colors"
+                                   title="Descargar archivo"
+                                 >
+                                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                   </svg>
+                                 </button>
+                               </div>
+                             </div>
+                           )}
                            
                            {/* 🔧 NUEVO: Mostrar enlace a factura si existe */}
                            {message.content && message.content.includes('Factura recibida') && (

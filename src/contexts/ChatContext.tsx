@@ -182,7 +182,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               type: messageType,
               messageType: messageType, // 🔧 CORRECCIÓN: Agregar messageType para consistencia
               contact_id: msg.contact_id || msg.from,
-              status: msg.status || 'delivered'
+              status: msg.status || 'delivered',
+              // 🔧 NUEVO: Propiedades para documentos
+              isDocument: !!(msg.media_url || msg.filename),
+              mediaUrl: msg.media_url,
+              filename: msg.filename,
+              fileSize: msg.file_size,
+              mediaType: msg.media_type
             };
           })
         

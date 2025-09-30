@@ -1218,6 +1218,37 @@ async function processWhatsAppDocument(
     // Procesar documento con OCR en background
     processDocumentWithOCR(documentResult.document_id!, requestId, fileBuffer, uploadResult.filename);
 
+    // 🔧 NUEVO: Guardar documento como mensaje en el chat
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    const { error: messageError } = await supabase
+      .from('whatsapp_messages')
+      .insert([{
+        content: `📎 ${uploadResult.filename}`,
+        message_type: 'received',
+        status: 'delivered',
+        contact_id: senderPhone,
+        user_id: userId,
+        message_sid: mediaData.id,
+        timestamp: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        media_url: uploadResult.url,
+        media_type: documentType,
+        filename: uploadResult.filename,
+        file_size: fileBuffer.length
+      }]);
+
+    if (messageError) {
+      console.error(`❌ [${requestId}] Error guardando mensaje de documento:`, messageError);
+      // No fallar el proceso completo por esto
+    } else {
+      console.log(`✅ [${requestId}] Mensaje de documento guardado en chat`);
+    }
+
     console.log(`✅ [${requestId}] Documento creado exitosamente: ${documentResult.document_id}`);
     return { 
       success: true, 

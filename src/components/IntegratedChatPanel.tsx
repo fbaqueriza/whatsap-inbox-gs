@@ -267,8 +267,7 @@ export default function IntegratedChatPanel({
             duration: 6000
           });
         }
-        // Recargar la página para mostrar el nuevo mensaje
-        setTimeout(() => window.location.reload(), 1500);
+        // ✅ No recargar la página - el mensaje se actualizará automáticamente via realtime
       } else {
         if ((window as any).showToast) {
           (window as any).showToast({

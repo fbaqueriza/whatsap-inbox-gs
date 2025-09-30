@@ -162,23 +162,12 @@ export default function IntegratedChatPanel({
 
   // Función para verificar si han pasado 24 horas desde el último mensaje ENVIADO POR EL PROVEEDOR
   const hanPasado24Horas = (): boolean => {
-    if (!currentContact) {
-      console.log('🔍 DEBUG hanPasado24Horas: No hay currentContact');
-      return false;
-    }
+    if (!currentContact) return false;
     
     const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
     const contactMessages = messagesByContact[normalizedPhone];
     
-    console.log('🔍 DEBUG hanPasado24Horas:', {
-      currentContact: currentContact.name,
-      normalizedPhone,
-      contactMessages: contactMessages?.length || 0,
-      messagesByContactKeys: Object.keys(messagesByContact)
-    });
-    
     if (!contactMessages || contactMessages.length === 0) {
-      console.log('🔍 DEBUG hanPasado24Horas: No hay mensajes, mostrar botón de inicializador');
       return true; // Si no hay mensajes, mostrar botón para iniciar conversación
     }
     
@@ -186,14 +175,7 @@ export default function IntegratedChatPanel({
     // Los mensajes del proveedor tienen messageType: 'received'
     const providerMessages = contactMessages.filter(msg => msg.messageType === 'received');
     
-    console.log('🔍 DEBUG hanPasado24Horas - Mensajes del proveedor:', {
-      totalMessages: contactMessages.length,
-      providerMessages: providerMessages.length,
-      allMessageTypes: contactMessages.map(msg => ({ type: msg.messageType, content: msg.content?.substring(0, 30) + '...' }))
-    });
-    
     if (providerMessages.length === 0) {
-      console.log('🔍 DEBUG hanPasado24Horas: No hay mensajes del proveedor, mostrar botón de inicializador');
       return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
     }
     
@@ -201,21 +183,12 @@ export default function IntegratedChatPanel({
     const lastProviderMessage = providerMessages[providerMessages.length - 1];
     
     if (!lastProviderMessage) {
-      console.log('🔍 DEBUG hanPasado24Horas: No hay último mensaje del proveedor, mostrar botón de inicializador');
       return true; // Si no hay mensajes del proveedor, mostrar botón para iniciar conversación
     }
     
     const lastMessageTime = new Date(lastProviderMessage.timestamp);
     const now = new Date();
     const hoursDiff = (now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60);
-    
-    console.log('🔍 DEBUG hanPasado24Horas:', {
-      lastProviderMessage: lastProviderMessage.content?.substring(0, 50) + '...',
-      lastMessageTime: lastMessageTime.toISOString(),
-      now: now.toISOString(),
-      hoursDiff: hoursDiff.toFixed(2),
-      shouldShowButton: hoursDiff >= 24
-    });
     
     return hoursDiff >= 24;
   };
@@ -300,7 +273,7 @@ export default function IntegratedChatPanel({
       messagesByContact: Object.keys(messagesByContact)
     };
     
-    console.log('🔍 DEBUG CONTACTOS:', contactosInfo);
+    console.log('Contactos disponibles:', contactosInfo);
     alert(`Contactos disponibles: ${contactosInfo.sortedContacts.length}\nProveedores: ${contactosInfo.providers.length}\nContactos finales: ${contactosInfo.contacts.length}\nRevisa la consola para más detalles.`);
   };
 
@@ -314,7 +287,7 @@ export default function IntegratedChatPanel({
     const handleSelectProviderInChat = (event: CustomEvent) => {
       const { providerId, providerName, providerPhone } = event.detail;
       
-      console.log('🔧 DEBUG - Seleccionando proveedor en chat:', {
+      console.log('Seleccionando proveedor en chat:', {
         providerId, providerName, providerPhone
       });
       
@@ -325,10 +298,10 @@ export default function IntegratedChatPanel({
       );
       
       if (providerContact) {
-        console.log('🔧 DEBUG - Proveedor encontrado en contactos, seleccionando:', providerContact.name);
+        console.log('Proveedor encontrado en contactos, seleccionando:', providerContact.name);
         selectContact(providerContact);
       } else {
-        console.log('🔧 DEBUG - Proveedor no encontrado en contactos, creando contacto temporal');
+        console.log('Proveedor no encontrado en contactos, creando contacto temporal');
         // Crear un contacto temporal para el proveedor
         const tempContact: Contact = {
           id: `temp_${providerId}`,
@@ -416,9 +389,7 @@ export default function IntegratedChatPanel({
     }
     
     // PASO 2: Agregar todos los proveedores con nombres correctos
-    console.log('🔍 DEBUG providers:', providers);
     providers.forEach(provider => {
-      console.log('🔍 DEBUG provider:', provider);
       const normalizedPhone = normalizeContactIdentifier(provider.phone);
       const existingContact = allContacts.find(c => c.phone === normalizedPhone);
       
@@ -428,7 +399,6 @@ export default function IntegratedChatPanel({
           ? `${provider.name} - ${provider.contact_name}`
           : provider.name;
         
-        console.log('🔍 DEBUG providerDisplayName (nuevo):', providerDisplayName);
         
         allContacts.push({
           id: provider.id,
@@ -445,7 +415,6 @@ export default function IntegratedChatPanel({
           ? `${provider.name} - ${provider.contact_name}`
           : provider.name;
         
-        console.log('🔍 DEBUG providerDisplayName (existente):', providerDisplayName);
         
         existingContact.name = providerDisplayName;
         existingContact.providerId = provider.id;
@@ -850,8 +819,6 @@ export default function IntegratedChatPanel({
                     </span>
                       </div>
                   <div className="flex-1">
-                    {/* Debug: mostrar información del contacto */}
-                    {console.log('🔍 DEBUG currentContact:', currentContact)}
                     
                     {/* Mostrar nombre del proveedor y contacto por separado */}
                     {currentContact.name.includes(' - ') ? (

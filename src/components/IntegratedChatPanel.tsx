@@ -160,7 +160,7 @@ export default function IntegratedChatPanel({
     addMessage
   } = useChat();
 
-  // Función para verificar si han pasado 24 horas desde el último mensaje (enviado O recibido)
+  // Función para verificar si han pasado 24 horas desde el último mensaje ENVIADO POR EL PROVEEDOR
   const hanPasado24Horas = (): boolean => {
     if (!currentContact) {
       console.log('🔍 DEBUG hanPasado24Horas: No hay currentContact');
@@ -182,21 +182,35 @@ export default function IntegratedChatPanel({
       return true; // Si no hay mensajes, mostrar botón para iniciar conversación
     }
     
-    // Obtener el último mensaje (enviado O recibido)
-    // Los mensajes ya vienen ordenados del API, tomar el último directamente
-    const lastMessage = contactMessages[contactMessages.length - 1];
+    // 🔧 FILTRAR SOLO MENSAJES ENVIADOS POR EL PROVEEDOR (mensajes recibidos por nosotros)
+    // Los mensajes del proveedor tienen messageType: 'received'
+    const providerMessages = contactMessages.filter(msg => msg.messageType === 'received');
     
-    if (!lastMessage) {
-      console.log('🔍 DEBUG hanPasado24Horas: No hay último mensaje, mostrar botón de inicializador');
-      return true; // Si no hay mensajes, mostrar botón para iniciar conversación
+    console.log('🔍 DEBUG hanPasado24Horas - Mensajes del proveedor:', {
+      totalMessages: contactMessages.length,
+      providerMessages: providerMessages.length,
+      allMessageTypes: contactMessages.map(msg => ({ type: msg.messageType, content: msg.content?.substring(0, 30) + '...' }))
+    });
+    
+    if (providerMessages.length === 0) {
+      console.log('🔍 DEBUG hanPasado24Horas: No hay mensajes del proveedor, mostrar botón de inicializador');
+      return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
     }
     
-    const lastMessageTime = new Date(lastMessage.timestamp);
+    // Obtener el último mensaje ENVIADO POR EL PROVEEDOR
+    const lastProviderMessage = providerMessages[providerMessages.length - 1];
+    
+    if (!lastProviderMessage) {
+      console.log('🔍 DEBUG hanPasado24Horas: No hay último mensaje del proveedor, mostrar botón de inicializador');
+      return true; // Si no hay mensajes del proveedor, mostrar botón para iniciar conversación
+    }
+    
+    const lastMessageTime = new Date(lastProviderMessage.timestamp);
     const now = new Date();
     const hoursDiff = (now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60);
     
     console.log('🔍 DEBUG hanPasado24Horas:', {
-      lastMessage: lastMessage.content?.substring(0, 50) + '...',
+      lastProviderMessage: lastProviderMessage.content?.substring(0, 50) + '...',
       lastMessageTime: lastMessageTime.toISOString(),
       now: now.toISOString(),
       hoursDiff: hoursDiff.toFixed(2),

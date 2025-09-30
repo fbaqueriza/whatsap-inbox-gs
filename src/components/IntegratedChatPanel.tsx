@@ -167,19 +167,6 @@ export default function IntegratedChatPanel({
     const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
     const contactMessages = messagesByContact[normalizedPhone];
     
-    // 🔧 DEBUG TEMPORAL: Verificar mensajes
-    console.log('🔍 DEBUG hanPasado24Horas:', {
-      currentContact: currentContact.name,
-      normalizedPhone,
-      totalMessages: contactMessages?.length || 0,
-      allMessages: contactMessages?.map(msg => ({
-        type: msg.messageType,
-        content: msg.content?.substring(0, 20) + '...',
-        timestamp: msg.timestamp,
-        // 🔧 DEBUG: Ver todos los campos del mensaje
-        fullMessage: msg
-      })) || []
-    });
     
     if (!contactMessages || contactMessages.length === 0) {
       return true; // Si no hay mensajes, mostrar botón para iniciar conversación
@@ -189,13 +176,6 @@ export default function IntegratedChatPanel({
     // Los mensajes del proveedor tienen messageType: 'received'
     const providerMessages = contactMessages.filter(msg => msg.messageType === 'received');
     
-    console.log('🔍 DEBUG providerMessages:', {
-      total: providerMessages.length,
-      messages: providerMessages.map(msg => ({
-        content: msg.content?.substring(0, 20) + '...',
-        timestamp: msg.timestamp
-      }))
-    });
     
     if (providerMessages.length === 0) {
       return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
@@ -212,13 +192,6 @@ export default function IntegratedChatPanel({
     const now = new Date();
     const hoursDiff = (now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60);
     
-    console.log('🔍 DEBUG time calculation:', {
-      lastMessage: lastProviderMessage.content?.substring(0, 20) + '...',
-      lastMessageTime: lastMessageTime.toISOString(),
-      now: now.toISOString(),
-      hoursDiff: hoursDiff.toFixed(2),
-      shouldShowButton: hoursDiff >= 24
-    });
     
     return hoursDiff >= 24;
   };
@@ -259,7 +232,6 @@ export default function IntegratedChatPanel({
           };
           
           addMessage(normalizedPhone, templateMessage);
-          console.log('📱 Template agregado al chat con contenido real:', result.template_content);
         }
         
         // Usar toast en lugar de alert

@@ -330,8 +330,8 @@ async function processWhatsAppMessage(message: any, requestId: string) {
         const mediaData = image || document;
         console.log(`📎 [${requestId}] Procesando documento del proveedor: ${provider.name}`);
         
-        // Procesar documento con flujo simplificado
-        const result = await processWhatsAppDocument(normalizedFrom, mediaData, requestId, provider.user_id, provider.id);
+        // 🔧 REACTIVADO: Procesar documento con flujo de órdenes (sistema viejo)
+        const result = await processMediaAsInvoice(normalizedFrom, message, requestId, provider.user_id);
         
         if (result.success) {
           console.log(`✅ [${requestId}] Documento procesado exitosamente:`, result.document_id);
@@ -456,7 +456,6 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
   // 🔧 REACTIVADO: Sistema viejo para flujo de órdenes
   console.log(`🔄 [${requestId}] Procesando archivo como factura para flujo de órdenes...`);
   
-  /* COMENTADO - SISTEMA VIEJO
   try {
     console.log(`📎 [${requestId}] Procesando archivo multimedia como factura...`);
     console.log(`📱 [${requestId}] Número de teléfono recibido:`, providerPhone);
@@ -922,7 +921,6 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
     console.error(`❌ [${requestId}] Error en processMediaAsInvoice:`, error);
     return { success: false, error: error instanceof Error ? error.message : 'Error desconocido' };
   }
-  */ // FIN DEL SISTEMA VIEJO COMENTADO
 }
 
 // 🔧 FUNCIÓN AUXILIAR: Descargar archivo desde WhatsApp

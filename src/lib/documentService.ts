@@ -47,14 +47,17 @@ export class DocumentService {
     try {
       console.log('📄 [DocumentService] Creando documento:', documentData.filename);
       
+      // 🔧 CORRECCIÓN: Usar sender_phone directamente (la columna existe)
+      const documentRecord = {
+        ...documentData,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
       const { data, error } = await this.supabase
         .from('documents')
-        .insert([{
-          ...documentData,
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }])
+        .insert([documentRecord])
         .select('id')
         .single();
 

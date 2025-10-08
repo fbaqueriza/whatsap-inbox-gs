@@ -167,7 +167,6 @@ export default function IntegratedChatPanel({
     const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
     const contactMessages = messagesByContact[normalizedPhone];
     
-    
     if (!contactMessages || contactMessages.length === 0) {
       return true; // Si no hay mensajes, mostrar botón para iniciar conversación
     }
@@ -175,7 +174,6 @@ export default function IntegratedChatPanel({
     // 🔧 FILTRAR SOLO MENSAJES ENVIADOS POR EL PROVEEDOR (mensajes recibidos por nosotros)
     // Los mensajes del proveedor tienen messageType: 'received'
     const providerMessages = contactMessages.filter(msg => msg.messageType === 'received');
-    
     
     if (providerMessages.length === 0) {
       return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
@@ -185,13 +183,12 @@ export default function IntegratedChatPanel({
     const lastProviderMessage = providerMessages[providerMessages.length - 1];
     
     if (!lastProviderMessage) {
-      return true; // Si no hay mensajes del proveedor, mostrar botón para iniciar conversación
+      return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
     }
     
     const lastMessageTime = new Date(lastProviderMessage.timestamp);
     const now = new Date();
     const hoursDiff = (now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60);
-    
     
     return hoursDiff >= 24;
   };
@@ -687,35 +684,21 @@ export default function IntegratedChatPanel({
 
       const result = await response.json();
 
-      if (response.ok && result.success) {
-        console.log('✅ Documento enviado exitosamente:', result.data);
-        
-        // Agregar mensaje al chat localmente
-        const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
-        const documentMessage = {
-          id: result.data.messageId || `doc_${Date.now()}`,
-          content: result.data.filename,
-          timestamp: new Date(),
-          type: 'sent',
-          messageType: 'sent',
-          contact_id: normalizedPhone,
-          isDocument: true,
-          mediaUrl: result.data.mediaUrl,
-          filename: result.data.filename,
-          fileSize: result.data.fileSize
-        };
-        
-        addMessage(normalizedPhone, documentMessage);
-        
-        // Mostrar notificación de éxito
-        if ((window as any).showToast) {
-          (window as any).showToast({
-            type: 'success',
-            title: 'Documento enviado',
-            message: `Se envió ${result.data.filename} correctamente`
-          });
-        }
-      } else {
+             if (response.ok && result.success) {
+               console.log('✅ Documento enviado exitosamente:', result.data);
+               
+               // No agregar mensaje localmente - se cargará desde la BD
+               // El mensaje se guardará en la BD y se sincronizará automáticamente
+               
+               // Mostrar notificación de éxito
+               if ((window as any).showToast) {
+                 (window as any).showToast({
+                   type: 'success',
+                   title: 'Documento enviado',
+                   message: `Se envió ${result.data.filename} correctamente`
+                 });
+               }
+             } else {
         throw new Error(result.error || 'Error al enviar documento');
       }
     } catch (error) {

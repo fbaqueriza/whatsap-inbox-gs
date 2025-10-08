@@ -71,7 +71,44 @@ async function checkSupabaseState() {
             });
         }
 
-        // 4. Verificar proveedores
+        // 4. Verificar documentos
+        console.log('\n📎 DOCUMENTOS:');
+        const { data: documents, error: docsError } = await supabase
+            .from('documents')
+            .select('id, filename, file_type, created_at, sender_phone, whatsapp_message_id')
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+        if (docsError) {
+            console.error('❌ Error al obtener documentos:', docsError);
+        } else {
+            console.log(`✅ Total documentos: ${documents.length}`);
+            documents.forEach((doc, index) => {
+                console.log(`   ${index + 1}. ${doc.filename} (${doc.file_type}) - ${doc.created_at}`);
+                console.log(`      Sender: ${doc.sender_phone}, WhatsApp Message ID: ${doc.whatsapp_message_id || 'NO ASIGNADO'}`);
+            });
+        }
+
+        // 5. Verificar mensajes con documentos
+        console.log('\n📱 MENSAJES CON DOCUMENTOS:');
+        const { data: messagesWithDocs, error: msgsDocsError } = await supabase
+            .from('whatsapp_messages')
+            .select('id, content, media_url, media_type, created_at, contact_id')
+            .not('media_url', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+        if (msgsDocsError) {
+            console.error('❌ Error al obtener mensajes con documentos:', msgsDocsError);
+        } else {
+            console.log(`✅ Mensajes con documentos: ${messagesWithDocs.length}`);
+            messagesWithDocs.forEach((msg, index) => {
+                console.log(`   ${index + 1}. ${msg.content} (${msg.media_type}) - ${msg.created_at}`);
+                console.log(`      Contact: ${msg.contact_id}, URL: ${msg.media_url}`);
+            });
+        }
+
+        // 6. Verificar proveedores
         console.log('\n🏪 PROVEEDORES:');
         const { data: providers, error: provError } = await supabase
             .from('providers')

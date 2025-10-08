@@ -76,17 +76,32 @@ export async function POST(request: NextRequest) {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Generar nombre único para el archivo
+    // Obtener información del proveedor basado en el número de teléfono
+    const { data: provider, error: providerError } = await supabase
+      .from('providers')
+      .select('id, name, user_id')
+      .eq('phone', recipient)
+      .single();
+
+    if (providerError) {
+      console.error('❌ Error obteniendo información del proveedor:', providerError);
+      return NextResponse.json(
+        { success: false, error: 'No se encontró el proveedor' },
+        { status: 400 }
+      );
+    }
+
+    // Generar nombre único para el archivo en la carpeta del proveedor
     const timestamp = Date.now();
     const fileExtension = file.name.split('.').pop();
-    const fileName = `documents/${timestamp}_${file.name}`;
+    const fileName = `providers/${provider.id}/${timestamp}_${file.name}`;
 
     console.log('📤 Subiendo archivo a Supabase Storage...');
 
     // Convertir File a ArrayBuffer
     const arrayBuffer = await file.arrayBuffer();
     const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('whatsapp-media')
+      .from('files')
       .upload(fileName, arrayBuffer, {
         contentType: file.type,
         upsert: false
@@ -102,7 +117,7 @@ export async function POST(request: NextRequest) {
 
     // Obtener URL pública del archivo
     const { data: { publicUrl } } = supabase.storage
-      .from('whatsapp-media')
+      .from('files')
       .getPublicUrl(fileName);
 
     console.log('✅ Archivo subido exitosamente:', publicUrl);
@@ -124,7 +139,7 @@ export async function POST(request: NextRequest) {
 
     if (!result) {
       // Si falla el envío, eliminar el archivo subido
-      await supabase.storage.from('whatsapp-media').remove([fileName]);
+      await supabase.storage.from('files').remove([fileName]);
       
       return NextResponse.json(
         { success: false, error: 'Error enviando documento por WhatsApp' },
@@ -142,13 +157,11 @@ export async function POST(request: NextRequest) {
         content: message || `[Documento: ${file.name}]`,
         message_type: 'sent',
         contact_id: recipient,
-        user_id: 'system', // TODO: Obtener del contexto de usuario
+        user_id: provider.user_id,
         status: 'sent',
         timestamp: new Date().toISOString(),
         media_url: publicUrl,
-        media_type: mediaType,
-        filename: file.name,
-        file_size: file.size
+        media_type: mediaType
       }]);
 
     if (dbError) {

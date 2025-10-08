@@ -155,6 +155,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const data = await response.json();
       
       if (data.messages && Array.isArray(data.messages)) {
+        console.log('📱 ChatContext: Mensajes recibidos de API:', data.messages.length);
 
         // 🔧 MEJORA: Filtrado simplificado y más robusto
         const transformedMessages = data.messages
@@ -184,13 +185,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               contact_id: msg.contact_id || msg.from,
               status: msg.status || 'delivered',
               // 🔧 NUEVO: Propiedades para documentos
-              isDocument: !!(msg.media_url || msg.filename),
+              isDocument: !!(msg.media_url),
               mediaUrl: msg.media_url,
-              filename: msg.filename,
-              fileSize: msg.file_size,
+              filename: msg.media_url ? msg.media_url.split('/').pop()?.split('_').slice(1).join('_') || 'documento' : undefined,
+              fileSize: undefined, // No disponible en la BD actual
               mediaType: msg.media_type
             };
           })
+        
+        // Logs removidos para limpieza
         
         // 🔧 OPTIMIZACIÓN: Actualización eficiente del estado
         setMessages(prev => {

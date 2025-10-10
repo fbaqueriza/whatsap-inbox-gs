@@ -101,6 +101,12 @@ export async function POST(request: NextRequest) {
     // 🔧 MEJORA: Guardar mensaje en la base de datos
     if (supabase) {
       console.log('💾 [POST /api/whatsapp/send] Llamando a saveMessageToDatabase...');
+      console.log('💾 [POST /api/whatsapp/send] Contenido a guardar:', {
+        messageContent: messageContent.substring(0, 100),
+        isTemplate: isTemplate,
+        templateName: isTemplate ? message : 'N/A',
+        hasVariables: templateVariables ? Object.keys(templateVariables).length : 0
+      });
       await saveMessageToDatabase(to, messageContent, result, userId);
       console.log('✅ [POST /api/whatsapp/send] saveMessageToDatabase completado');
     }

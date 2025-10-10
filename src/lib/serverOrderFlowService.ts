@@ -24,16 +24,23 @@ export class ServerOrderFlowService {
    */
   async createOrderAndNotify(order: any, userId: string): Promise<{ success: boolean; orderId?: string; errors?: string[]; message?: string }> {
     try {
-      console.log('🚀 [ServerOrderFlow] Creando orden y enviando notificación:', order.id);
+      console.log('🚀 [ServerOrderFlow] Enviando notificación para orden existente:', order.id);
 
-      // 1. Crear la orden en la base de datos
-      const orderResult = await this.createOrder(order, userId);
-      if (!orderResult.success) {
-        return { success: false, errors: orderResult.errors };
+      // 🔧 FIX: La orden YA EXISTE, no crearla de nuevo
+      // Solo verificar que existe y obtener sus datos
+      const { data: existingOrder, error: fetchError } = await this.supabase
+        .from('orders')
+        .select('*')
+        .eq('id', order.id)
+        .single();
+
+      if (fetchError || !existingOrder) {
+        console.error('❌ [ServerOrderFlow] Orden no encontrada:', order.id);
+        return { success: false, errors: ['Orden no encontrada'] };
       }
 
-      const orderId = orderResult.orderId!;
-      console.log('✅ [ServerOrderFlow] Orden creada:', orderId);
+      const orderId = existingOrder.id;
+      console.log('✅ [ServerOrderFlow] Orden encontrada:', orderId);
 
       // 2. Obtener datos del proveedor
       const providerResult = await this.getProviderData(order.providerId);
@@ -52,7 +59,7 @@ export class ServerOrderFlowService {
       // 3. Enviar notificación por WhatsApp
       const notificationResult = await this.sendOrderNotification(
         provider.phone, 
-        orderResult.order!, 
+        existingOrder, 
         provider
       );
 

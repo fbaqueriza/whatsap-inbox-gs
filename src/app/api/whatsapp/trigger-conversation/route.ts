@@ -30,6 +30,49 @@ export async function POST(request: NextRequest) {
     );
 
     console.log('📊 Resultado del envío de template:', result);
+    
+    // 🔧 FIX: Guardar mensaje del template en la BD para que aparezca en el chat
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+      
+      // Buscar user_id del proveedor
+      const { data: provider } = await supabase
+        .from('providers')
+        .select('user_id')
+        .eq('phone', to)
+        .single();
+      
+      if (provider) {
+        // Crear mensaje en la BD
+        const messageData = {
+          content: templateContent || 'Hola! Te puedo comentar algo?',
+          message_type: 'sent',
+          status: 'sent',
+          contact_id: to,
+          user_id: provider.user_id,
+          message_sid: result.messages?.[0]?.id || `template_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          created_at: new Date().toISOString()
+        };
+        
+        const { error } = await supabase
+          .from('whatsapp_messages')
+          .insert([messageData]);
+        
+        if (error) {
+          console.error('❌ Error guardando mensaje del template:', error);
+        } else {
+          console.log('✅ Mensaje del template guardado en el chat');
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error guardando mensaje del template:', error);
+    }
+    
     console.log('🏁 ===== API TRIGGER-CONVERSATION FINALIZADO =====');
 
     return NextResponse.json({

@@ -330,34 +330,34 @@ async function processWhatsAppMessage(message: any, requestId: string) {
         const mediaData = image || document;
         console.log(`📎 [${requestId}] Procesando documento del proveedor: ${provider.name}`);
         
-        // 🔧 REACTIVADO: Procesar documento con flujo de órdenes (sistema viejo)
-        const result = await processMediaAsInvoice(normalizedFrom, message, requestId, provider.user_id);
+        // 🔧 NUEVO: Usar sistema simplificado que SIEMPRE crea el mensaje en el chat
+        console.log(`📎 [${requestId}] Usando processWhatsAppDocument para crear mensaje en chat...`);
+        const result = await processWhatsAppDocument(
+          normalizedFrom,
+          mediaData,
+          requestId,
+          provider.user_id,
+          provider.id
+        );
         
         if (result.success) {
-          console.log(`✅ [${requestId}] Documento procesado exitosamente:`, result.document_id);
+          console.log(`✅ [${requestId}] Documento procesado y mensaje creado:`, result.document_id);
+          
+          // 🔧 OPCIONAL: Intentar flujo de órdenes en background (sin bloquear)
+          processMediaAsInvoice(normalizedFrom, message, requestId, provider.user_id)
+            .then(orderResult => {
+              if (orderResult.success) {
+                console.log(`✅ [${requestId}] Documento también asociado con orden`);
+              }
+            })
+            .catch(err => {
+              console.log(`ℹ️ [${requestId}] Documento no asociado con orden (normal si no hay orden pendiente)`);
+            });
+          
           const duration = Date.now() - messageStartTime;
           return { success: true, duration: duration, type: 'document', document_id: result.document_id };
         } else {
           console.log(`❌ [${requestId}] Error procesando documento:`, result.error);
-          
-          // 🔧 NUEVO: Intentar sincronización automática como fallback
-          try {
-            console.log(`🔄 [${requestId}] Intentando sincronización automática como fallback...`);
-            const syncResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001'}/api/whatsapp/auto-sync-documents`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              }
-            });
-            
-            const syncResult = await syncResponse.json();
-            if (syncResult.success && syncResult.synced > 0) {
-              console.log(`✅ [${requestId}] Fallback exitoso: ${syncResult.synced} documentos sincronizados`);
-            }
-          } catch (syncError) {
-            console.error(`❌ [${requestId}] Error en sincronización automática:`, syncError);
-          }
-          
           const duration = Date.now() - messageStartTime;
           return { success: false, error: result.error, duration: duration, type: 'document_error' };
         }

@@ -315,7 +315,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         timestamp: realtimeMessage.timestamp,
         type: realtimeMessage.type,
         contact_id: realtimeMessage.contact_id,
-        status: realtimeMessage.status as 'sent' | 'delivered' | 'read' | 'failed' | undefined
+        status: realtimeMessage.status as 'sent' | 'delivered' | 'read' | 'failed' | undefined,
+        // 🔧 FIX: Incluir campos de documentos para que aparezcan en el chat
+        isDocument: !!(realtimeMessage as any).media_url,
+        mediaUrl: (realtimeMessage as any).media_url,
+        filename: (realtimeMessage as any).media_url 
+          ? (realtimeMessage as any).media_url.split('/').pop()?.split('_').slice(1).join('_') || 'documento' 
+          : undefined,
+        mediaType: (realtimeMessage as any).media_type
       };
 
       setMessages(prev => {

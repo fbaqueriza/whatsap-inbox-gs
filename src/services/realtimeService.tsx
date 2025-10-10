@@ -21,6 +21,9 @@ interface RealtimeMessage {
   contact_id: string;
   status: string;
   user_id?: string;
+  // 🔧 CORRECCIÓN: Agregar campos para documentos
+  media_url?: string;
+  media_type?: string;
 }
 
 interface RealtimeOrder {
@@ -100,7 +103,10 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       type: newMessage.message_type,
       contact_id: newMessage.contact_id,
       status: newMessage.status || 'delivered',
-      user_id: newMessage.user_id
+      user_id: newMessage.user_id,
+      // 🔧 CORRECCIÓN: Incluir media_url y media_type para documentos
+      media_url: newMessage.media_url,
+      media_type: newMessage.media_type
     };
 
     setMessages(prev => {
@@ -328,10 +334,12 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // 🔧 SOLUCIÓN OPTIMIZADA: Una sola llamada de suscripción por tipo
     const setupWhatsAppSuscription = async () => {
       try {
+        // 🔧 FIX: Agregar filtro por user_id para que RLS permita los mensajes
         await subscribe(
           {
             table: 'whatsapp_messages',
-            event: '*'
+            event: '*',
+            filter: currentUserId ? `user_id=eq.${currentUserId}` : undefined
           },
           {
             onInsert: handleNewMessage,
@@ -347,6 +355,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
             }
           }
         );
+        console.log(`✅ RealtimeService: Suscripción a whatsapp_messages activa para user_id: ${currentUserId}`);
         setIsConnected(true);
       } catch (error) {
         console.error(`❌ RealtimeService: Error configurando suscripción a whatsapp_messages:`, error);

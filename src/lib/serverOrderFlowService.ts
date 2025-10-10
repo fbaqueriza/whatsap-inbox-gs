@@ -24,23 +24,41 @@ export class ServerOrderFlowService {
    */
   async createOrderAndNotify(order: any, userId: string): Promise<{ success: boolean; orderId?: string; errors?: string[]; message?: string }> {
     try {
-      console.log('🚀 [ServerOrderFlow] Enviando notificación para orden existente:', order.id);
+      console.log('🚀 [ServerOrderFlow] Creando orden y enviando notificación:', order.id);
 
-      // 🔧 FIX: La orden YA EXISTE, no crearla de nuevo
-      // Solo verificar que existe y obtener sus datos
-      const { data: existingOrder, error: fetchError } = await this.supabase
+      // 🔧 FIX: Primero verificar si la orden ya existe para evitar duplicados
+      const { data: existingOrder } = await this.supabase
         .from('orders')
-        .select('*')
+        .select('id')
         .eq('id', order.id)
         .single();
 
-      if (fetchError || !existingOrder) {
-        console.error('❌ [ServerOrderFlow] Orden no encontrada:', order.id);
-        return { success: false, errors: ['Orden no encontrada'] };
-      }
+      let orderId: string;
+      let orderData: any;
 
-      const orderId = existingOrder.id;
-      console.log('✅ [ServerOrderFlow] Orden encontrada:', orderId);
+      if (existingOrder) {
+        // La orden ya existe, solo enviar notificación
+        console.log('⚠️ [ServerOrderFlow] Orden ya existe, saltando creación:', order.id);
+        orderId = existingOrder.id;
+        
+        // Obtener datos completos de la orden existente
+        const { data: fullOrder } = await this.supabase
+          .from('orders')
+          .select('*')
+          .eq('id', orderId)
+          .single();
+        
+        orderData = fullOrder;
+      } else {
+        // La orden no existe, crearla
+        const orderResult = await this.createOrder(order, userId);
+        if (!orderResult.success) {
+          return { success: false, errors: orderResult.errors };
+        }
+        orderId = orderResult.orderId!;
+        orderData = orderResult.order!;
+        console.log('✅ [ServerOrderFlow] Orden creada:', orderId);
+      }
 
       // 2. Obtener datos del proveedor
       const providerResult = await this.getProviderData(order.providerId);
@@ -59,7 +77,7 @@ export class ServerOrderFlowService {
       // 3. Enviar notificación por WhatsApp
       const notificationResult = await this.sendOrderNotification(
         provider.phone, 
-        existingOrder, 
+        orderData, 
         provider
       );
 

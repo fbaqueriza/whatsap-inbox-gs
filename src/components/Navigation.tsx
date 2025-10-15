@@ -7,12 +7,12 @@ import { useSupabaseAuth } from '../hooks/useSupabaseAuth';
 import { Menu, X, User, LogOut, Settings, Bell, MessageSquare } from 'lucide-react';
 import { useChat } from '../contexts/ChatContext';
 import { useGlobalChat } from '../contexts/GlobalChatContext';
+import UserProfile from './UserProfile';
 import es from '../locales/es';
 
 export default function Navigation() {
-  const { user, signOut } = useSupabaseAuth();
+  const { signOut } = useSupabaseAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
   const hasRendered = useRef(false);
   
@@ -32,7 +32,6 @@ export default function Navigation() {
   const handleSignOut = async () => {
     try {
       await signOut();
-      setIsUserMenuOpen(false);
       router.push('/auth/login');
     } catch (error) {
       // Error al cerrar sesión
@@ -125,31 +124,18 @@ export default function Navigation() {
               <span className="sr-only">{es.notificationsTooltip}</span>
             </button>
 
-            {/* User Menu */}
-            <div className="relative">
+            {/* User Profile */}
+            <div className="flex items-center space-x-4">
+              <UserProfile showEmail={false} />
+              
+              {/* Sign Out Button */}
               <button
-                onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="flex items-center space-x-2 p-2 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                onClick={handleSignOut}
+                className="p-2 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                title={es.signOut}
               >
-                <User className="h-5 w-5" />
-                <span className="text-sm font-medium text-gray-700">
-                  {user?.email || 'Usuario'}
-                </span>
+                <LogOut className="h-5 w-5" />
               </button>
-
-              {isUserMenuOpen && (
-                <div className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-50">
-                  <div className="py-1">
-                    <button
-                      onClick={handleSignOut}
-                      className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                    >
-                      <LogOut className="h-4 w-4 mr-2" />
-                      {es.signOut}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 
@@ -192,18 +178,8 @@ export default function Navigation() {
           </div>
 
           <div className="pt-4 pb-3 border-t border-gray-200">
-            <div className="flex items-center px-4">
-              <div className="flex-shrink-0">
-                <User className="h-8 w-8 text-gray-400" />
-              </div>
-              <div className="ml-3">
-                <div className="text-base font-medium text-gray-800">
-                  {user?.email || 'Usuario'}
-                </div>
-                <div className="text-sm font-medium text-gray-500">
-                  {user?.email}
-                </div>
-              </div>
+            <div className="px-4">
+              <UserProfile showEmail={true} className="mb-3" />
             </div>
             <div className="mt-3 space-y-1">
                              {/* Chat Button Mobile */}

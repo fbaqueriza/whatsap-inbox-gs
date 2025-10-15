@@ -202,33 +202,8 @@ function DashboardPageContent({
       const createdOrder = await addOrder(newOrder, user.id);
       
       if (createdOrder) {
-        // Enviar notificación al proveedor en segundo plano
-        const provider = providers.find(p => p.id === orderData.providerId);
-        
-        if (provider) {
-          // Ejecutar en segundo plano sin bloquear la UI
-          fetch('/api/orders/send-notification', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              order: createdOrder,
-              userId: user.id
-            }),
-          }).then(response => {
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-            }
-            return response.json();
-          }).then(data => {
-            // Notificación enviada exitosamente
-          }).catch(error => {
-            console.error('Error enviando notificación de pedido:', error);
-          });
-        } else {
-          console.error('Proveedor no encontrado para ID:', orderData.providerId);
-        }
+        // 🔧 FIX: La notificación se envía desde DataProvider, no desde aquí
+        console.log('✅ Orden creada exitosamente');
       } else {
         console.error('No se pudo crear la orden - pero modal permanece cerrado para mejor UX');
         // No reabrir modal - el usuario puede crear una nueva orden si es necesario

@@ -160,38 +160,8 @@ export default function IntegratedChatPanel({
     addMessage
   } = useChat();
 
-  // Función para verificar si han pasado 24 horas desde el último mensaje ENVIADO POR EL PROVEEDOR
-  const hanPasado24Horas = (): boolean => {
-    if (!currentContact) return false;
-    
-    const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
-    const contactMessages = messagesByContact[normalizedPhone];
-    
-    if (!contactMessages || contactMessages.length === 0) {
-      return true; // Si no hay mensajes, mostrar botón para iniciar conversación
-    }
-    
-    // 🔧 FILTRAR SOLO MENSAJES ENVIADOS POR EL PROVEEDOR (mensajes recibidos por nosotros)
-    // Los mensajes del proveedor tienen messageType: 'received'
-    const providerMessages = contactMessages.filter(msg => msg.messageType === 'received');
-    
-    if (providerMessages.length === 0) {
-      return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
-    }
-    
-    // Obtener el último mensaje ENVIADO POR EL PROVEEDOR
-    const lastProviderMessage = providerMessages[providerMessages.length - 1];
-    
-    if (!lastProviderMessage) {
-      return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
-    }
-    
-    const lastMessageTime = new Date(lastProviderMessage.timestamp);
-    const now = new Date();
-    const hoursDiff = (now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60);
-    
-    return hoursDiff >= 24;
-  };
+  // 🔧 CORRECCIÓN: Estado reactivo para la ventana de 24 horas
+  const [isConversationExpired, setIsConversationExpired] = useState(false);
 
 
   // Función helper para obtener icono de archivo
@@ -341,9 +311,7 @@ export default function IntegratedChatPanel({
           name: providerName,
           phone: providerPhone,
           lastMessage: null,
-          unreadCount: 0,
-          isOnline: false,
-          lastSeen: null
+          unreadCount: 0
         };
         
         // Agregar el contacto temporal a la lista
@@ -381,6 +349,50 @@ export default function IntegratedChatPanel({
   // Usar el estado global del chat
   const isPanelOpen = isGlobalChatOpen || isOpen;
   const currentContact = selectedContact; // Usar solo selectedContact del contexto de chat
+
+  // Función para verificar si han pasado 24 horas desde el último mensaje ENVIADO POR EL PROVEEDOR
+  const checkConversationExpiry = useCallback((): boolean => {
+    if (!currentContact) return false;
+    
+    const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
+    const contactMessages = messagesByContact[normalizedPhone];
+    
+    if (!contactMessages || contactMessages.length === 0) {
+      return true; // Si no hay mensajes, mostrar botón para iniciar conversación
+    }
+    
+    // 🔧 FILTRAR SOLO MENSAJES ENVIADOS POR EL PROVEEDOR (mensajes recibidos por nosotros)
+    // Los mensajes del proveedor tienen type: 'received'
+    const providerMessages = contactMessages.filter(msg => msg.type === 'received');
+    
+    if (providerMessages.length === 0) {
+      return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
+    }
+    
+    // Obtener el último mensaje ENVIADO POR EL PROVEEDOR
+    const lastProviderMessage = providerMessages[providerMessages.length - 1];
+    
+    if (!lastProviderMessage) {
+      return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
+    }
+    
+    const lastMessageTime = new Date(lastProviderMessage.timestamp);
+    const now = new Date();
+    const hoursDiff = (now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60);
+    
+    return hoursDiff >= 24;
+  }, [currentContact, messagesByContact]);
+
+  // 🔧 CORRECCIÓN: Actualizar estado cuando cambien los mensajes
+  useEffect(() => {
+    const expired = checkConversationExpiry();
+    setIsConversationExpired(expired);
+  }, [checkConversationExpiry, messagesByContact, currentContact]);
+
+  // Función para compatibilidad (mantener la interfaz existente)
+  const hanPasado24Horas = (): boolean => {
+    return isConversationExpired;
+  };
 
   // Verificar si el usuario está autenticado
   const { isUserAuthenticated } = useChat();

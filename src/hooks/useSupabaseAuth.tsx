@@ -15,6 +15,7 @@ interface SupabaseAuthContextType {
   resetPassword: (email: string) => Promise<void>;
   clearEmailVerification: () => void;
   clearEmailVerified: () => void;
+  getSession: () => Promise<any>;
 }
 
 const SupabaseAuthContext = createContext<SupabaseAuthContextType | undefined>(undefined);
@@ -154,6 +155,12 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
     if (error) throw error;
   };
 
+  const getSession = async () => {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    return data.session;
+  };
+
   return (
     <SupabaseAuthContext.Provider value={{ 
       user, 
@@ -165,7 +172,8 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
       signOut, 
       resetPassword,
       clearEmailVerification, 
-      clearEmailVerified 
+      clearEmailVerified,
+      getSession
     }}>
       {children}
     </SupabaseAuthContext.Provider>

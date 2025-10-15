@@ -269,29 +269,8 @@ function OrdersPage({ user }: OrdersPageProps) {
         // console.log('🔧 DEBUG - Orden a notificar:', newOrder);
         // console.log('🔧 DEBUG - Usuario ID:', user.id);
         
-        try {
-          // console.log('🔧 DEBUG - Llamando a /api/orders/send-notification...');
-          const response = await fetch('/api/orders/send-notification', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ order: newOrder, userId: user.id }),
-          });
-          
-          // console.log('🔧 DEBUG - Respuesta recibida:', {
-          //   status: response.status,
-          //   statusText: response.statusText,
-          //   ok: response.ok
-          // });
-          
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error('❌ Error enviando notificación:', errorText);
-          } else {
-            console.log('✅ Notificación enviada exitosamente');
-          }
-        } catch (error) {
-          console.error('❌ Error enviando notificación:', error);
-        }
+        // 🔧 FIX: La notificación se envía desde DataProvider, no desde aquí
+        console.log('✅ Orden creada exitosamente');
       }
     } catch (error) {
       console.error('Error creando pedido:', error);
@@ -357,6 +336,7 @@ function OrdersPage({ user }: OrdersPageProps) {
       console.error('❌ Proveedor no encontrado para orden:', order.id);
     }
   };
+
 
   return (
     <div className="min-h-screen bg-gray-50">

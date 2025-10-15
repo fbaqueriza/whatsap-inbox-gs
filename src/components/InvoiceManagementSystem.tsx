@@ -63,8 +63,8 @@ const OrderRow = memo(({
   getStatusClass 
 }: {
   payment: PendingPayment;
-  onEdit: (orderId: string) => void;
-  onUploadReceipt: (orderId: string) => void;
+  onEdit?: (orderId: string) => void;
+  onUploadReceipt?: (orderId: string) => void;
   formatCurrency: (amount: number, currency: string) => string;
   formatDate: (date: string) => string;
   getStatusDisplay: (status: string) => string;
@@ -94,20 +94,33 @@ const OrderRow = memo(({
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
         <div className="flex space-x-2">
-          <button
-            onClick={() => onEdit(payment.id)}
-            className="text-blue-600 hover:text-blue-900"
-            title="Editar orden"
-          >
-            <Edit className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => onUploadReceipt(payment.id)}
-            className="text-green-600 hover:text-green-900"
-            title="Subir comprobante"
-          >
-            <Upload className="h-4 w-4" />
-          </button>
+          {onEdit && (
+            <button
+              onClick={() => onEdit(payment.id)}
+              className="text-blue-600 hover:text-blue-900"
+              title="Editar orden"
+            >
+              <Edit className="h-4 w-4" />
+            </button>
+          )}
+          {payment.status === 'standby' && onSendOrder && (
+            <button
+              onClick={() => onSendOrder(payment.id)}
+              className="text-orange-600 hover:text-orange-900"
+              title="Enviar pedido"
+            >
+              <Upload className="h-4 w-4" />
+            </button>
+          )}
+          {onUploadReceipt && (
+            <button
+              onClick={() => onUploadReceipt(payment.id)}
+              className="text-green-600 hover:text-green-900"
+              title="Subir comprobante"
+            >
+              <Upload className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </td>
     </tr>
@@ -116,7 +129,15 @@ const OrderRow = memo(({
 
 OrderRow.displayName = 'OrderRow';
 
-export default function InvoiceManagementSystem() {
+interface InvoiceManagementSystemProps {
+  onEdit?: (orderId: string) => void;
+  onUploadReceipt?: (orderId: string, file: File) => void;
+}
+
+export default function InvoiceManagementSystem({ 
+  onEdit, 
+  onUploadReceipt 
+}: InvoiceManagementSystemProps = {}) {
   const { orders, providers, updateOrder } = useData();
   const { user } = useSupabaseAuth();
   const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
@@ -656,7 +677,7 @@ export default function InvoiceManagementSystem() {
                               <DollarSign className="w-4 h-4" />
                             </button>
                           )}
-                          
+
                           
                           {payment.receipt_url && (
                           <button

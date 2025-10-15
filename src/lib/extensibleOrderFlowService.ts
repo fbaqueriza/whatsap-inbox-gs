@@ -152,38 +152,25 @@ export class ExtensibleOrderFlowService {
         // Solo debe cambiar a 'pagado' cuando se suba un comprobante de pago válido
         console.log('⚠️ [ExtensibleOrderFlow] Estado "pendiente_de_pago" - no se permiten transiciones por mensaje de texto');
         return { success: false, message: 'No hay transición disponible' };
+      } else if (foundOrder.status === 'standby') {
+        // 🔧 AUTOMÁTICO: En estado 'standby', cualquier respuesta del proveedor activa la transición
+        console.log('✅ [ExtensibleOrderFlow] Respuesta del proveedor recibida, activando transición automática standby → enviado');
+        
+        // Obtener la transición configurada
+        const transition = getNextTransition(foundOrder.status, 'text');
+        if (!transition) {
+          console.log('⚠️ [ExtensibleOrderFlow] No hay transición configurada para standby → enviado');
+          return { success: false, message: 'No hay transición configurada' };
+        }
+
+        // Ejecutar la transición automática
+        return await this.executeTransition(foundOrder, transition, normalizedPhone, message);
       }
 
-      // Para otros estados (standby), permitir mensajes de texto
-      console.log('✅ [ExtensibleOrderFlow] Procesando respuesta del proveedor en estado:', foundOrder.status);
-
-      // Obtener la siguiente transición basada en el estado actual
-      console.log('🔄 [ExtensibleOrderFlow] Obteniendo transición para estado:', foundOrder.status);
-      const transition = getNextTransition(foundOrder.status);
-      console.log('🔄 [ExtensibleOrderFlow] Transición obtenida:', transition);
-      
-      if (!transition) {
-        console.log('❌ [ExtensibleOrderFlow] No hay transición disponible para este estado');
-        return { success: false, message: 'No hay transición disponible para este estado' };
-      }
-
-      // Validar que la transición es válida
-      const isValid = isValidTransition(foundOrder.status, transition.next);
-      console.log('✅ [ExtensibleOrderFlow] Transición válida:', isValid);
-      
-      if (!isValid) {
-        console.log('❌ [ExtensibleOrderFlow] Transición inválida');
-        return { success: false, errors: ['Transición inválida'] };
-      }
-
-      // 🔧 CORRECCIÓN: Solo ejecutar UNA transición por vez
-      console.log(`🔄 [ExtensibleFlow] Ejecutando transición: ${foundOrder.status} → ${transition.next}`);
-      const result = await this.executeTransition(foundOrder, transition, normalizedPhone, message);
-      
-      // 🔧 IMPORTANTE: No ejecutar transiciones adicionales automáticamente
-      // El proveedor debe responder de nuevo para la siguiente transición
-      console.log('✅ [ExtensibleOrderFlow] Transición completada - esperando nueva respuesta del proveedor');
-      return result;
+      // 🔧 CORRECCIÓN: Si llegamos aquí, significa que no hay transición válida
+      // No procesar ninguna transición automática
+      console.log('⚠️ [ExtensibleOrderFlow] No hay transición válida para procesar');
+      return { success: false, message: 'No hay transición disponible para este estado' };
 
     } catch (error) {
       return {

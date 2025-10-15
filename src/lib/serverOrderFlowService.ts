@@ -217,6 +217,35 @@ export class ServerOrderFlowService {
       );
 
       console.log('📤 [ServerOrderFlow] Resultado del envío:', result);
+
+      // 🔧 FIX: Guardar mensaje del template en la BD para que aparezca en el chat
+      if (result && result.messages && result.messages[0]) {
+        try {
+          const messageData = {
+            content: `Buen día ${templateVariables.contact_name}! Espero que andes bien!\nEn cuanto me confirmes, paso el pedido de esta semana.`,
+            message_type: 'sent',
+            status: 'sent',
+            contact_id: phone,
+            user_id: order.user_id,
+            message_sid: result.messages[0].id,
+            timestamp: new Date().toISOString(),
+            created_at: new Date().toISOString()
+          };
+
+          const { error: messageError } = await this.supabase
+            .from('whatsapp_messages')
+            .insert([messageData]);
+
+          if (messageError) {
+            console.error('❌ [ServerOrderFlow] Error guardando mensaje del template:', messageError);
+          } else {
+            console.log('✅ [ServerOrderFlow] Mensaje del template guardado en el chat');
+          }
+        } catch (error) {
+          console.error('❌ [ServerOrderFlow] Error guardando mensaje del template:', error);
+        }
+      }
+
       return { success: !!result };
 
     } catch (error) {

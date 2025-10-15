@@ -21,7 +21,7 @@ export const ORDER_FLOW_CONFIG = {
     [ORDER_STATUS.STANDBY]: {
       next: ORDER_STATUS.ENVIADO,
       trigger: 'provider_response',
-      action: 'send_order_details'
+      action: 'send_order_details' // Enviar detalles del pedido cuando el proveedor responde
     },
     
     // enviado → pendiente_de_pago (documento del proveedor con factura válida)
@@ -117,7 +117,7 @@ Saludos!`;
 } as const;
 
 // 🔧 Función para obtener la siguiente transición
-export function getNextTransition(currentState: string): { next: string; trigger: string; action: string } | null {
+export function getNextTransition(currentState: string): { next: string; trigger: string; action: string | null } | null {
   const transition = ORDER_FLOW_CONFIG.TRANSITIONS[currentState as keyof typeof ORDER_FLOW_CONFIG.TRANSITIONS];
   return transition || null;
 }

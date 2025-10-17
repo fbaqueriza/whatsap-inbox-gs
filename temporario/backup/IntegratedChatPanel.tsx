@@ -1,13 +1,12 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Paperclip, Phone, Video, MoreVertical, Plus, Search, MessageSquare, X, FileText, Download, Image, File, Smile, Mic, RefreshCw, MessageCircle } from 'lucide-react';
 import { useChat } from '../contexts/ChatContext';
 import { useGlobalChat } from '../contexts/GlobalChatContext';
 import { WhatsAppMessage, Contact } from '../types/whatsapp';
 import React from 'react';
 import WhatsAppStatusIndicator from './WhatsAppStatusIndicator';
-import { useKapsoRealtime } from '../hooks/useKapsoRealtime';
 // Función simplificada para normalizar números de teléfono
 const normalizeContactIdentifier = (identifier: string): string => {
   if (!identifier) return '';
@@ -161,22 +160,8 @@ export default function IntegratedChatPanel({
     addMessage
   } = useChat();
 
-  // 🔧 NUEVO: Hook de Kapso para tiempo real
-  const {
-    messages: kapsoMessages,
-    conversations: kapsoConversations,
-    contacts: kapsoContacts,
-    isConnected: kapsoConnected,
-    isLoading: kapsoLoading,
-    error: kapsoError,
-    refreshMessages: refreshKapsoMessages,
-    refreshConversations: refreshKapsoConversations,
-    refreshContacts: refreshKapsoContacts,
-  } = useKapsoRealtime();
-
-  // 🔧 DEBUG: Logging de datos de Kapso (solo en desarrollo)
-  // useEffect removido para evitar loop infinito
-
+  // 🔧 CORRECCIÓN: Estado reactivo para la ventana de 24 horas
+  const [isConversationExpired, setIsConversationExpired] = useState(false);
 
 
   // Función helper para obtener icono de archivo
@@ -365,69 +350,44 @@ export default function IntegratedChatPanel({
   const isPanelOpen = isGlobalChatOpen || isOpen;
   const currentContact = selectedContact; // Usar solo selectedContact del contexto de chat
 
-  // 🔧 SOLUCIÓN UNIFICADA: Combinar mensajes de ambos sistemas de manera inteligente
-  const unifiedMessages = useMemo(() => {
-    if (!currentContact?.phone) return [];
+  // Función para verificar si han pasado 24 horas desde el último mensaje ENVIADO POR EL PROVEEDOR
+  const checkConversationExpiry = useCallback((): boolean => {
+    if (!currentContact) return false;
     
     const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
+    const contactMessages = messagesByContact[normalizedPhone];
     
-    // Obtener mensajes del sistema anterior
-    const systemMessages = messagesByContact[normalizedPhone] || [];
-    
-    // Obtener mensajes de Kapso para este contacto
-    const kapsoMessagesForContact = kapsoMessages?.filter(msg => {
-      const msgFromPhone = normalizeContactIdentifier(msg.from_number);
-      const msgToPhone = normalizeContactIdentifier(msg.to_number);
-      return msgFromPhone === normalizedPhone || msgToPhone === normalizedPhone;
-    }).map(kapsoMsg => {
-      const isFromContact = normalizeContactIdentifier(kapsoMsg.from_number) === normalizedPhone;
-      
-      return {
-        id: kapsoMsg.id,
-        content: kapsoMsg.content,
-        type: isFromContact ? 'received' : 'sent',
-        timestamp: new Date(kapsoMsg.timestamp),
-        status: (kapsoMsg.status === 'delivered' ? 'delivered' : 'sent') as 'sent' | 'delivered' | 'read' | 'failed',
-        contact_id: normalizedPhone,
-        isKapsoMessage: true,
-        isTemplate: false,
-        templateName: undefined,
-        media_url: kapsoMsg.media_url,
-        media_type: kapsoMsg.media_type
-      };
-    }) || [];
-    
-    // Combinar y ordenar por timestamp
-    const allMessages = [...systemMessages, ...kapsoMessagesForContact];
-    return allMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-  }, [currentContact?.phone, messagesByContact, kapsoMessages]);
-
-  // 🔧 SOLUCIÓN DEFINITIVA: Usar useMemo para calcular isConversationExpired sin useEffect
-  const isConversationExpired = useMemo(() => {
-    if (!currentContact) {
-      return false;
+    if (!contactMessages || contactMessages.length === 0) {
+      return true; // Si no hay mensajes, mostrar botón para iniciar conversación
     }
     
-    // Usar los mensajes unificados
-    if (unifiedMessages.length === 0) {
-      return true;
+    // 🔧 FILTRAR SOLO MENSAJES ENVIADOS POR EL PROVEEDOR (mensajes recibidos por nosotros)
+    // Los mensajes del proveedor tienen type: 'received'
+    const providerMessages = contactMessages.filter(msg => msg.type === 'received');
+    
+    if (providerMessages.length === 0) {
+      return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
     }
     
-    // Buscar el último mensaje recibido (del proveedor)
-    const lastReceivedMessage = unifiedMessages
-      .filter(msg => msg.type === 'received')
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+    // Obtener el último mensaje ENVIADO POR EL PROVEEDOR
+    const lastProviderMessage = providerMessages[providerMessages.length - 1];
     
-    if (!lastReceivedMessage) {
-      return true;
+    if (!lastProviderMessage) {
+      return true; // Si el proveedor nunca envió un mensaje, mostrar botón para iniciar conversación
     }
     
-    const lastMessageTime = new Date(lastReceivedMessage.timestamp);
+    const lastMessageTime = new Date(lastProviderMessage.timestamp);
     const now = new Date();
     const hoursDiff = (now.getTime() - lastMessageTime.getTime()) / (1000 * 60 * 60);
     
     return hoursDiff >= 24;
-  }, [currentContact, unifiedMessages]);
+  }, [currentContact, messagesByContact]);
+
+  // 🔧 CORRECCIÓN: Actualizar estado cuando cambien los mensajes
+  useEffect(() => {
+    const expired = checkConversationExpiry();
+    setIsConversationExpired(expired);
+  }, [checkConversationExpiry, messagesByContact, currentContact]);
 
   // Función para compatibilidad (mantener la interfaz existente)
   const hanPasado24Horas = (): boolean => {
@@ -446,11 +406,12 @@ export default function IntegratedChatPanel({
     if (onClose) onClose();
   };
 
-  // 🔧 SOLUCIÓN DEFINITIVA: Usar useMemo para combinar contactos sin useEffect
-  const combinedContacts = useMemo(() => {
-    // Si no hay proveedores cargados, devolver array vacío
+  // Combinar proveedores con contactos de mensajes - CARGA CON ESTADO DE CARGA
+  useEffect(() => {
+    // Si no hay proveedores cargados, mantener estado de carga
     if (!providers || providers.length === 0) {
-      return [];
+      setIsLoading(true);
+      return;
     }
 
     const allContacts: Contact[] = [];
@@ -504,53 +465,11 @@ export default function IntegratedChatPanel({
         existingContact.providerId = provider.id;
       }
     });
-
-    // 🔧 NUEVO: PASO 3: Agregar contactos de Kapso
-    if (kapsoConversations && kapsoConversations.length > 0 && kapsoMessages && kapsoMessages.length > 0) {
-      kapsoConversations.forEach(conversation => {
-        const normalizedPhone = normalizeContactIdentifier(conversation.phone_number);
-        const existingContact = allContacts.find(c => c.phone === normalizedPhone);
-        
-        // 🔧 CORRECCIÓN: Buscar el último mensaje real del contacto en kapsoMessages
-        const contactMessages = kapsoMessages.filter(msg => {
-          const msgFromPhone = normalizeContactIdentifier(msg.from_number);
-          const msgToPhone = normalizeContactIdentifier(msg.to_number);
-          return msgFromPhone === normalizedPhone || msgToPhone === normalizedPhone;
-        });
-        
-        // Ordenar por timestamp y obtener el último mensaje
-        const lastMessage = contactMessages.length > 0 
-          ? contactMessages.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]
-          : null;
-        
-        if (!existingContact) {
-          // Contacto de Kapso sin proveedor - agregarlo
-          allContacts.push({
-            id: conversation.id,
-            name: conversation.contact_name || conversation.phone_number,
-            phone: normalizedPhone,
-            lastMessage: lastMessage?.content || '',
-            lastMessageTime: lastMessage ? new Date(lastMessage.timestamp) : new Date(conversation.last_message_at),
-            unreadCount: 0,
-            isKapsoContact: true
-          });
-        } else {
-          // Actualizar el contacto existente con datos de Kapso
-          existingContact.lastMessage = lastMessage?.content || existingContact.lastMessage;
-          existingContact.lastMessageTime = lastMessage ? new Date(lastMessage.timestamp) : new Date(conversation.last_message_at);
-          existingContact.isKapsoContact = true;
-        }
-      });
-    }
     
-    return allContacts;
-  }, [sortedContacts, providers, kapsoConversations, kapsoMessages?.length]); // 🔧 CORRECCIÓN: Usar length en lugar del array completo
-
-  // 🔧 ACTUALIZAR ESTADO DE CONTACTOS Y LOADING
-  useEffect(() => {
-    setContacts(combinedContacts);
-    setIsLoading(combinedContacts.length === 0 && providers && providers.length > 0);
-  }, [combinedContacts, providers]);
+    setContacts(allContacts);
+    setIsLoading(false);
+    
+  }, [sortedContacts, providers]);
 
   // Listener para seleccionar contactos desde botones externos
   useEffect(() => {
@@ -654,40 +573,20 @@ export default function IntegratedChatPanel({
       const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
       markAsRead(normalizedPhone);
     }
-  }, [currentContact?.phone, isPanelOpen, markAsRead]); // 🔧 CORRECCIÓN: Incluir markAsRead en dependencias
-
-  // 🔧 NUEVO: Cargar mensajes de Kapso cuando se selecciona un contacto
-  useEffect(() => {
-    if (currentContact?.phone && kapsoConversations && kapsoConversations.length > 0) {
-      const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
-      
-      // Buscar la conversación de Kapso correspondiente
-      const kapsoConversation = kapsoConversations.find(conv => 
-        normalizeContactIdentifier(conv.phone_number) === normalizedPhone
-      );
-      
-      if (kapsoConversation) {
-        // Cargar mensajes de Kapso sin logs para evitar loop
-        refreshKapsoMessages(kapsoConversation.conversation_id);
-      }
-    }
-  }, [currentContact?.phone]); // 🔧 CORRECCIÓN: Solo depender del contacto actual
+  }, [currentContact?.phone, isPanelOpen, markAsRead]);
 
   // Marcar como leído automáticamente cuando llegan nuevos mensajes a la conversación activa
   useEffect(() => {
     if (currentContact?.phone && isPanelOpen) {
       const normalizedPhone = normalizeContactIdentifier(currentContact.phone);
+      const contactMessages = messagesByContact[normalizedPhone];
       
-      // Usar los mensajes unificados
-      const unreadMessages = unifiedMessages.filter(msg => 
-        msg.type === 'received' && msg.status !== 'read'
-      );
-      
-      if (unreadMessages.length > 0) {
+      // Si hay mensajes no leídos en la conversación activa, marcarlos como leídos
+      if (contactMessages && contactMessages.some(msg => msg.type === 'received' && msg.status !== 'read')) {
         markAsRead(normalizedPhone);
       }
     }
-  }, [currentContact?.phone, isPanelOpen, unifiedMessages.length, markAsRead]); // 🔧 CORRECCIÓN: Usar length en lugar del array completo
+  }, [messagesByContact, currentContact?.phone, isPanelOpen, markAsRead]);
 
   // Scroll al final de los mensajes (optimizado)
   const scrollToBottom = useCallback(() => {
@@ -699,15 +598,6 @@ export default function IntegratedChatPanel({
       });
     }
   }, []);
-
-  // Scroll automático cuando cambien los mensajes unificados
-  useEffect(() => {
-    if (unifiedMessages.length > 0) {
-      setTimeout(() => {
-        scrollToBottom();
-      }, 100);
-    }
-  }, [unifiedMessages.length]); // 🔧 CORRECCIÓN: Remover scrollToBottom de dependencias
 
   // Scroll automático cuando cambia el contacto o llegan nuevos mensajes
   useEffect(() => {
@@ -723,7 +613,7 @@ export default function IntegratedChatPanel({
         }
       }, 200); // Aumentar delay para asegurar que el DOM esté listo
     }
-  }, [currentContact?.phone]); // 🔧 CORRECCIÓN: Solo depender del contacto actual
+  }, [currentContact?.phone, messagesByContact[currentContact?.phone || '']?.length]); // Agregar dependencia de cantidad de mensajes
 
   // Scroll adicional cuando se abre el chat por primera vez
   useEffect(() => {
@@ -897,16 +787,7 @@ export default function IntegratedChatPanel({
             <MessageSquare className="h-6 w-6" />
             <div>
               <h2 className="text-lg font-semibold">WhatsApp Business</h2>
-              <div className="flex items-center space-x-2">
-                <WhatsAppStatusIndicator className="text-green-100" />
-                {/* 🔧 NUEVO: Indicador de estado de Kapso */}
-                <div className="flex items-center space-x-1">
-                  <div className={`w-2 h-2 rounded-full ${kapsoConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
-                  <span className="text-xs text-green-100">
-                    Kapso: {kapsoConnected ? 'Conectado' : 'Desconectado'}
-                  </span>
-                </div>
-              </div>
+              <WhatsAppStatusIndicator className="text-green-100" />
               <NotificationPermission />
             </div>
           </div>
@@ -1042,8 +923,10 @@ export default function IntegratedChatPanel({
                                {/* Mensajes */}
                 <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 bg-gray-100">
                   {(() => {
-                    // Usar los mensajes unificados
-                    return unifiedMessages.map((message) => (
+                    const normalizedPhone = currentContact ? normalizeContactIdentifier(currentContact.phone) : '';
+                    const contactMessages = currentContact && messagesByContact[normalizedPhone];
+                    
+                    return contactMessages?.map((message) => (
               <div
                 key={message.id}
                        className={`flex ${message.type === 'sent' ? 'justify-end' : 'justify-start'}`}

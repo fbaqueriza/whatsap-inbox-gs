@@ -42,4 +42,6 @@ export interface Contact {
   email?: string;
   address?: string;
   category?: string;
+  // Campo para identificar contactos de Kapso
+  isKapsoContact?: boolean;
 } 

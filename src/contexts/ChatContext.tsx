@@ -299,100 +299,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   // Usar useRef para mantener referencia estable del listener
   const realtimeListenerRef = useRef<(() => void) | null>(null);
   
-  useEffect(() => {
-    // Si ya hay un listener configurado, limpiarlo
-    if (realtimeListenerRef.current) {
-      realtimeListenerRef.current();
-      realtimeListenerRef.current = null;
-    }
-
-    // Crear nuevo listener estable
-    const removeListener = addMessageListener((realtimeMessage) => {
-      // Convertir mensaje del servicio global al formato del chat
-      const chatMessage: ChatWhatsAppMessage = {
-        id: realtimeMessage.id,
-        content: realtimeMessage.content,
-        timestamp: realtimeMessage.timestamp,
-        type: realtimeMessage.type,
-        contact_id: realtimeMessage.contact_id,
-        status: realtimeMessage.status as 'sent' | 'delivered' | 'read' | 'failed' | undefined,
-        // 🔧 FIX: Incluir campos de documentos para que aparezcan en el chat
-        isDocument: !!(realtimeMessage as any).media_url,
-        mediaUrl: (realtimeMessage as any).media_url,
-        filename: (realtimeMessage as any).media_url 
-          ? (realtimeMessage as any).media_url.split('/').pop()?.split('_').slice(1).join('_') || 'documento' 
-          : undefined,
-        mediaType: (realtimeMessage as any).media_type
-      };
-
-      setMessages(prev => {
-        // Verificar duplicados por ID exacto - verificación más estricta
-        const messageExists = prev.some(msg => 
-          msg.id === chatMessage.id && 
-          msg.contact_id === chatMessage.contact_id
-        );
-        
-        if (messageExists) {
-          return prev;
-        }
-        
-        // Verificar duplicados por contenido y contacto en los últimos 30 segundos
-        const recentDuplicate = prev.find(msg => 
-          msg.content === chatMessage.content &&
-          msg.contact_id === chatMessage.contact_id &&
-          msg.type === 'sent' &&
-          Math.abs(new Date(msg.timestamp).getTime() - new Date(chatMessage.timestamp).getTime()) < 30000
-        );
-        
-        if (recentDuplicate) {
-          return prev;
-        }
-        
-        // Para mensajes enviados, buscar si hay un mensaje temporal que debe ser reemplazado
-        if (chatMessage.type === 'sent') {
-          const tempMessageIndex = prev.findIndex(msg => {
-            if (!msg.id.startsWith('temp_')) return false;
-            if (msg.content !== chatMessage.content) return false;
-            
-            // Comparar contactos normalizados
-            const normalizedTempContact = normalizeContactIdentifier(msg.contact_id);
-            const normalizedRealContact = normalizeContactIdentifier(chatMessage.contact_id);
-            if (normalizedTempContact !== normalizedRealContact) return false;
-            
-            // Verificar ventana de tiempo
-            const tempTime = new Date(msg.timestamp).getTime();
-            const realTime = new Date(chatMessage.timestamp).getTime();
-            const timeDiff = Math.abs(tempTime - realTime);
-            
-            return timeDiff < 60000; // 60 segundos
-          });
-          
-          if (tempMessageIndex !== -1) {
-            const updatedMessages = [...prev];
-            updatedMessages[tempMessageIndex] = {
-              ...chatMessage,
-              id: chatMessage.id,
-              status: 'delivered' as const
-            };
-            return updatedMessages;
-          }
-        }
-        
-        // Agregar el nuevo mensaje sin duplicados
-        return [...prev, chatMessage];
-      });
-    });
-
-    // Almacenar referencia para cleanup
-    realtimeListenerRef.current = removeListener;
-
-    return () => {
-      if (realtimeListenerRef.current) {
-        realtimeListenerRef.current();
-        realtimeListenerRef.current = null;
-      }
-    };
-  }, [addMessageListener]); // ✅ DEPENDENCIA CORRECTA: Solo cambia cuando cambia el servicio
 
   // SIMULAR CONEXIÓN EXITOSA - REALTIME FUNCIONA
   useEffect(() => {
@@ -497,45 +403,58 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // SOLUCIÓN INTEGRAL markAsRead - ACTUALIZACIÓN INMEDIATA Y PERSISTENTE
+  // Debounce map para evitar llamadas múltiples
+  const markAsReadDebounceRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
+
   const markAsRead = useCallback(async (contactId: string) => {
     if (!contactId) return;
     
     // Usar la función unificada de normalización
     const normalizedContactId = normalizeContactIdentifier(contactId);
     
-    try {
-      // Actualizar estado local INMEDIATAMENTE
-      setMessages(prev => {
-        const updatedMessages = prev.map(msg => {
-          const normalizedMsgContactId = normalizeContactIdentifier(msg.contact_id);
-          const shouldMarkAsRead = normalizedMsgContactId === normalizedContactId && msg.type === 'received';
-          
-          return shouldMarkAsRead
-            ? { ...msg, status: 'read' as const }
-            : msg;
-        });
-        
-        return updatedMessages;
-      });
-
-      // Actualizar en Supabase (solo una vez)
-      const response = await fetch('/api/whatsapp/mark-as-read', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contactId: normalizedContactId
-        }),
-      });
-
-             if (response.ok) {
-        const result = await response.json();
-        // console.log('✅ Mensajes marcados como leídos para:', normalizedContactId);
-      }
-    } catch (error) {
-      console.error('Error marking as read:', error);
+    // Limpiar timeout anterior si existe
+    if (markAsReadDebounceRef.current[normalizedContactId]) {
+      clearTimeout(markAsReadDebounceRef.current[normalizedContactId]);
     }
+    
+    // Actualizar estado local INMEDIATAMENTE
+    setMessages(prev => {
+      const updatedMessages = prev.map(msg => {
+        const normalizedMsgContactId = normalizeContactIdentifier(msg.contact_id);
+        const shouldMarkAsRead = normalizedMsgContactId === normalizedContactId && msg.type === 'received';
+        
+        return shouldMarkAsRead
+          ? { ...msg, status: 'read' as const }
+          : msg;
+      });
+      
+      return updatedMessages;
+    });
+
+    // Debounce la llamada a la API para evitar deadlocks
+    markAsReadDebounceRef.current[normalizedContactId] = setTimeout(async () => {
+      try {
+        const response = await fetch('/api/whatsapp/mark-as-read', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contactId: normalizedContactId
+          }),
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          // console.log('✅ Mensajes marcados como leídos para:', normalizedContactId);
+        }
+      } catch (error) {
+        console.error('Error marking as read:', error);
+      } finally {
+        // Limpiar el timeout del ref
+        delete markAsReadDebounceRef.current[normalizedContactId];
+      }
+    }, 1000); // 🔧 CORRECCIÓN: Aumentar debounce a 1 segundo para evitar deadlocks
   }, []);
 
   // Función para seleccionar contacto
@@ -736,6 +655,119 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     forceReconnectSSE,
     addMessage
   ]);
+
+  // 🔧 MOVER AQUÍ: useEffect que usa sortedContacts (después de su definición)
+  useEffect(() => {
+    // Si ya hay un listener configurado, limpiarlo
+    if (realtimeListenerRef.current) {
+      realtimeListenerRef.current();
+      realtimeListenerRef.current = null;
+    }
+
+    // Crear nuevo listener estable
+    const removeListener = addMessageListener((realtimeMessage) => {
+      // Convertir mensaje del servicio global al formato del chat
+      const chatMessage: ChatWhatsAppMessage = {
+        id: realtimeMessage.id,
+        content: realtimeMessage.content,
+        timestamp: realtimeMessage.timestamp,
+        type: realtimeMessage.type,
+        contact_id: realtimeMessage.contact_id,
+        status: realtimeMessage.status as 'sent' | 'delivered' | 'read' | 'failed' | undefined,
+        // 🔧 FIX: Incluir campos de documentos para que aparezcan en el chat
+        isDocument: !!(realtimeMessage as any).media_url,
+        mediaUrl: (realtimeMessage as any).media_url,
+        filename: (realtimeMessage as any).media_url 
+          ? (realtimeMessage as any).media_url.split('/').pop()?.split('_').slice(1).join('_') || 'documento' 
+          : undefined,
+        mediaType: (realtimeMessage as any).media_type
+      };
+
+      setMessages(prev => {
+        // Verificar duplicados por ID exacto - verificación más estricta
+        const messageExists = prev.some(msg => 
+          msg.id === chatMessage.id && 
+          msg.contact_id === chatMessage.contact_id
+        );
+        
+        if (messageExists) {
+          return prev;
+        }
+        
+        // Verificar duplicados por contenido y contacto en los últimos 30 segundos
+        const recentDuplicate = prev.find(msg => 
+          msg.content === chatMessage.content &&
+          msg.contact_id === chatMessage.contact_id &&
+          msg.type === 'sent' &&
+          Math.abs(new Date(msg.timestamp).getTime() - new Date(chatMessage.timestamp).getTime()) < 30000
+        );
+        
+        if (recentDuplicate) {
+          return prev;
+        }
+        
+        // Para mensajes enviados, buscar si hay un mensaje temporal que debe ser reemplazado
+        if (chatMessage.type === 'sent') {
+          const tempMessageIndex = prev.findIndex(msg => {
+            if (!msg.id.startsWith('temp_')) return false;
+            if (msg.content !== chatMessage.content) return false;
+            
+            // Comparar contactos normalizados
+            const normalizedTempContact = normalizeContactIdentifier(msg.contact_id);
+            const normalizedRealContact = normalizeContactIdentifier(chatMessage.contact_id);
+            if (normalizedTempContact !== normalizedRealContact) return false;
+            
+            // Verificar ventana de tiempo
+            const tempTime = new Date(msg.timestamp).getTime();
+            const realTime = new Date(chatMessage.timestamp).getTime();
+            const timeDiff = Math.abs(tempTime - realTime);
+            
+            return timeDiff < 60000; // 60 segundos
+          });
+          
+          if (tempMessageIndex !== -1) {
+            const updatedMessages = [...prev];
+            updatedMessages[tempMessageIndex] = {
+              ...chatMessage,
+              id: chatMessage.id,
+              status: 'delivered' as const
+            };
+            return updatedMessages;
+          }
+        }
+        
+        // Agregar el nuevo mensaje sin duplicados
+        const newMessages = [...prev, chatMessage];
+        
+        // 🔔 ENVIAR NOTIFICACIÓN para mensajes recibidos (no enviados por nosotros)
+        if (chatMessage.type === 'received' && chatMessage.contact_id) {
+          // Buscar el contacto para obtener el nombre
+          const contact = sortedContacts.find(c => normalizeContactIdentifier(c.phone) === chatMessage.contact_id);
+          const contactName = contact?.name || 'Contacto';
+          
+          // Enviar notificación
+          sendNotification({
+            title: `Mensaje de ${contactName}`,
+            body: chatMessage.content || 'Nuevo mensaje recibido',
+            tag: 'whatsapp-message',
+            requireInteraction: true
+          });
+        }
+        
+        return newMessages;
+      });
+    });
+
+    // Almacenar referencia para cleanup
+    realtimeListenerRef.current = removeListener;
+
+    return () => {
+      if (realtimeListenerRef.current) {
+        realtimeListenerRef.current();
+        realtimeListenerRef.current = null;
+      }
+    };
+  }, [addMessageListener, sendNotification, sortedContacts]); // ✅ DEPENDENCIAS CORRECTAS: Incluir sendNotification y sortedContacts
 
   return (
     <ChatContext.Provider value={value}>

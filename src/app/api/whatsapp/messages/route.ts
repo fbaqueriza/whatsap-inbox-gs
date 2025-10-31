@@ -7,6 +7,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit') || '20';
     const providerId = searchParams.get('providerId');
     const userId = searchParams.get('userId');
+    const contactId = searchParams.get('contact_id');
 
     // 🔧 CORRECCIÓN: Requerir userId como parámetro obligatorio
     if (!userId) {
@@ -43,6 +44,11 @@ export async function GET(request: NextRequest) {
     // Si hay providerId específico, filtrar por él
     if (providerId) {
       query = query.eq('provider_id', providerId);
+    }
+    
+    // Si hay contactId específico, filtrar por él
+    if (contactId) {
+      query = query.eq('contact_id', contactId);
     }
     
     const { data: messages, error } = await query;

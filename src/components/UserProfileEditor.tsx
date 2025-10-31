@@ -30,6 +30,8 @@ export default function UserProfileEditor({ onClose, onProfileUpdated }: UserPro
   
   // Form states
   const [displayName, setDisplayName] = useState('');
+  const [razonSocial, setRazonSocial] = useState('');
+  const [cuit, setCuit] = useState('');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -61,6 +63,8 @@ export default function UserProfileEditor({ onClose, onProfileUpdated }: UserPro
       if (data.success) {
         setProfile(data.profile);
         setDisplayName(data.profile.displayName || '');
+        setRazonSocial(data.profile.razon_social || '');
+        setCuit(data.profile.cuit || '');
       } else {
         setError(data.error || 'Error cargando perfil');
       }
@@ -94,6 +98,24 @@ export default function UserProfileEditor({ onClose, onProfileUpdated }: UserPro
           displayName: displayName.trim() || null
         })
       });
+      // Guardar CUIT y Razón Social obligatorios
+      if (!razonSocial.trim() || !cuit.trim()) {
+        setError('Razón Social y CUIT son obligatorios');
+        setSaving(false);
+        return;
+      }
+      const upd = await fetch('/api/user/update-business-profile', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ razon_social: razonSocial.trim(), cuit: cuit.trim() })
+      });
+      const updData = await upd.json();
+      if (!updData.success) {
+        throw new Error(updData.error || 'Error actualizando CUIT/Razón Social');
+      }
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -307,6 +329,34 @@ export default function UserProfileEditor({ onClose, onProfileUpdated }: UserPro
             placeholder="Tu nombre como aparece en la plataforma"
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             maxLength={100}
+          />
+        </div>
+
+        {/* Razón Social */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Razón Social (obligatorio)
+          </label>
+          <input
+            type="text"
+            value={razonSocial}
+            onChange={(e) => setRazonSocial(e.target.value)}
+            placeholder="Razón Social de tu negocio"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        {/* CUIT */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            CUIT (obligatorio)
+          </label>
+          <input
+            type="text"
+            value={cuit}
+            onChange={(e) => setCuit(e.target.value)}
+            placeholder="XX-XXXXXXXX-X"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 

@@ -1,6 +1,7 @@
 import { getSupabaseServerClient } from './supabase/serverClient';
 import { metaWhatsAppService } from './metaWhatsAppService';
 import { ORDER_STATUS } from './orderConstants';
+import { ExtensibleOrderFlowService } from './extensibleOrderFlowService';
 
 /**
  * Servicio de flujo de órdenes para el SERVIDOR
@@ -127,6 +128,8 @@ export class ServerOrderFlowService {
         status: ORDER_STATUS.STANDBY,
         notes: order.notes || '',
         desired_delivery_date: order.desiredDeliveryDate,
+        desired_delivery_time: order.desiredDeliveryTime,
+        payment_method: order.paymentMethod || 'efectivo', // 🔧 FIX: Incluir método de pago
         total_amount: order.totalAmount || 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -139,9 +142,10 @@ export class ServerOrderFlowService {
         user_id: orderData.user_id
       });
 
+      // Idempotente por id (evitar duplicados si hay doble disparo)
       const { data, error } = await this.supabase
         .from('orders')
-        .insert([orderData])
+        .upsert(orderData, { onConflict: 'id' })
         .select()
         .single();
 
@@ -193,7 +197,7 @@ export class ServerOrderFlowService {
   /**
    * Enviar notificación de orden por WhatsApp
    */
-  private async sendOrderNotification(phone: string, order: any, provider: any): Promise<{ success: boolean; errors?: string[] }> {
+  private async sendOrderNotification(phone: string, order: any, provider: any): Promise<{ success: boolean; errors?: string[]; pendingApproval?: boolean; fallbackSent?: boolean }> {
     try {
       console.log('📤 [ServerOrderFlow] Iniciando envío de notificación:', {
         phone,
@@ -209,50 +213,189 @@ export class ServerOrderFlowService {
 
       console.log('📤 [ServerOrderFlow] Variables del template:', templateVariables);
 
-      const result = await metaWhatsAppService.sendTemplateWithVariables(
+      // ✅ Asegurar que los templates existan antes de enviar
+      try {
+        const { whatsappTemplateSetupService } = await import('./whatsappTemplateSetupService');
+        await whatsappTemplateSetupService.setupTemplatesForUser(order.user_id);
+      } catch (templateSetupError) {
+        console.error('⚠️ [ServerOrderFlow] No se pudieron preparar los templates automáticamente:', templateSetupError);
+      }
+
+      // ✅ ENVIAR TEMPLATE evio_orden usando la API de Kapso
+      // evio_orden actualmente tiene 1 parámetro en BODY -> usar solo el nombre del contacto
+      const templateResult = await this.sendTemplateMessage(
         phone,
         'evio_orden',
         'es_AR',
-        templateVariables
+        [templateVariables.contact_name],
+        order.user_id
       );
 
-      console.log('📤 [ServerOrderFlow] Resultado del envío:', result);
+      console.log('📤 [ServerOrderFlow] Resultado del envío de template:', templateResult);
 
-      // 🔧 FIX: Guardar mensaje del template en la BD para que aparezca en el chat
-      if (result && result.messages && result.messages[0]) {
+      // Si está pendiente de aprobación, intentar fallback con texto regular
+      if (!templateResult.success && (templateResult as any).code === 131037) {
         try {
-          const messageData = {
-            content: `Buen día ${templateVariables.contact_name}! Espero que andes bien!\nEn cuanto me confirmes, paso el pedido de esta semana.`,
-            message_type: 'sent',
-            status: 'sent',
-            contact_id: phone,
-            user_id: order.user_id,
-            message_sid: result.messages[0].id,
-            timestamp: new Date().toISOString(),
-            created_at: new Date().toISOString()
-          };
+          // Obtener phone_number_id del usuario
+          const { data: config } = await this.supabase
+            .from('user_whatsapp_config')
+            .select('phone_number_id')
+            .eq('user_id', order.user_id)
+            .eq('is_active', true)
+            .single();
 
-          const { error: messageError } = await this.supabase
-            .from('whatsapp_messages')
-            .insert([messageData]);
+          const phoneNumberId = config?.phone_number_id;
+          if (phoneNumberId) {
+            const { WhatsAppClient } = await import('@kapso/whatsapp-cloud-api');
+            const whatsappClient = new WhatsAppClient({
+              baseUrl: 'https://api.kapso.ai/meta/whatsapp',
+              kapsoApiKey: process.env.KAPSO_API_KEY!,
+              graphVersion: 'v24.0'
+            });
 
-          if (messageError) {
-            console.error('❌ [ServerOrderFlow] Error guardando mensaje del template:', messageError);
-          } else {
-            console.log('✅ [ServerOrderFlow] Mensaje del template guardado en el chat');
+            const body = `Buen día ${templateVariables.contact_name}! Espero que andes bien!\nEn cuanto me confirmes, paso el pedido de esta semana.`;
+
+            const textResult = await whatsappClient.messages.sendText({
+              phoneNumberId,
+              to: phone,
+              body
+            });
+
+            console.log('✅ [ServerOrderFlow] Fallback texto enviado:', textResult.messages?.[0]?.id);
+            return { success: true, pendingApproval: true, fallbackSent: true };
           }
-        } catch (error) {
-          console.error('❌ [ServerOrderFlow] Error guardando mensaje del template:', error);
+        } catch (fallbackError) {
+          console.warn('⚠️ [ServerOrderFlow] Fallback de texto falló:', fallbackError);
+          return { success: false, errors: ['Pendiente de aprobación y no se pudo enviar texto'], pendingApproval: true, fallbackSent: false };
         }
       }
 
-      return { success: !!result };
+      return { success: !!templateResult.success, pendingApproval: false };
 
     } catch (error) {
       console.error('❌ [ServerOrderFlow] Error enviando notificación:', error);
       return { 
         success: false, 
         errors: [error instanceof Error ? error.message : 'Error enviando notificación'] 
+      };
+    }
+  }
+
+  /**
+   * Enviar template de WhatsApp usando la API de Kapso
+   */
+  private async sendTemplateMessage(
+    phone: string, 
+    templateName: string, 
+    languageCode: string,
+    parameters: string[],
+    userId: string
+  ): Promise<{ success: boolean; error?: string; code?: number }> {
+    try {
+      console.log('📤 [ServerOrderFlow] Enviando template:', { phone, templateName, languageCode, parameters });
+
+      // Obtener phone_number_id del usuario
+      const { data: config } = await this.supabase
+        .from('user_whatsapp_config')
+        .select('phone_number_id')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .single();
+
+      if (!config?.phone_number_id) {
+        throw new Error('No se encontró configuración de WhatsApp para el usuario');
+      }
+
+      const phoneNumberId = config.phone_number_id;
+
+      // Usar WABA_ID configurado (evitar GET con campo removido por Meta)
+      const businessAccountId: string | undefined = process.env.WABA_ID || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+
+      // Usar WhatsAppClient de Kapso SDK para enviar template
+      const { WhatsAppClient, buildTemplateSendPayload } = await import('@kapso/whatsapp-cloud-api');
+      const whatsappClient = new WhatsAppClient({
+        baseUrl: 'https://api.kapso.ai/meta/whatsapp',
+        kapsoApiKey: process.env.KAPSO_API_KEY!,
+        graphVersion: 'v24.0'
+      });
+
+      // Ajustar parámetros al número esperado (consultar definición del template)
+      try {
+        if (businessAccountId) {
+          const tplResp = await fetch(`https://api.kapso.ai/meta/whatsapp/v24.0/${businessAccountId}/message_templates?limit=100`, {
+            headers: { 'X-API-Key': process.env.KAPSO_API_KEY as string }
+          });
+          if (tplResp.ok) {
+            const tplData = await tplResp.json();
+            const all = (tplData?.data || tplData?.message_templates || []) as any[];
+            const match = all.find((t: any) => t?.name === templateName && (t?.language === languageCode || t?.languages?.includes?.(languageCode)));
+
+            if (match?.components) {
+              const comps: any[] = match.components;
+
+              const pick = (idx: number): string => parameters[idx] ?? parameters[parameters.length - 1] ?? '';
+
+              const headerComp = comps.find(c => c.type === 'HEADER' && (!c.format || c.format === 'TEXT'));
+              const headerPlaceholders = typeof headerComp?.text === 'string' ? (headerComp.text.match(/\{\{\d+\}\}/g) || []).length : 0;
+
+              const bodyComp = comps.find(c => c.type === 'BODY');
+              const bodyPlaceholders = typeof bodyComp?.text === 'string' ? (bodyComp.text.match(/\{\{\d+\}\}/g) || []).length : 0;
+
+              // Reconstruir options según definición
+              const templateOptionsDyn: any = { name: templateName, language: languageCode };
+              if (headerPlaceholders > 0) {
+                templateOptionsDyn.header = { type: 'text', text: pick(0) };
+              }
+              if (bodyPlaceholders > 0) {
+                templateOptionsDyn.body = Array.from({ length: bodyPlaceholders }, (_, i) => ({ type: 'text', text: pick(headerPlaceholders + i) }));
+              }
+
+              // Sustituir options calculadas
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const _old = parameters;
+              // Usaremos templateOptionsDyn más abajo
+              const templatePayloadDyn = buildTemplateSendPayload(templateOptionsDyn);
+              const resultDyn = await whatsappClient.messages.sendTemplate({ phoneNumberId, to: phone, template: templatePayloadDyn });
+              console.log('✅ [ServerOrderFlow] Template enviado (definición dinámica):', resultDyn.messages?.[0]?.id);
+              return { success: true };
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ [ServerOrderFlow] No se pudo leer definición del template, usando envío básico');
+      }
+
+      // Construir payload del template usando buildTemplateSendPayload
+      const templateOptions: any = {
+        name: templateName,
+        language: languageCode
+      };
+
+      // Agregar parámetros al body si existen
+      if (parameters && parameters.length > 0) {
+        templateOptions.body = parameters.map(param => ({
+          type: 'text',
+          text: param
+        }));
+      }
+
+      const templatePayload = buildTemplateSendPayload(templateOptions);
+
+      const result = await whatsappClient.messages.sendTemplate({
+        phoneNumberId,
+        to: phone,
+        template: templatePayload
+      });
+
+      console.log('✅ [ServerOrderFlow] Template enviado exitosamente:', result.messages?.[0]?.id);
+      return { success: true };
+
+    } catch (error: any) {
+      console.error('❌ [ServerOrderFlow] Error enviando template:', error);
+      return {
+        success: false,
+        error: error.message || 'Error enviando template',
+        code: typeof error?.code === 'number' ? error.code : undefined
       };
     }
   }

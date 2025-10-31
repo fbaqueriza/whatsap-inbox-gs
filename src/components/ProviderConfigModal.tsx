@@ -15,6 +15,7 @@ interface ProviderConfigModalProps {
   onSave: (updatedProvider: Provider) => void;
   onAdd?: (providerData: Omit<Provider, 'id' | 'createdAt' | 'updatedAt' | 'user_id'>) => void;
   onCatalogUpload?: (providerId: string, file: File) => Promise<void>;
+  prefill?: { cuitCuil?: string; razonSocial?: string; name?: string } | null;
 }
 
 export default function ProviderConfigModal({
@@ -25,6 +26,7 @@ export default function ProviderConfigModal({
   onSave,
   onAdd,
   onCatalogUpload,
+  prefill,
 }: ProviderConfigModalProps) {
   const [formData, setFormData] = useState({
     name: '',
@@ -86,7 +88,7 @@ export default function ProviderConfigModal({
       // console.log('DEBUG: ProviderConfigModal - Resetting form for new provider');
       // Reset form for new provider
       setFormData({
-        name: '',
+        name: prefill?.name || '',
         contactName: '',
         email: '',
         phone: '',
@@ -95,14 +97,14 @@ export default function ProviderConfigModal({
         notes: '',
         cbu: '',
         alias: '',
-        cuitCuil: '',
-        razonSocial: '',
+        cuitCuil: prefill?.cuitCuil || '',
+        razonSocial: prefill?.razonSocial || '',
         defaultDeliveryDays: [],
         defaultDeliveryTime: [] as string[],
         defaultPaymentMethod: 'efectivo',
       });
     }
-  }, [provider, isEditing, isOpen]);
+  }, [provider, isEditing, isOpen, prefill]);
 
   const handleInputChange = (field: string, value: string | string[]) => {
     setFormData(prev => ({

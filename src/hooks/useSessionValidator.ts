@@ -16,6 +16,14 @@ export function useSessionValidator() {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
         
+        console.log('🔐 SessionValidator: Verificando sesión:', {
+          hasSession: !!session,
+          hasError: !!error,
+          expiresAt: session?.expires_at,
+          currentTime: Date.now() / 1000,
+          isExpired: session ? session.expires_at < Date.now() / 1000 : true
+        });
+        
         if (error || !session || session.expires_at < Date.now() / 1000) {
           console.log('🔐 SessionValidator: Sesión inválida detectada');
           
@@ -24,6 +32,7 @@ export function useSessionValidator() {
           
           // Redirigir al login si estamos en una página protegida
           if (typeof window !== 'undefined' && isProtectedPage(window.location.pathname)) {
+            console.log('🔐 SessionValidator: Redirigiendo a login desde:', window.location.pathname);
             window.location.href = '/auth/login';
           }
         }
@@ -32,8 +41,8 @@ export function useSessionValidator() {
       }
     };
 
-    // Verificar inmediatamente
-    checkSession();
+    // ❌ DESHABILITADO TEMPORALMENTE: No verificar sesión para evitar cierres automáticos
+    // checkSession();
 
     // ❌ DESHABILITADO: No usar verificación periódica
     // intervalRef.current = setInterval(checkSession, 30000); // 30 segundos

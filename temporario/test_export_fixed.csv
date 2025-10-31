@@ -1,4 +1,0 @@
-productName,category,quantity,unit,restockFrequency,associatedProviders,preferredProvider,lastOrdered,nextOrder
-Harina de trigo,Harinas,50,kg,weekly,Proveedor A;Proveedor B,Proveedor A,2025-01-20,2025-01-27
-Aceite de oliva,Aceites,20,lt,monthly,Proveedor C,Proveedor C,2025-01-15,2025-02-15
-Sal fina,Especias,100,kg,daily,Proveedor A,Proveedor A,2025-01-25,2025-01-26

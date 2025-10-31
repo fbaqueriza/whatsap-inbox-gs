@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useGlobalChat } from '../contexts/GlobalChatContext';
 import { useSupabaseAuth } from '../hooks/useSupabaseAuth';
-import IntegratedChatPanel from './IntegratedChatPanel';
+import ChatWithSetup from './ChatWithSetup';
 import { supabase } from '../lib/supabase/client';
 import { Provider } from '../types';
 
@@ -129,7 +129,7 @@ export default function GlobalChatWrapper() {
   }, []);
 
   return (
-      <IntegratedChatPanel 
+      <ChatWithSetup 
       providers={providers || []}
         isOpen={isGlobalChatOpen} 
         onClose={closeGlobalChat} 

@@ -15,6 +15,11 @@ export interface WhatsAppMessage {
   // Campos para templates
   isTemplate?: boolean;
   templateName?: string;
+  // Campos para documentos
+  isDocument?: boolean;
+  mediaUrl?: string;
+  filename?: string;
+  mediaType?: string;
 }
 
 export interface ChatWhatsAppMessage {
@@ -23,6 +28,7 @@ export interface ChatWhatsAppMessage {
   timestamp: Date;
   type: 'sent' | 'received';
   contact_id: string;
+  contact_name?: string;
   status: 'sent' | 'delivered' | 'read' | 'failed';
   // Campos adicionales para compatibilidad con Realtime
   message_sid?: string;

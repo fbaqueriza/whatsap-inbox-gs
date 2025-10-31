@@ -139,7 +139,7 @@ export default function InvoiceManagementSystem({
   onUploadReceipt 
 }: InvoiceManagementSystemProps = {}) {
   const { orders, providers, updateOrder } = useData();
-  const { user } = useSupabaseAuth();
+  const { user, getSession } = useSupabaseAuth();
   const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
   const [selectedPayments, setSelectedPayments] = useState<Set<string>>(new Set());
   const [paymentSummary, setPaymentSummary] = useState<PaymentSummary[]>([]);
@@ -190,11 +190,34 @@ export default function InvoiceManagementSystem({
   const processInvoiceFile = useCallback(async (file: File, orderId: string, providerId: string) => {
     setIsLoading(true);
     try {
+      // Verificar perfil del usuario: Razón Social y CUIT obligatorios
+      const sessionData = await getSession();
+      let canProceed = true;
+      try {
+        const token = sessionData?.access_token || '';
+        const profileRes = await fetch('/api/user/profile', {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+        if (profileRes.ok) {
+          const profileJson = await profileRes.json();
+          const rz = profileJson?.profile?.razon_social;
+          const cu = profileJson?.profile?.cuit;
+          if (!rz || !cu) {
+            canProceed = false;
+          }
+        }
+      } catch {}
+      if (!canProceed) {
+        alert('Completa Razón Social y CUIT en tu perfil antes de subir facturas.');
+        return { success: false, error: 'Perfil incompleto' };
+      }
+
       // 1. Subir archivo
       const formData = new FormData();
       formData.append('file', file);
       formData.append('orderId', orderId);
       formData.append('providerId', providerId);
+      formData.append('userId', user?.id || '');
 
       const uploadResponse = await fetch('/api/facturas/upload-invoice', {
         method: 'POST',
@@ -214,7 +237,8 @@ export default function InvoiceManagementSystem({
         body: JSON.stringify({
           orderId: orderId,
           fileUrl: uploadData.fileUrl,
-          providerId: providerId
+          providerId: providerId,
+          userId: user?.id || ''
         })
       });
 

@@ -35,6 +35,7 @@ function mapStockItemFromDb(item: any): StockItem {
     category: item.category || 'Other',
     quantity: item.quantity || 0,
     unit: item.unit || '',
+    lastPriceNet: item.last_price_net || 0,
     restockFrequency: item.restock_frequency || 'weekly',
     associatedProviders: Array.isArray(item.associated_providers) ? item.associated_providers : [],
     preferredProvider: item.preferred_provider || '',
@@ -280,6 +281,20 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         }
         
         const mappedOrder = mapOrderFromDb(createdOrder);
+
+        // Marcar pendiente de aprobación si aplica (para banner en chat/config)
+        try {
+          if (result?.pendingApproval) {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('wa_display_name_pending', '1');
+              localStorage.removeItem('wa_display_name_pending_dismissed');
+            }
+          } else if (result?.message?.includes('notificación enviada') || (result?.pendingApproval === false && result?.success)) {
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('wa_display_name_pending');
+            }
+          }
+        } catch {}
         
         // Actualizar el estado local inmediatamente
         setOrders(prevOrders => [mappedOrder, ...prevOrders]);
@@ -369,6 +384,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
                        (typeof provider.categories === 'string' ? [provider.categories] : []);
       const tags = Array.isArray(provider.tags) ? provider.tags : 
                   (typeof provider.tags === 'string' ? [provider.tags] : []);
+      const cuitDigits = String(provider.cuitCuil || '').replace(/[^0-9]/g, '');
       const snakeCaseProvider = {
         name: provider.name,
         email: provider.email,
@@ -381,7 +397,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         cbu: provider.cbu || '',
         alias: provider.alias || '',
         razon_social: provider.razonSocial || '',
-        cuit_cuil: provider.cuitCuil || '',
+        cuit_cuil: cuitDigits || '',
         default_delivery_days: provider.defaultDeliveryDays || [],
         default_delivery_time: provider.defaultDeliveryTime || [],
         default_payment_method: provider.defaultPaymentMethod || 'efectivo',
@@ -395,6 +411,35 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       const result = await supabase.from('providers').insert([snakeCaseProvider]);
       console.log('Supabase result:', result);
       if (result.error) {
+        // Manejo de conflicto (409) por CUIT duplicado: buscar existente del usuario
+        const maybeConflict = String(result.error.code || result.error.message || '').includes('409') || String(result.error.details || '').toLowerCase().includes('duplicate') || String(result.error.message || '').toLowerCase().includes('duplicate');
+        if (maybeConflict) {
+          try {
+            const digits = String(provider.cuitCuil || '').replace(/[^0-9]/g, '');
+            const canonical = digits.length === 11 ? `${digits.slice(0,2)}-${digits.slice(2,10)}-${digits.slice(10)}` : (provider.cuitCuil || '');
+            const { data: existingList, error: fetchErr } = await supabase
+              .from('providers')
+              .select('*')
+              .eq('user_id', user_id)
+              .or(`cuit_cuil.eq.${canonical},cuit_cuil.eq.${digits},cuit_cuil.ilike.*${digits}*`)
+              .order('created_at', { ascending: false })
+              .limit(1);
+            if (!fetchErr && existingList && existingList.length > 0) {
+              const existingProvider = mapProviderFromDb(existingList[0]);
+              setProviders(prev => {
+                const filtered = prev.filter(p => p.id !== existingProvider.id);
+                return [existingProvider, ...filtered];
+              });
+              return { data: existingList } as any;
+            }
+            // Si no encontramos, no cortar el flujo: devolvemos éxito vacío para permitir asignación por CUIT
+            return { data: [] } as any;
+          } catch (e) {
+            console.warn('Fallback resolve existing provider failed:', (e as any)?.message || e);
+            // No cortar el flujo
+            return { data: [] } as any;
+          }
+        }
         console.error('Error adding provider:', result.error);
         throw result.error;
       }
@@ -422,6 +467,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
                        (typeof provider.categories === 'string' ? [provider.categories] : []);
       const tags = Array.isArray(provider.tags) ? provider.tags : 
                   (typeof provider.tags === 'string' ? [provider.tags] : []);
+      const cuitDigitsUpd = String(provider.cuitCuil || '').replace(/[^0-9]/g, '');
       const snakeCaseProvider = {
         name: provider.name,
         email: provider.email,
@@ -434,7 +480,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         cbu: provider.cbu || '',
         alias: provider.alias || '',
         razon_social: provider.razonSocial || '',
-        cuit_cuil: provider.cuitCuil || '',
+        cuit_cuil: cuitDigitsUpd || '',
         default_delivery_days: provider.defaultDeliveryDays || [],
         default_delivery_time: provider.defaultDeliveryTime || [],
         default_payment_method: provider.defaultPaymentMethod || 'efectivo',

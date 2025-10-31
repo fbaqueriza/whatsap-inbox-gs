@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     // Obtener perfil del usuario
     const { data: profile, error } = await supabase
       .from('users')
-      .select('id, email, display_name, profile_picture_url, status_message, status_emoji, created_at, updated_at')
+      .select('id, email, display_name, profile_picture_url, status_message, status_emoji, created_at, updated_at, razon_social, cuit')
       .eq('id', user.id)
       .single();
 
@@ -43,7 +43,9 @@ export async function GET(request: NextRequest) {
         statusMessage: profile.status_message,
         statusEmoji: profile.status_emoji,
         createdAt: profile.created_at,
-        updatedAt: profile.updated_at
+        updatedAt: profile.updated_at,
+        razon_social: profile.razon_social,
+        cuit: profile.cuit
       }
     });
 
@@ -97,7 +99,7 @@ export async function PUT(request: NextRequest) {
       .from('users')
       .update(updateData)
       .eq('id', user.id)
-      .select('id, email, display_name, profile_picture_url, status_message, status_emoji, updated_at')
+      .select('id, email, display_name, profile_picture_url, status_message, status_emoji, updated_at, razon_social, cuit')
       .single();
 
     if (error) {
@@ -115,7 +117,9 @@ export async function PUT(request: NextRequest) {
         profilePictureUrl: updatedProfile.profile_picture_url,
         statusMessage: updatedProfile.status_message,
         statusEmoji: updatedProfile.status_emoji,
-        updatedAt: updatedProfile.updated_at
+        updatedAt: updatedProfile.updated_at,
+        razon_social: updatedProfile.razon_social,
+        cuit: updatedProfile.cuit
       }
     });
 

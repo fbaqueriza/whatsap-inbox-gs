@@ -154,10 +154,42 @@ function ProvidersPage() {
       setIsEditingInTable(null);
     }
   };
+  // Abrir modal con prefill si viene de procesamiento de factura
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('prefill') === '1') {
+      const cuit = params.get('cuit') || '';
+      const razon = params.get('razon') || '';
+      setCurrentProvider(null);
+      setIsEditing(false);
+      setIsModalOpen(true);
+      // Pasar prefill vía estado local
+      setPrefill({ cuitCuil: cuit, razonSocial: razon, name: razon });
+      // Limpiar query para evitar reabrir al navegar
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
+  const [prefill, setPrefill] = useState<{ cuitCuil?: string; razonSocial?: string; name?: string } | null>(null);
 
   const handleSaveProviderConfig = async (updatedProvider: Provider) => {
     try {
       await updateProvider(updatedProvider);
+      // Si venimos de prefill (desde una factura) o hay CUIT, finalizar asignación inmediata
+      try {
+        const cuit = updatedProvider.cuitCuil || prefill?.cuitCuil || '';
+        if (user?.id && cuit) {
+          await fetch('/api/providers/finalize-assignment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: user.id, cuit })
+          });
+          await fetchAll();
+        }
+      } catch (e) {
+        console.warn('Finalize assignment (edit) warning:', (e as any)?.message || e);
+      }
     } catch (error) {
       console.error('Error actualizando proveedor:', error);
     }
@@ -177,6 +209,20 @@ function ProvidersPage() {
       setIsEditing(false);
       setIsEditingInTable(null);
       
+      // Finalizar asignación inmediata a facturas y stock si venimos de OCR (tenemos CUIT)
+      try {
+        const cuit = providerData.cuitCuil || prefill?.cuitCuil || '';
+        if (user?.id && cuit) {
+          await fetch('/api/providers/finalize-assignment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: user.id, cuit })
+          });
+        }
+      } catch (e) {
+        console.warn('Finalize assignment (add) warning:', (e as any)?.message || e);
+      }
+
       // Forzar una recarga de los datos
       if (user?.id) {
         await fetchAll();
@@ -742,6 +788,7 @@ function ProvidersPage() {
         onSave={handleSaveProviderConfig}
         onAdd={handleAddProvider}
         onCatalogUpload={handleCatalogUploadLocal}
+        prefill={prefill}
       />
 
       {/* Modal de documentos del proveedor */}

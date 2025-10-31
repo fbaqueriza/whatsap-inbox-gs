@@ -20,7 +20,18 @@ export default function LoginPage() {
 
 
   const router = useRouter();
-  const { needsEmailVerification, clearEmailVerification, resetPassword, signIn } = useSupabaseAuth();
+  const { user, isLoading, needsEmailVerification, clearEmailVerification, resetPassword, signIn } = useSupabaseAuth();
+
+  // 🔧 VERIFICACIÓN DE SESIÓN: Redirigir si ya está autenticado (con delay para evitar loops)
+  useEffect(() => {
+    if (!isLoading && user) {
+      console.log('🔐 Login: Usuario ya autenticado, redirigiendo al dashboard');
+      // Usar setTimeout para evitar loops infinitos
+      setTimeout(() => {
+        window.location.href = '/dashboard';
+      }, 100);
+    }
+  }, [user, isLoading]);
 
   useEffect(() => {
     const savedEmail = localStorage.getItem('rememberedEmail');
@@ -31,17 +42,36 @@ export default function LoginPage() {
   }, []);
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevenir múltiples envíos
+    if (loading) return;
+    
     setLoading(true);
     setError('');
+    
     if (rememberEmail) {
       localStorage.setItem('rememberedEmail', email);
     } else {
       localStorage.removeItem('rememberedEmail');
     }
+    
     try {
-      await signIn(email, password);
-      router.push('/dashboard');
+      console.log('🔐 Login: Iniciando signIn...');
+      const result = await signIn(email, password);
+      console.log('🔐 Login: Resultado de signIn:', result);
+      
+      if (result && result.error) {
+        console.error('🔐 Login: Error de autenticación:', result.error);
+        setError(result.error.message || 'Error de inicio de sesión.');
+        return;
+      }
+      
+      // Si no hay error, asumir que el login fue exitoso y redirigir
+      console.log('🔐 Login: Usuario autenticado exitosamente, redirigiendo...');
+      // Usar window.location para forzar la redirección
+      window.location.href = '/dashboard';
     } catch (err: any) {
+      console.error('🔐 Login: Error inesperado:', err);
       setError(err.message || 'Error de inicio de sesión.');
     } finally {
       setLoading(false);
@@ -50,12 +80,27 @@ export default function LoginPage() {
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevenir múltiples envíos
+    if (resetLoading) return;
+    
     setResetLoading(true);
     setResetError('');
+    setResetSuccess(false);
+    
     try {
-      await resetPassword(resetEmail);
+      const result = await resetPassword(resetEmail);
+      
+      if (result?.error) {
+        console.error('🔐 Reset Password: Error:', result.error);
+        setResetError(result.error.message || 'Error al enviar el email de recuperación.');
+        return;
+      }
+      
+      console.log('🔐 Reset Password: Email enviado exitosamente a:', resetEmail);
       setResetSuccess(true);
     } catch (err: any) {
+      console.error('🔐 Reset Password: Error inesperado:', err);
       setResetError(err.message || 'Error al enviar el email de recuperación.');
     } finally {
       setResetLoading(false);
@@ -78,6 +123,18 @@ export default function LoginPage() {
 
 
   
+  // 🔧 LOADING: Mostrar spinner mientras se verifica la autenticación
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Verificando autenticación...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">

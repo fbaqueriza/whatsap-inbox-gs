@@ -61,71 +61,25 @@ class OCRService {
       const tempPdfPath = path.join(tempDir, `temp_${Date.now()}.pdf`);
       fs.writeFileSync(tempPdfPath, pdfBuffer);
       
-      console.log('🖼️ [OCR] Convirtiendo PDF a imágenes con pdf-poppler...');
+      console.log('🖼️ [OCR] Procesando PDF directamente con pdf-parse...');
       
-      // Usar pdf-poppler que ya está instalado
-      const pdf = require('pdf-poppler');
+      // ✅ CORRECCIÓN: Usar pdf-parse que es más simple y confiable
+      const pdfParse = require('pdf-parse');
       
-      const options = {
-        format: 'png',
-        out_dir: tempDir,
-        out_prefix: 'page',
-        page: null, // Convertir todas las páginas
-        density: 300 // Alta resolución
-      };
+      const pdfData = await pdfParse(pdfBuffer);
       
-      await pdf.convert(tempPdfPath, options);
-      
-      // Buscar archivos PNG generados
-      const pngFiles = fs.readdirSync(tempDir).filter(file => file.endsWith('.png'));
-      
-      if (pngFiles.length === 0) {
-        throw new Error('No se pudieron generar imágenes del PDF');
+      if (!pdfData.text || pdfData.text.trim().length === 0) {
+        throw new Error('No se pudo extraer texto del PDF');
       }
 
-      console.log(`📸 [OCR] ${pngFiles.length} páginas convertidas a imágenes`);
+      console.log(`📸 [OCR] Texto extraído del PDF: ${pdfData.text.length} caracteres`);
 
-      let allText = '';
-      let totalConfidence = 0;
-      let pageCount = 0;
+      // ✅ CORRECCIÓN: Usar texto extraído directamente de pdf-parse
+      const allText = pdfData.text;
+      const totalConfidence = 85; // pdf-parse no proporciona confidence, usar valor estimado
+      const pageCount = pdfData.numpages || 1;
 
-      // Procesar cada página con OCR
-      for (let i = 0; i < pngFiles.length; i++) {
-        const imagePath = path.join(tempDir, pngFiles[i]);
-        
-        if (fs.existsSync(imagePath)) {
-          console.log(`🔍 [OCR] Procesando página ${i + 1}/${pngFiles.length} con Tesseract...`);
-          
-          const imageBuffer = fs.readFileSync(imagePath);
-          
-          const { data } = await Tesseract.recognize(
-            imageBuffer,
-            'spa', // Español
-            {
-              logger: m => {
-                if (m.status === 'recognizing text') {
-                  console.log(`📊 [OCR] Progreso página ${i + 1}: ${Math.round(m.progress * 100)}%`);
-                }
-              }
-            }
-          );
-
-          if (data.text && data.text.trim()) {
-            allText += `\n--- Página ${i + 1} ---\n${data.text}\n`;
-            totalConfidence += data.confidence || 0;
-            pageCount++;
-            
-            console.log(`✅ [OCR] Página ${pageCount} procesada:`, {
-              caracteres: data.text.length,
-              confianza: data.confidence,
-              texto_preview: data.text.substring(0, 100) + '...'
-            });
-          }
-          
-          // Limpiar archivo temporal
-          fs.unlinkSync(imagePath);
-        }
-      }
+      console.log(`✅ [OCR] Texto extraído exitosamente: ${allText.length} caracteres de ${pageCount} páginas`);
       
       // Limpiar PDF temporal
       if (fs.existsSync(tempPdfPath)) {

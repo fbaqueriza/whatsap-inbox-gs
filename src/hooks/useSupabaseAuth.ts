@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { User } from '@supabase/supabase-js';
+import { User, AuthChangeEvent } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -12,15 +12,29 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 export const useSupabaseAuth = () => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [needsEmailVerification, setNeedsEmailVerification] = useState(false);
 
   useEffect(() => {
     // Obtener sesión inicial
     const getInitialSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        setUser(session?.user ?? null);
-      } catch (error) {
-        console.error('Error obteniendo sesión inicial:', error);
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          // Solo logear errores que no sean de sesión faltante
+          if (error.message !== 'Auth session missing!') {
+            console.error('🔐 SupabaseAuth: Error obteniendo sesión inicial:', error);
+          }
+          setUser(null);
+        } else {
+          setUser(session?.user ?? null);
+        }
+      } catch (error: any) {
+        // Solo logear errores que no sean de sesión faltante
+        if (error?.message !== 'Auth session missing!') {
+          console.error('🔐 SupabaseAuth: Error inesperado obteniendo sesión:', error);
+        }
+        setUser(null);
       } finally {
         setIsLoading(false);
       }
@@ -33,6 +47,11 @@ export const useSupabaseAuth = () => {
       async (event, session) => {
         setUser(session?.user ?? null);
         setIsLoading(false);
+        
+        // Manejar verificación de email
+        // if (event === 'SIGNED_UP' && session?.user && !session.user.email_confirmed_at) {
+        //   setNeedsEmailVerification(true);
+        // }
       }
     );
 
@@ -40,31 +59,108 @@ export const useSupabaseAuth = () => {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    return { data, error };
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      
+      if (error) {
+        console.error('🔐 SupabaseAuth: Error en signIn:', error);
+        throw error;
+      }
+      
+      return { data, error };
+    } catch (error) {
+      console.error('🔐 SupabaseAuth: Error en signIn:', error);
+      throw error;
+    }
   };
 
   const signUp = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-    return { data, error };
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+      });
+      
+      if (error) {
+        console.error('🔐 SupabaseAuth: Error en signUp:', error);
+        throw error;
+      }
+      
+      // Si el registro es exitoso pero requiere verificación
+      if (data.user && !data.user.email_confirmed_at) {
+        setNeedsEmailVerification(true);
+      }
+      
+      return { data, error };
+    } catch (error) {
+      console.error('🔐 SupabaseAuth: Error en signUp:', error);
+      throw error;
+    }
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    return { error };
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('🔐 SupabaseAuth: Error en signOut:', error);
+        throw error;
+      }
+      return { error };
+    } catch (error) {
+      console.error('🔐 SupabaseAuth: Error en signOut:', error);
+      throw error;
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    try {
+      console.log('🔐 [ResetPassword] Iniciando reset para email:', email);
+      
+      // Usar el endpoint personalizado que maneja mejor el email
+      const response = await fetch('/api/auth/reset-password-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        console.error('🔐 [ResetPassword] Error del servidor:', result);
+        throw new Error(result.error || 'Error enviando email de reset');
+      }
+      
+      console.log('✅ [ResetPassword] Email de reset enviado exitosamente');
+      
+      // En desarrollo, mostrar el link en consola
+      if (result.resetLink) {
+        console.log('🔧 [DEV] Link de reset para testing:', result.resetLink);
+      }
+      
+      return { data: result, error: null };
+    } catch (error) {
+      console.error('🔐 SupabaseAuth: Error en resetPassword:', error);
+      throw error;
+    }
+  };
+
+  const clearEmailVerification = () => {
+    setNeedsEmailVerification(false);
   };
 
   return {
     user,
     isLoading,
+    needsEmailVerification,
     signIn,
     signUp,
     signOut,
+    resetPassword,
+    clearEmailVerification,
   };
 };

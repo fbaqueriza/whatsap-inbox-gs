@@ -1,15 +1,19 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { usePushNotifications } from '../hooks/usePushNotifications';
 import { supabase } from '../lib/supabase/client';
 import { WhatsAppMessage, Contact } from '../types/whatsapp';
 import { PhoneNumberService } from '../lib/phoneNumberService';
 import { useRealtimeService } from '../services/realtimeService';
+import { logger } from '../lib/logger';
+import { normalizePhoneNumber } from '../lib/phoneNormalization';
 
 // Tipos
 interface ChatWhatsAppMessage extends WhatsAppMessage {
   contact_id: string;
+  contact_name?: string;
+  direction: 'inbound' | 'outbound';
+  status: 'sent' | 'delivered' | 'read' | 'failed';
 }
 
 interface ChatContextType {
@@ -45,14 +49,9 @@ export const useChat = () => {
   return context;
 };
 
-// Función para normalizar identificadores de contacto
-const normalizeContactIdentifier = (contactId: string): string => {
-  if (!contactId) return '';
-  let normalized = contactId.replace(/[\s\-\(\)]/g, '');
-  if (!normalized.startsWith('+')) {
-    normalized = `+${normalized}`;
-  }
-  return normalized;
+// Función centralizada de normalización - usar la función correcta
+export const normalizeContactIdentifier = (contactId: string): string => {
+  return normalizePhoneNumber(contactId).normalized;
 };
 
 // Provider
@@ -61,581 +60,520 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
+  const [userProviders, setUserProviders] = useState<any[]>([]);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [userProviderPhones, setUserProviderPhones] = useState<string[]>([]);
   const [lastMessageCount, setLastMessageCount] = useState<number>(0);
   const [isUserAuthenticated, setIsUserAuthenticated] = useState<boolean>(false);
+  const [authStateLogged, setAuthStateLogged] = useState<boolean>(false);
 
-  // Hook de notificaciones push
-  const { sendNotification } = usePushNotifications();
-  
   // Hook del servicio global de Realtime
   const { addMessageListener, isConnected: realtimeConnected } = useRealtimeService();
+
+  // Solicitar permisos de notificaciones al cargar
+  useEffect(() => {
+    if (typeof window !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   // Verificar estado de autenticación
   useEffect(() => {
     const checkAuthStatus = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        const authenticated = !!user;
+        const { data: { session } } = await supabase.auth.getSession();
+        const authenticated = !!session?.user;
         setIsUserAuthenticated(authenticated);
+        
+        if (authenticated) {
+          if (process.env.NODE_ENV === 'development') {
+            logger.userAction('ChatContext', 'Usuario autenticado', session.user.id);
+          }
+        }
       } catch (error) {
-        console.error('📱 ChatContext: Error verificando autenticación:', error);
+        logger.error('ChatContext', 'Error verificando autenticación', error);
         setIsUserAuthenticated(false);
       }
     };
 
     checkAuthStatus();
 
-    // Escuchar cambios de autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       const authenticated = !!session?.user;
       setIsUserAuthenticated(authenticated);
+      
+      // Solo loggear cambios de estado, no cada evento
+      if (authenticated && !authStateLogged) {
+        if (process.env.NODE_ENV === 'development') {
+          logger.userAction('ChatContext', 'Sesión iniciada', session.user.id);
+        }
+        setAuthStateLogged(true);
+      } else if (!authenticated && authStateLogged) {
+        if (process.env.NODE_ENV === 'development') {
+          logger.userAction('ChatContext', 'Sesión cerrada');
+        }
+        setAuthStateLogged(false);
+      }
     });
 
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Funciones de notificación push
-  const sendWhatsAppNotification = useCallback((contactName: string, message: string) => {
-    sendNotification({
-      title: `Nuevo mensaje de ${contactName}`,
-      body: message,
-      icon: '/favicon.ico',
-      actions: [
-        { action: 'close', title: 'Cerrar' },
-        { action: 'open', title: 'Abrir chat' }
-      ]
-    });
-  }, [sendNotification]);
+  // Cargar proveedores del usuario
+  const loadUserProviders = useCallback(async () => {
+    if (!isUserAuthenticated) return;
 
-  // CARGAR MENSAJES - VERSIÓN OPTIMIZADA Y LIMPIA
-  const loadMessages = useCallback(async () => {
     try {
-      // Obtener el usuario actual
       const { data: { user } } = await supabase.auth.getUser();
-      const currentUserId = user?.id;
-      
-      if (!currentUserId) {
-        return;
-      }
-      
-      
-      // Obtener los proveedores del usuario actual
-      const { data: userProviders, error: providersError } = await supabase
+      if (!user) return;
+
+      const { data: providers, error } = await supabase
         .from('providers')
-        .select('phone')
-        .eq('user_id', currentUserId);
-      
-      if (providersError) {
-        console.error('Error obteniendo proveedores:', providersError);
+        .select('*')
+        .eq('user_id', user.id);
+
+      if (error) {
+        logger.error('ChatContext', 'Error cargando proveedores', error);
         return;
       }
+
+      setUserProviders(providers || []);
       
-              const userProviderPhones = userProviders?.map(p => {
-          let phone = p.phone as string;
-          // 🔧 CORRECCIÓN: Usar servicio centralizado unificado de normalización
-          const normalizedPhone = PhoneNumberService.normalizeUnified(phone);
-          return normalizedPhone || phone;
-        }) || [];
+      const phones = (providers || [])
+        .map(p => p.phone)
+        .filter(Boolean)
+        .map(phone => normalizeContactIdentifier(phone));
       
-      // Actualizar el estado de proveedores del usuario
-      setUserProviderPhones(userProviderPhones);
-      
-      // 🔧 OPTIMIZACIÓN: Cargar solo 20 mensajes para reducir procesamiento
-      const response = await fetch(`/api/whatsapp/messages?limit=20&userId=${currentUserId}`);
+      setUserProviderPhones(phones);
+      if (process.env.NODE_ENV === 'development') {
+        logger.dataProcessed('ChatContext', 'proveedores', providers?.length || 0);
+      }
+    } catch (error) {
+      logger.error('ChatContext', 'Error en loadUserProviders', error);
+    }
+  }, [isUserAuthenticated]);
+
+  // Cargar proveedores cuando el usuario se autentica
+  useEffect(() => {
+    if (isUserAuthenticated) {
+      loadUserProviders();
+    }
+  }, [isUserAuthenticated, loadUserProviders]);
+
+  // Ref para evitar cargas duplicadas
+  const loadMessagesRef = useRef(false);
+  const hasInitializedRef = useRef(false);
+
+  // Cargar mensajes
+  const loadMessages = useCallback(async () => {
+    if (loadMessagesRef.current || !isUserAuthenticated) return;
+    
+    loadMessagesRef.current = true;
+    if (process.env.NODE_ENV === 'development') {
+      logger.info('ChatContext', 'Iniciando carga de mensajes');
+    }
+
+    try {
+      // Obtener token de autenticación
+      const session = await supabase.auth.getSession();
+      if (!session.data.session?.access_token) {
+        logger.error('ChatContext', 'No hay token de autenticación disponible');
+        return;
+      }
+
+      const response = await fetch('/api/kapso/chat?action=conversations', {
+        headers: {
+          'Authorization': `Bearer ${session.data.session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      });
       
       if (!response.ok) {
-        console.warn('⚠️ API de mensajes no disponible:', response.status);
+        logger.error('ChatContext', 'Error en API de conversaciones', response.status);
         return;
       }
-      
+
       const data = await response.json();
+      const conversations = data.conversations || [];
       
-      if (data.messages && Array.isArray(data.messages)) {
-        console.log('📱 ChatContext: Mensajes recibidos de API:', data.messages.length);
+      if (process.env.NODE_ENV === 'development') {
+        logger.dataProcessed('ChatContext', 'conversaciones', conversations.length);
+      }
 
-        // 🔧 MEJORA: Filtrado simplificado y más robusto
-        const transformedMessages = data.messages
-          .filter((msg: any) => {
-            // Incluir todos los mensajes que ya pasaron el filtro de la API
-            // La API ya filtró por user_id y proveedores del usuario
-            return true;
-          })
-          .map((msg: any) => {
-            // 🔧 OPTIMIZACIÓN: Mapeo simplificado y consistente
-            let messageType = 'received';
-            
-            if (msg.message_type === 'sent') {
-              messageType = 'sent';
-            } else if (msg.message_type === 'received') {
-              messageType = 'received';
-            } else if (msg.message_sid && (msg.message_sid.startsWith('sim_') || msg.message_sid.startsWith('msg_'))) {
-              messageType = 'sent';
+      if (conversations.length === 0) {
+        setMessages([]);
+        return;
+      }
+
+      // Procesar conversaciones y cargar mensajes
+      const kapsoMessages: ChatWhatsAppMessage[] = [];
+      const limitedConversations = conversations.slice(0, 10); // Limitar a 10 conversaciones
+      const processedPhones = new Set<string>(); // Para evitar duplicados
+
+      for (let i = 0; i < limitedConversations.length; i++) {
+        const conv = limitedConversations[i];
+        const phoneNumber = conv.phone_number || conv.phone;
+        
+        if (!phoneNumber) continue;
+
+        // Normalizar el número de teléfono para evitar contactos duplicados
+        const normalizedPhone = normalizePhoneNumber(phoneNumber).normalized;
+        
+        // Si ya procesamos este número normalizado, saltarlo
+        if (processedPhones.has(normalizedPhone)) {
+          console.log(`🔄 [ChatContext] Saltando contacto duplicado: ${phoneNumber} -> ${normalizedPhone}`);
+          continue;
+        }
+        
+        processedPhones.add(normalizedPhone);
+
+        try {
+          const messagesResponse = await fetch(`/api/kapso/chat?action=messages&phoneNumber=${encodeURIComponent(phoneNumber)}`, {
+            headers: {
+              'Authorization': `Bearer ${session.data.session.access_token}`,
+              'Content-Type': 'application/json'
             }
+          });
+          
+          if (messagesResponse.ok) {
+            const messagesData = await messagesResponse.json();
+            const convMessages = messagesData.messages || [];
             
-            return {
-              id: msg.message_sid || msg.id,
+            const mappedMessages = convMessages.map((msg: any) => ({
+              id: msg.id,
               content: msg.content,
-              timestamp: new Date(msg.timestamp || msg.created_at),
-              type: messageType,
-              messageType: messageType, // 🔧 CORRECCIÓN: Agregar messageType para consistencia
-              contact_id: msg.contact_id || msg.from,
-              status: msg.status || 'delivered',
-              // 🔧 NUEVO: Propiedades para documentos
-              isDocument: !!(msg.media_url),
-              mediaUrl: msg.media_url,
-              filename: msg.media_url ? msg.media_url.split('/').pop()?.split('_').slice(1).join('_') || 'documento' : undefined,
-              fileSize: undefined, // No disponible en la BD actual
-              mediaType: msg.media_type
-            };
-          })
-        
-        // Logs removidos para limpieza
-        
-        // 🔧 OPTIMIZACIÓN: Actualización eficiente del estado
-        setMessages(prev => {
-          const existingMessagesMap = new Map(prev.map(msg => [msg.id, msg]));
-          let hasNewMessages = false;
-          const updatedMessages = [...prev];
-          
-          transformedMessages.forEach((newMsg: ChatWhatsAppMessage) => {
-            if (!existingMessagesMap.has(newMsg.id)) {
-              updatedMessages.push(newMsg);
-              hasNewMessages = true;
-            }
-          });
-          
-          return hasNewMessages ? updatedMessages : prev;
-        });
-        
-        // 🔧 OPTIMIZACIÓN: Logs reducidos para evitar spam
-        if (process.env.NODE_ENV === 'development' && transformedMessages.length > 0) {
-          const currentCount = transformedMessages.length;
-          if (lastMessageCount !== currentCount && currentCount % 5 === 0) { // Solo cada 5 mensajes
-            const receivedMessages = transformedMessages.filter((m: any) => m.type === 'received');
-            const sentMessages = transformedMessages.filter((m: any) => m.type === 'sent');
-            setLastMessageCount(currentCount);
+              contact_id: normalizedPhone, // Usar número normalizado como ID único
+              contact_name: conv.contact_name || normalizedPhone,
+              timestamp: new Date(msg.created_at),
+              type: msg.message_type || 'text',
+              direction: msg.direction,
+              status: msg.status || 'delivered'
+            }));
+            
+            kapsoMessages.push(...mappedMessages);
+          } else {
+            logger.warn('ChatContext', `Error obteniendo mensajes para ${phoneNumber}`, messagesResponse.status);
           }
+        } catch (error) {
+          logger.error('ChatContext', `Error procesando conversación ${phoneNumber}`, error);
         }
-      }
-    } catch (error) {
-      console.error('Error loading messages:', error);
-    }
-  }, []); // ✅ DEPENDENCIAS VACÍAS - No depende de estado que cambia
-
-  const forceReconnectSSE = useCallback(() => {
-    window.location.reload();
-  }, []);
-
-  // 🔧 OPTIMIZACIÓN: Debounce para evitar múltiples ejecuciones
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const loadMessagesDebounced = useCallback(async () => {
-    if (isLoadingMessages) return;
-    
-    setIsLoadingMessages(true);
-    try {
-      await loadMessages();
-    } finally {
-      setTimeout(() => setIsLoadingMessages(false), 1000); // Debounce de 1 segundo
-    }
-  }, [loadMessages]); // ✅ SOLO DEPENDE DE loadMessages (que tiene dependencias vacías)
-
-  // CARGAR MENSAJES INICIALES Y CONFIGURAR LISTENER REALTIME
-  useEffect(() => {
-    let isMounted = true;
-    let hasInitialized = false; // ✅ PREVENIR MÚLTIPLES INICIALIZACIONES
-    
-    // 🔧 OPTIMIZACIÓN: Verificar autenticación antes de cargar mensajes
-    const initializeChat = async () => {
-      if (hasInitialized) return; // ✅ EVITAR MÚLTIPLES EJECUCIONES
-      
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user?.id && isMounted && !hasInitialized) {
-          hasInitialized = true;
-          loadMessagesDebounced();
-        }
-      } catch (error) {
-        console.warn('⚠️ Usuario no autenticado, no se cargan mensajes');
-      }
-    };
-    
-    // Cargar mensajes solo si el usuario está autenticado
-    initializeChat();
-    
-    // Solicitar permisos de notificación
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
-
-
-    // 🔧 OPTIMIZACIÓN: Listeners con debounce
-    const handleOrderSent = () => {
-      if (isMounted) {
-        loadMessagesDebounced();
-      }
-    };
-
-    const handleWhatsAppMessage = () => {
-      if (isMounted) {
-        loadMessagesDebounced();
-      }
-    };
-
-    window.addEventListener('orderSent', handleOrderSent);
-    window.addEventListener('whatsappMessage', handleWhatsAppMessage);
-
-    return () => {
-      isMounted = false;
-      window.removeEventListener('orderSent', handleOrderSent);
-      window.removeEventListener('whatsappMessage', handleWhatsAppMessage);
-    };
-  }, []); // ✅ DEPENDENCIAS VACÍAS - Solo ejecutar una vez al montar
-
-  // 🔧 SOLUCIÓN UNIFICADA: Listener de mensajes realtime optimizado
-  // Usar useRef para mantener referencia estable del listener
-  const realtimeListenerRef = useRef<(() => void) | null>(null);
-  
-
-  // SIMULAR CONEXIÓN EXITOSA - REALTIME FUNCIONA
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    // Verificar si ya se inicializó para evitar múltiples instancias
-    if (connectionStatus !== 'disconnected' || isConnected) return;
-    
-    setConnectionStatus('connecting');
-     
-    // Simular conexión exitosa más rápido
-    setTimeout(() => {
-      setIsConnected(true);
-      setConnectionStatus('connected');
-    }, 500);
-  }, []); // Solo ejecutar una vez al montar el componente
-
-  // Función para enviar mensaje
-  const sendMessage = useCallback(async (contactId: string, content: string) => {
-    if (!content.trim()) return;
-
-    // Generar un ID temporal único para inserción local inmediata
-    const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Crear mensaje temporal para inserción local
-    const tempMessage: ChatWhatsAppMessage = {
-      id: tempId,
-      content: content.trim(),
-      timestamp: new Date(),
-      type: 'sent',
-      contact_id: contactId,
-      status: 'sent'
-    };
-
-    // Agregar mensaje localmente inmediatamente para feedback visual
-    setMessages(prev => {
-      const updatedMessages = [...prev, tempMessage];
-      return updatedMessages;
-    });
-
-    try {
-      // Enviar mensaje al servidor
-      const response = await fetch('/api/whatsapp/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          to: contactId,
-          message: content.trim()
-        }),
-      });
-
-      const result = await response.json();
-      
-      if (result.success) {
-        // El mensaje real llegará via Realtime, no necesitamos actualizar aquí
-        // Solo marcar como enviado si hay error en Realtime
-        setTimeout(() => {
-          setMessages(prev => {
-            // Si después de 10 segundos el mensaje temporal sigue ahí, marcarlo como enviado
-            const tempMessageStillExists = prev.some(msg => msg.id === tempId);
-            if (tempMessageStillExists) {
-              return prev.map(msg => 
-                msg.id === tempId 
-                  ? { ...msg, status: 'delivered' as const }
-                  : msg
-              );
-            }
-            return prev;
-          });
-        }, 10000); // Aumentar a 10 segundos para dar más tiempo
-      } else {
-        console.error('❌ Error enviando mensaje:', result.error);
-        // Marcar como fallido si hay error
-        setMessages(prev => {
-          const updatedMessages = prev.map(msg => 
-            msg.id === tempId 
-              ? { ...msg, status: 'failed' as const }
-              : msg
-          );
-          return updatedMessages;
-        });
-      }
-    } catch (error) {
-      console.error('❌ Error enviando mensaje:', error);
-      // Marcar como fallido si hay error
-      setMessages(prev => {
-        const updatedMessages = prev.map(msg => 
-          msg.id === tempId 
-            ? { ...msg, status: 'failed' as const }
-            : msg
-        );
-        return updatedMessages;
-      });
-    }
-  }, []);
-
-  // Función para agregar mensaje manualmente
-  const addMessage = useCallback((contactId: string, message: ChatWhatsAppMessage) => {
-    setMessages(prev => [...prev, message]);
-  }, []);
-
-  // SOLUCIÓN INTEGRAL markAsRead - ACTUALIZACIÓN INMEDIATA Y PERSISTENTE
-  // Debounce map para evitar llamadas múltiples
-  const markAsReadDebounceRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
-
-  const markAsRead = useCallback(async (contactId: string) => {
-    if (!contactId) return;
-    
-    // Usar la función unificada de normalización
-    const normalizedContactId = normalizeContactIdentifier(contactId);
-    
-    // Limpiar timeout anterior si existe
-    if (markAsReadDebounceRef.current[normalizedContactId]) {
-      clearTimeout(markAsReadDebounceRef.current[normalizedContactId]);
-    }
-    
-    // Actualizar estado local INMEDIATAMENTE
-    setMessages(prev => {
-      const updatedMessages = prev.map(msg => {
-        const normalizedMsgContactId = normalizeContactIdentifier(msg.contact_id);
-        const shouldMarkAsRead = normalizedMsgContactId === normalizedContactId && msg.type === 'received';
         
-        return shouldMarkAsRead
-          ? { ...msg, status: 'read' as const }
-          : msg;
-      });
-      
-      return updatedMessages;
-    });
-
-    // Debounce la llamada a la API para evitar deadlocks
-    markAsReadDebounceRef.current[normalizedContactId] = setTimeout(async () => {
-      try {
-        const response = await fetch('/api/whatsapp/mark-as-read', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contactId: normalizedContactId
-          }),
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          // console.log('✅ Mensajes marcados como leídos para:', normalizedContactId);
+        // Delay entre llamadas para evitar agotamiento de sesión
+        if (i < limitedConversations.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
-      } catch (error) {
-        console.error('Error marking as read:', error);
-      } finally {
-        // Limpiar el timeout del ref
-        delete markAsReadDebounceRef.current[normalizedContactId];
       }
-    }, 1000); // 🔧 CORRECCIÓN: Aumentar debounce a 1 segundo para evitar deadlocks
-  }, []);
-
-  // Función para seleccionar contacto
-  const selectContact = useCallback((contact: Contact) => {
-    // Solo marcar como leído si es un contacto diferente
-    if (selectedContact && selectedContact.phone !== contact.phone) {
-      markAsRead(selectedContact.phone);
+      
+      if (process.env.NODE_ENV === 'development') {
+        logger.dataProcessed('ChatContext', 'mensajes de Kapso', kapsoMessages.length);
+      }
+      
+      // Deduplicar mensajes por ID
+      const uniqueMessages = kapsoMessages.filter((msg, index, self) => 
+        index === self.findIndex(m => m.id === msg.id)
+      );
+      
+      setMessages(uniqueMessages);
+      
+      // Auto-seleccionar primera conversación si no hay selección
+      if (!selectedContact && limitedConversations.length > 0) {
+        const firstConversation = limitedConversations[0];
+        const phoneNumber = firstConversation.phone_number || firstConversation.phone;
+        if (phoneNumber) {
+          const normalizedPhone = normalizePhoneNumber(phoneNumber).normalized;
+          setSelectedContact({
+            id: normalizedPhone,
+            phone: normalizedPhone,
+            name: firstConversation.contact_name || normalizedPhone
+          });
+        }
+      }
+      
+    } catch (error) {
+      logger.error('ChatContext', 'Error cargando mensajes', error);
+    } finally {
+      loadMessagesRef.current = false;
     }
-    
-    setSelectedContact(contact);
-    // Marcar mensajes como leídos del nuevo contacto
-    markAsRead(contact.phone);
-  }, [markAsRead, selectedContact]);
+  }, [isUserAuthenticated, selectedContact]);
 
-  // Función para abrir chat
-  const openChat = useCallback(() => {
-    setIsChatOpen(true);
-  }, []);
+  // Cargar mensajes cuando el usuario se autentica
+  useEffect(() => {
+    if (isUserAuthenticated && !hasInitializedRef.current) {
+      hasInitializedRef.current = true;
+      loadMessages();
+    }
+  }, [isUserAuthenticated, loadMessages]);
 
-  // Función para cerrar chat
-  const closeChat = useCallback(() => {
-    setIsChatOpen(false);
-  }, []);
+  // Resetear flag de inicialización cuando cambia la autenticación
+  useEffect(() => {
+    if (!isUserAuthenticated) {
+      hasInitializedRef.current = false;
+    }
+  }, [isUserAuthenticated]);
 
-    // Calcular mensajes agrupados por contacto y ordenar por última actividad
+  // Procesar mensajes por contacto
   const messagesByContact = useMemo(() => {
     const grouped: { [contactId: string]: ChatWhatsAppMessage[] } = {};
     
-    // Crear un Map para filtrar duplicados por ID antes de agrupar
-    const uniqueMessages = new Map<string, ChatWhatsAppMessage>();
-    
     messages.forEach(message => {
-      // Usar el ID del mensaje como clave para evitar duplicados
-      if (!uniqueMessages.has(message.id)) {
-        uniqueMessages.set(message.id, message);
-      }
-    });
-    
-    // Agrupar mensajes únicos por contacto
-    uniqueMessages.forEach(message => {
-      const contactId = normalizeContactIdentifier(message.contact_id);
+      const contactId = message.contact_id;
       if (!grouped[contactId]) {
         grouped[contactId] = [];
       }
       grouped[contactId].push(message);
     });
     
-    // Ordenar mensajes por timestamp dentro de cada contacto (más antiguos primero para mostrar cronológicamente)
+    // Ordenar mensajes por timestamp
     Object.keys(grouped).forEach(contactId => {
-      grouped[contactId].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      grouped[contactId].sort((a, b) => 
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      );
     });
     
     return grouped;
   }, [messages]);
 
-  // Obtener contactos ordenados por última actividad - SOLO CONTACTOS VÁLIDOS
+  // Generar lista de contactos ordenada
   const sortedContacts = useMemo(() => {
     const contacts: Contact[] = [];
     
-    // Solo procesar si tenemos mensajes válidos
-    if (!messages || messages.length === 0) {
-      return contacts;
-    }
-    
-    Object.entries(messagesByContact).forEach(([contactId, contactMessages]) => {
-      
-      if (contactMessages.length === 0) return;
-      
-      // Filtrar el contacto de prueba (ambas versiones)
-      if (contactId === '+5491112345678' || contactId === '5491112345678') {
-        return;
+    Object.keys(messagesByContact).forEach(contactId => {
+      const contactMessages = messagesByContact[contactId];
+      if (contactMessages.length > 0) {
+        const lastMessage = contactMessages[contactMessages.length - 1];
+        contacts.push({
+          id: contactId,
+          phone: contactId,
+          name: lastMessage.contact_name || contactId,
+          lastMessage: lastMessage.content,
+          lastMessageTime: lastMessage.timestamp,
+          unreadCount: contactMessages.filter(m => m.direction === 'inbound' && m.status !== 'read').length
+        });
       }
-      
-      // Solo incluir contactos que sean proveedores registrados O nuestro número de WhatsApp Business
-      const ourWhatsAppNumber = process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER_ID;
-      const normalizedOurNumber = ourWhatsAppNumber ? `+${ourWhatsAppNumber}` : null;
-      
-      // Verificar si es nuestro número de WhatsApp Business
-      const isFromOurWhatsApp = normalizedOurNumber && contactId === normalizedOurNumber;
-      
-      // Verificar si es un proveedor registrado (esto se obtiene de loadMessages)
-      const isFromOurProvider = userProviderPhones.includes(contactId);
-      
-      // Solo incluir si es proveedor registrado o nuestro número de WhatsApp
-      if (!isFromOurProvider && !isFromOurWhatsApp) {
-        return;
-      }
-      
-      // Obtener el último mensaje para determinar la última actividad
-      const lastMessage = contactMessages[contactMessages.length - 1];
-      
-      // Contar mensajes no leídos
-      const unreadCount = contactMessages.filter(msg =>
-        msg.type === 'received' && msg.status !== 'read'
-      ).length;
-      
-      // No generar nombres temporales - dejar que IntegratedChatPanel los maneje
-      const phoneNumber = contactId.replace('+', '');
-      contacts.push({
-        id: contactId,
-        phone: contactId,
-        name: `Contacto ${phoneNumber.slice(-4)}`, // Nombre temporal básico
-        lastMessage: lastMessage.content,
-        unreadCount: unreadCount > 0 ? unreadCount : undefined
-      });
     });
     
-    // Ordenar por timestamp del último mensaje (más reciente primero)
+    // Ordenar por última actividad
     return contacts.sort((a, b) => {
-      const aMessages = messagesByContact[a.phone];
-      const bMessages = messagesByContact[b.phone];
-      
-      if (!aMessages.length || !bMessages.length) return 0;
-      
-      const aLastMessage = aMessages[aMessages.length - 1];
-      const bLastMessage = bMessages[bMessages.length - 1];
-      
-      return new Date(bLastMessage.timestamp).getTime() - new Date(aLastMessage.timestamp).getTime();
+      const timeA = new Date(a.lastMessageTime || 0).getTime();
+      const timeB = new Date(b.lastMessageTime || 0).getTime();
+      return timeB - timeA;
     });
-  }, [messagesByContact, messages, userProviderPhones]);
+  }, [messagesByContact]);
 
-  // Calcular contadores de mensajes no leídos - VERSIÓN CORREGIDA
+  // Calcular contadores de no leídos
   const unreadCounts = useMemo(() => {
     const counts: { [contactId: string]: number } = {};
     
-    Object.entries(messagesByContact).forEach(([contactId, contactMessages]) => {
-      if (!contactId) return;
+    Object.keys(messagesByContact).forEach(contactId => {
+      const unread = messagesByContact[contactId].filter(
+        m => m.direction === 'inbound' && m.status !== 'read'
+      ).length;
+      counts[contactId] = unread;
+    });
+    
+    return counts;
+  }, [messagesByContact]);
+
+  const totalUnreadCount = useMemo(() => {
+    return Object.values(unreadCounts).reduce((sum, count) => sum + count, 0);
+  }, [unreadCounts]);
+
+  // Enviar mensaje
+  const sendMessage = useCallback(async (contactId: string, content: string) => {
+    if (!content.trim()) return;
+
+    try {
+      // Normalizar el número antes de enviar
+      const normalizedContactId = normalizePhoneNumber(contactId).normalized;
       
-      // Filtrar el contacto de prueba
-      if (contactId === '+5491112345678' || contactId === '5491112345678') return;
+      const response = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: normalizedContactId,
+          message: content
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        logger.error('ChatContext', 'Error enviando mensaje', errorData);
+        throw new Error(errorData.error || 'Error enviando mensaje');
+      }
+
+      // Agregar mensaje localmente
+      const newMessage: ChatWhatsAppMessage = {
+        id: `temp-${Date.now()}`,
+        content: content.trim(),
+        contact_id: normalizedContactId,
+        contact_name: selectedContact?.name,
+        timestamp: new Date(),
+        type: 'sent',
+        direction: 'outbound',
+        status: 'sent'
+      };
+
+      setMessages(prev => [...prev, newMessage]);
+      logger.userAction('ChatContext', 'Mensaje enviado', contactId);
+    } catch (error) {
+      logger.error('ChatContext', 'Error en sendMessage', error);
+      throw error;
+    }
+  }, [selectedContact]);
+
+  // Marcar como leído
+  const markAsRead = useCallback(async (contactId: string) => {
+    try {
+      console.log('📖 [ChatContext] Marcando mensajes como leídos para:', contactId);
       
-      // Solo incluir contactos argentinos válidos O nuestro número de WhatsApp Business
-      if (!contactId.includes('+549') && contactId !== process.env.NEXT_PUBLIC_WHATSAPP_PHONE_NUMBER_ID) {
+      // Obtener el token de autenticación
+      const { data: session } = await supabase.auth.getSession();
+      const accessToken = session?.session?.access_token;
+      
+      if (!accessToken) {
+        console.error('❌ [ChatContext] No hay token de acceso para markAsRead');
         return;
       }
       
-      // Contar solo mensajes recibidos que no están leídos
-      const unreadCount = contactMessages.filter(msg =>
-        msg.type === 'received' && msg.status !== 'read'
-      ).length;
+      const response = await fetch('/api/whatsapp/mark-as-read', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({ contactId })
+      });
+
+      if (!response.ok) {
+        console.error('❌ [ChatContext] Error en markAsRead API:', response.status);
+        return;
+      }
+
+      // Actualizar estado local
+      setMessages(prev => {
+        const updated = prev.map(msg => 
+          msg.contact_id === contactId && msg.direction === 'inbound' 
+            ? { ...msg, status: 'read' as const }
+            : msg
+        );
+        console.log('📖 [ChatContext] Mensajes actualizados localmente:', updated.filter(m => m.contact_id === contactId).length);
+        return updated;
+      });
       
-      if (unreadCount > 0) {
-        counts[contactId] = unreadCount;
+      console.log('✅ [ChatContext] Mensajes marcados como leídos exitosamente');
+      logger.userAction('ChatContext', 'Mensajes marcados como leídos', contactId);
+    } catch (error) {
+      console.error('❌ [ChatContext] Error marcando como leído:', error);
+      logger.error('ChatContext', 'Error marcando como leído', error);
+    }
+  }, []);
+
+  // Seleccionar contacto
+  const selectContact = useCallback((contact: Contact) => {
+    setSelectedContact(contact);
+    
+    // ✅ CORRECCIÓN RAÍZ: Marcar automáticamente como leído al seleccionar contacto
+    if (contact.id) {
+      console.log('🔍 [ChatContext] Marcando mensajes como leídos para contacto:', contact.id);
+      markAsRead(contact.id);
+    }
+    
+    logger.userAction('ChatContext', 'Contacto seleccionado', contact.id);
+  }, [markAsRead]);
+
+  // Abrir chat
+  const openChat = useCallback(() => {
+    setIsChatOpen(true);
+    logger.userAction('ChatContext', 'Chat abierto');
+  }, []);
+
+  // Cerrar chat
+  const closeChat = useCallback(() => {
+    setIsChatOpen(false);
+    logger.userAction('ChatContext', 'Chat cerrado');
+  }, []);
+
+  // Reconectar SSE
+  const forceReconnectSSE = useCallback(() => {
+    logger.info('ChatContext', 'Forzando reconexión SSE');
+    // Implementar lógica de reconexión si es necesaria
+  }, []);
+
+  // Agregar mensaje
+  const addMessage = useCallback((contactId: string, message: ChatWhatsAppMessage) => {
+    setMessages(prev => {
+      // Evitar duplicados
+      const exists = prev.some(m => m.id === message.id);
+      if (exists) return prev;
+      
+      return [...prev, message];
+    });
+  }, []);
+
+  // Actualizar estado de conexión
+  useEffect(() => {
+    setIsConnected(realtimeConnected);
+    setConnectionStatus(realtimeConnected ? 'connected' : 'disconnected');
+  }, [realtimeConnected]);
+
+  // 🔧 NUEVO: Escuchar mensajes en tiempo real
+  useEffect(() => {
+    if (!isUserAuthenticated) {
+      console.log('🔐 [ChatContext] Usuario no autenticado, saltando suscripción a tiempo real');
+      return;
+    }
+
+    console.log('🔧 [ChatContext] Configurando listener de tiempo real...');
+
+    const unsubscribe = addMessageListener((realtimeMessage: any) => {
+      console.log('📨 [ChatContext] Mensaje recibido en tiempo real:', realtimeMessage);
+
+      // ✅ CORRECCIÓN RAÍZ: Convertir mensaje de tiempo real a formato de chat
+      const chatMessage: ChatWhatsAppMessage = {
+        id: realtimeMessage.id || `realtime-${Date.now()}`,
+        content: realtimeMessage.content || '',
+        contact_id: realtimeMessage.contact_id || '',
+        contact_name: realtimeMessage.contact_name || realtimeMessage.contact_id || '',
+        timestamp: new Date(realtimeMessage.timestamp || Date.now()),
+        // ✅ CORRECCIÓN: Usar message_type si existe, sino type
+        type: (realtimeMessage.message_type || realtimeMessage.type || 'text') as 'sent' | 'received',
+        // ✅ CORRECCIÓN: Determinar direction basado en message_type
+        direction: (realtimeMessage.message_type === 'received' || realtimeMessage.type === 'received') ? 'inbound' : 'outbound',
+        status: realtimeMessage.status || 'delivered'
+      };
+
+      console.log('📨 [ChatContext] Mensaje convertido:', chatMessage);
+
+      // Agregar mensaje al estado
+      setMessages(prev => {
+        // Evitar duplicados por ID
+        const exists = prev.some(m => m.id === chatMessage.id);
+        if (exists) {
+          console.log('🔄 [ChatContext] Mensaje ya existe, ignorando:', chatMessage.id);
+          return prev;
+        }
+        
+        console.log('✅ [ChatContext] Agregando nuevo mensaje al estado:', chatMessage.id);
+        return [...prev, chatMessage];
+      });
+
+      // Mostrar notificación si el chat no está abierto
+      if (!isChatOpen && Notification.permission === 'granted') {
+        new Notification(`Nuevo mensaje de ${chatMessage.contact_name}`, {
+          body: chatMessage.content,
+          icon: '/favicon.ico',
+          tag: `message-${chatMessage.id}`,  // ✅ Usar tag único para evitar duplicados
+          requireInteraction: false
+        });
       }
     });
-    
-         // Log temporal para debug (solo si hay cambios)
-    // if (Object.keys(counts).length > 0) {
-    //   console.log('🔢 Contadores no leídos calculados:', counts);
-    // }
-    
-    return counts;
-  }, [messagesByContact, messages]);
 
-  // Calcular total de mensajes no leídos para la navegación
-  const totalUnreadCount = useMemo(() => {
-    return Object.values(unreadCounts).reduce((total, count) => total + count, 0);
-  }, [unreadCounts]);
+    console.log('✅ [ChatContext] Listener de tiempo real configurado');
 
-  const value = useMemo(() => {
-    return {
-      messages,
-      messagesByContact,
-      sortedContacts,
-      selectedContact,
-      unreadCounts,
-      totalUnreadCount,
-      isConnected,
-      connectionStatus,
-      isChatOpen,
-      isUserAuthenticated,
-      openChat,
-      closeChat,
-      sendMessage,
-      markAsRead,
-      selectContact,
-      loadMessages,
-      forceReconnectSSE,
-      addMessage
-    };
-  }, [
+    return unsubscribe;
+  }, [isUserAuthenticated, addMessageListener, isChatOpen]);
+
+  const value: ChatContextType = {
     messages,
     messagesByContact,
     sortedContacts,
@@ -654,120 +592,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     loadMessages,
     forceReconnectSSE,
     addMessage
-  ]);
-
-  // 🔧 MOVER AQUÍ: useEffect que usa sortedContacts (después de su definición)
-  useEffect(() => {
-    // Si ya hay un listener configurado, limpiarlo
-    if (realtimeListenerRef.current) {
-      realtimeListenerRef.current();
-      realtimeListenerRef.current = null;
-    }
-
-    // Crear nuevo listener estable
-    const removeListener = addMessageListener((realtimeMessage) => {
-      // Convertir mensaje del servicio global al formato del chat
-      const chatMessage: ChatWhatsAppMessage = {
-        id: realtimeMessage.id,
-        content: realtimeMessage.content,
-        timestamp: realtimeMessage.timestamp,
-        type: realtimeMessage.type,
-        contact_id: realtimeMessage.contact_id,
-        status: realtimeMessage.status as 'sent' | 'delivered' | 'read' | 'failed' | undefined,
-        // 🔧 FIX: Incluir campos de documentos para que aparezcan en el chat
-        isDocument: !!(realtimeMessage as any).media_url,
-        mediaUrl: (realtimeMessage as any).media_url,
-        filename: (realtimeMessage as any).media_url 
-          ? (realtimeMessage as any).media_url.split('/').pop()?.split('_').slice(1).join('_') || 'documento' 
-          : undefined,
-        mediaType: (realtimeMessage as any).media_type
-      };
-
-      setMessages(prev => {
-        // Verificar duplicados por ID exacto - verificación más estricta
-        const messageExists = prev.some(msg => 
-          msg.id === chatMessage.id && 
-          msg.contact_id === chatMessage.contact_id
-        );
-        
-        if (messageExists) {
-          return prev;
-        }
-        
-        // Verificar duplicados por contenido y contacto en los últimos 30 segundos
-        const recentDuplicate = prev.find(msg => 
-          msg.content === chatMessage.content &&
-          msg.contact_id === chatMessage.contact_id &&
-          msg.type === 'sent' &&
-          Math.abs(new Date(msg.timestamp).getTime() - new Date(chatMessage.timestamp).getTime()) < 30000
-        );
-        
-        if (recentDuplicate) {
-          return prev;
-        }
-        
-        // Para mensajes enviados, buscar si hay un mensaje temporal que debe ser reemplazado
-        if (chatMessage.type === 'sent') {
-          const tempMessageIndex = prev.findIndex(msg => {
-            if (!msg.id.startsWith('temp_')) return false;
-            if (msg.content !== chatMessage.content) return false;
-            
-            // Comparar contactos normalizados
-            const normalizedTempContact = normalizeContactIdentifier(msg.contact_id);
-            const normalizedRealContact = normalizeContactIdentifier(chatMessage.contact_id);
-            if (normalizedTempContact !== normalizedRealContact) return false;
-            
-            // Verificar ventana de tiempo
-            const tempTime = new Date(msg.timestamp).getTime();
-            const realTime = new Date(chatMessage.timestamp).getTime();
-            const timeDiff = Math.abs(tempTime - realTime);
-            
-            return timeDiff < 60000; // 60 segundos
-          });
-          
-          if (tempMessageIndex !== -1) {
-            const updatedMessages = [...prev];
-            updatedMessages[tempMessageIndex] = {
-              ...chatMessage,
-              id: chatMessage.id,
-              status: 'delivered' as const
-            };
-            return updatedMessages;
-          }
-        }
-        
-        // Agregar el nuevo mensaje sin duplicados
-        const newMessages = [...prev, chatMessage];
-        
-        // 🔔 ENVIAR NOTIFICACIÓN para mensajes recibidos (no enviados por nosotros)
-        if (chatMessage.type === 'received' && chatMessage.contact_id) {
-          // Buscar el contacto para obtener el nombre
-          const contact = sortedContacts.find(c => normalizeContactIdentifier(c.phone) === chatMessage.contact_id);
-          const contactName = contact?.name || 'Contacto';
-          
-          // Enviar notificación
-          sendNotification({
-            title: `Mensaje de ${contactName}`,
-            body: chatMessage.content || 'Nuevo mensaje recibido',
-            tag: 'whatsapp-message',
-            requireInteraction: true
-          });
-        }
-        
-        return newMessages;
-      });
-    });
-
-    // Almacenar referencia para cleanup
-    realtimeListenerRef.current = removeListener;
-
-    return () => {
-      if (realtimeListenerRef.current) {
-        realtimeListenerRef.current();
-        realtimeListenerRef.current = null;
-      }
-    };
-  }, [addMessageListener, sendNotification, sortedContacts]); // ✅ DEPENDENCIAS CORRECTAS: Incluir sendNotification y sortedContacts
+  };
 
   return (
     <ChatContext.Provider value={value}>

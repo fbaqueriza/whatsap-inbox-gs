@@ -368,19 +368,52 @@ export class DocumentService {
     error?: string;
   }> {
     try {
+      console.log('🔍 [DocumentService] Iniciando extracción OCR para:', fileUrl);
+      
       // Usar el servicio de OCR existente
       const { ocrService } = await import('./ocrService.js');
       
       // Descargar y procesar archivo
       const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Error descargando archivo: ${response.status}`);
+      }
+      
       const buffer = await response.arrayBuffer();
+      console.log('📊 [DocumentService] Archivo descargado:', buffer.byteLength, 'bytes');
       
       const result = await ocrService.extractTextFromPDF(Buffer.from(buffer), 'documento.pdf');
       
+      if (!result.success) {
+        throw new Error(result.error || 'Error en OCR');
+      }
+      
+      console.log('✅ [DocumentService] OCR completado, texto extraído:', result.text?.length || 0, 'caracteres');
+      
+      // ✅ CORREGIDO: Procesar texto extraído para crear datos estructurados
+      const structuredData = await this.processExtractedText(result.text || '', fileType);
+      
+      const ocrData: OCRData = {
+        document_type: fileType,
+        provider_cuit: structuredData.provider_cuit,
+        invoice_data: structuredData.invoice_data ? {
+          invoice_number: structuredData.invoice_number,
+          total_amount: structuredData.total_amount,
+          issue_date: structuredData.issue_date,
+          ...structuredData.invoice_data
+        } : undefined,
+        processing_time: Date.now(),
+        ocr_engine: 'tesseract',
+        language_detected: 'spa'
+      };
+      
+      // ✅ CORRECCIÓN: Asegurar que confidence_score esté entre 0 y 1
+      const confidenceScore = Math.min(Math.max((result.confidence || 0.5) / 100, 0), 1);
+      
       return {
         success: true,
-        ocr_data: result,
-        confidence_score: result.confidence || 0.5,
+        ocr_data: ocrData,
+        confidence_score: confidenceScore,
         extracted_text: result.text || ''
       };
 
@@ -390,6 +423,43 @@ export class DocumentService {
         success: false,
         error: error instanceof Error ? error.message : 'Error en OCR'
       };
+    }
+  }
+
+  /**
+   * 🔍 PROCESAR TEXTO EXTRAÍDO PARA CREAR DATOS ESTRUCTURADOS
+   */
+  private async processExtractedText(text: string, fileType: DocumentType): Promise<{
+    invoice_data?: any;
+    provider_cuit?: string;
+    total_amount?: number;
+    invoice_number?: string;
+    issue_date?: string;
+  }> {
+    try {
+      console.log('🔍 [DocumentService] Procesando texto extraído para extraer datos estructurados...');
+      
+      // Usar el servicio de extracción de facturas existente
+      const { simpleInvoiceExtraction } = await import('./simpleInvoiceExtraction');
+      
+      const extractionResult = await simpleInvoiceExtraction.extractFromText(text, 'documento.pdf');
+      
+      if (extractionResult.success && extractionResult.data) {
+        console.log('✅ [DocumentService] Datos estructurados extraídos:', extractionResult.data);
+        return {
+          invoice_data: extractionResult.data,
+          provider_cuit: extractionResult.data.cuit || extractionResult.data.provider_cuit || extractionResult.data.providerTaxId,
+          total_amount: extractionResult.data.totalAmount || extractionResult.data.total_amount,
+          invoice_number: extractionResult.data.invoiceNumber || extractionResult.data.invoice_number,
+          issue_date: extractionResult.data.invoiceDate || extractionResult.data.issue_date
+        };
+      } else {
+        console.warn('⚠️ [DocumentService] No se pudieron extraer datos estructurados del texto');
+        return {};
+      }
+    } catch (error) {
+      console.error('❌ [DocumentService] Error procesando texto extraído:', error);
+      return {};
     }
   }
 

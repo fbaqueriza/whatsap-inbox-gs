@@ -77,11 +77,7 @@ Saludos!`;
     process_invoice: (order: any) => {
       return `✅ *FACTURA RECIBIDA*
 
-La factura para la orden ${order.order_number} ha sido procesada exitosamente.
-
-Ahora puede proceder con el pago y subir el comprobante correspondiente.
-
-Saludos!`;
+La factura para la orden ${order.order_number} ha sido procesada exitosamente. Saludos!`;
     },
 
     complete_order: (order: any) => {

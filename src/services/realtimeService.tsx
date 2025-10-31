@@ -1,16 +1,10 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
-import { useRealtimeManager } from '../hooks/useRealtimeManager';
 import { useSupabaseAuth } from '../hooks/useSupabaseAuth';
 import { mapOrderFromDb } from '../lib/orderMapper';
-
-// Helper para detectar páginas protegidas
-const isProtectedPage = (pathname: string): boolean => {
-  const protectedPaths = ['/dashboard', '/orders', '/providers', '/stock', '/profile'];
-  return protectedPaths.some(path => pathname.startsWith(path));
-};
 import { supabase } from '../lib/supabase/client';
+import { normalizePhoneNumber } from '../lib/phoneNormalization';
 
 // Tipos
 interface RealtimeMessage {
@@ -21,6 +15,8 @@ interface RealtimeMessage {
   contact_id: string;
   status: string;
   user_id?: string;
+  // ✅ CORRECCIÓN RAÍZ: Agregar message_type para identificar correctamente el tipo
+  message_type?: 'received' | 'sent';
   // 🔧 CORRECCIÓN: Agregar campos para documentos
   media_url?: string;
   media_type?: string;
@@ -29,6 +25,7 @@ interface RealtimeMessage {
 interface RealtimeOrder {
   id: string;
   status: string;
+  order_number?: string;
   total_amount?: number;
   invoice_number?: string;
   receipt_url?: string;
@@ -67,14 +64,14 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const { user } = useSupabaseAuth();
   const currentUserId = user?.id || null;
 
-  // 🔧 NUEVO: Referencias para polling
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Referencias para control de actualizaciones
   const lastOrdersUpdateRef = useRef<string>('');
 
   const messageListeners = useRef<Set<(message: RealtimeMessage) => void>>(new Set());
   const orderListeners = useRef<Set<(order: RealtimeOrder) => void>>(new Set());
 
-  const { subscribe, unsubscribe } = useRealtimeManager();
+  // Referencias para suscripciones
+  const subscriptionsRef = useRef<Set<any>>(new Set());
 
 
   // 🔧 CORREGIDO: Ya no necesitamos este useEffect porque currentUserId viene de useSupabaseAuth
@@ -82,7 +79,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   // Handlers para mensajes
   const handleNewMessage = async (payload: any) => {
     const newMessage = payload.new;
-    // console.log('🔍 [RealtimeService] Nuevo mensaje recibido:', newMessage?.id);
+    console.log('🔍 [RealtimeService] Nuevo mensaje recibido:', newMessage?.id);
 
     if (!newMessage || !currentUserId) {
       console.log('🔐 RealtimeService: Ignorando mensaje - usuario no autenticado');
@@ -92,20 +89,24 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // 🔧 LÓGICA SIMPLIFICADA: Aceptar mensajes del usuario actual O mensajes sin user_id
     const isValidMessage = newMessage.user_id === currentUserId || !newMessage.user_id;
 
-    // console.log('🔍 [RealtimeService] Validación de mensaje:', isValidMessage);
+    console.log('🔍 [RealtimeService] Validación de mensaje:', isValidMessage, 'user_id:', newMessage.user_id, 'currentUserId:', currentUserId);
 
     if (!isValidMessage) {
       console.log('❌ [RealtimeService] Mensaje rechazado - user_id no coincide');
       return; // Ignorar mensaje no válido
     }
 
-    // 🔧 MEJORA: Crear mensaje y notificar listeners
+    // ✅ CORRECCIÓN RAÍZ: Crear mensaje y notificar listeners
+    // ✅ CORRECCIÓN RAÍZ: Normalizar contact_id para evitar contactos duplicados
+    const normalizedContactId = normalizePhoneNumber(newMessage.contact_id).normalized;
+    
     const message: RealtimeMessage = {
       id: newMessage.id,
       content: newMessage.content,
       timestamp: new Date(newMessage.timestamp),
-      type: newMessage.message_type,
-      contact_id: newMessage.contact_id,
+      // ✅ CORRECCIÓN: Usar message_type del mensaje de la BD
+      type: newMessage.message_type || 'text',
+      contact_id: normalizedContactId, // Usar número normalizado
       status: newMessage.status || 'delivered',
       user_id: newMessage.user_id,
       // 🔧 CORRECCIÓN: Incluir media_url y media_type para documentos
@@ -119,12 +120,12 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         console.log('🔄 [RealtimeService] Mensaje ya existe, ignorando:', message.id);
         return prev;
       }
-      // console.log('✅ [RealtimeService] Agregando nuevo mensaje al estado:', message.id);
+      console.log('✅ [RealtimeService] Agregando nuevo mensaje al estado:', message.id);
       return [...prev, message];
     });
 
     // 🔧 OPTIMIZACIÓN: Notificar a todos los listeners de forma segura
-    // console.log('📢 [RealtimeService] Notificando a', messageListeners.current.size, 'listeners');
+    console.log('📢 [RealtimeService] Notificando a', messageListeners.current.size, 'listeners');
     messageListeners.current.forEach(callback => {
       try {
         callback(message);
@@ -324,45 +325,47 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     });
   };
 
-  const handleKapsoMessageUpdate = (payload: any) => {
-    console.log(`📨 [RealtimeService] Procesando mensaje desde Kapso:`, payload);
-    
-    if (!currentUserId) {
-      console.log(`⚠️ [RealtimeService] Ignorando mensaje de Kapso - usuario no autenticado`);
-      return;
-    }
+  // ✅ COMENTADO: Esta función causaba duplicación de eventos de mensajes
+  // Los mensajes ahora los maneja exclusivamente ChatContext
+  // const handleKapsoMessageUpdate = (payload: any) => {
+  //   console.log(`📨 [RealtimeService] Procesando mensaje desde Kapso:`, payload);
+  //   
+  //   if (!currentUserId) {
+  //     console.log(`⚠️ [RealtimeService] Ignorando mensaje de Kapso - usuario no autenticado`);
+  //     return;
+  //   }
 
-    // Crear mensaje desde el evento de Kapso
-    const message: RealtimeMessage = {
-      id: payload.payload.messageId,
-      content: payload.payload.content,
-      timestamp: new Date(payload.payload.timestamp),
-      type: 'text',
-      contact_id: payload.payload.from,
-      status: 'delivered',
-      user_id: currentUserId,
-      source: 'kapso'
-    };
+  //   // Crear mensaje desde el evento de Kapso
+  //   const message: RealtimeMessage = {
+  //     id: payload.payload.messageId,
+  //     content: payload.payload.content,
+  //     timestamp: new Date(payload.payload.timestamp),
+  //     type: 'text',
+  //     contact_id: payload.payload.from,
+  //     status: 'delivered',
+  //     user_id: currentUserId,
+  //     source: 'kapso'
+  //   };
 
-    setMessages(prev => {
-      const exists = prev.some(msg => msg.id === message.id);
-      if (exists) {
-        console.log('🔄 [RealtimeService] Mensaje de Kapso ya existe, ignorando:', message.id);
-        return prev;
-      }
-      console.log('✅ [RealtimeService] Agregando mensaje de Kapso:', message.id);
-      return [...prev, message];
-    });
+  //   setMessages(prev => {
+  //     const exists = prev.some(msg => msg.id === message.id);
+  //     if (exists) {
+  //       console.log('🔄 [RealtimeService] Mensaje de Kapso ya existe, ignorando:', message.id);
+  //       return prev;
+  //     }
+  //     console.log('✅ [RealtimeService] Agregando mensaje de Kapso:', message.id);
+  //     return [...prev, message];
+  //   });
 
-    // Notificar a los listeners
-    messageListeners.current.forEach(callback => {
-      try {
-        callback(message);
-      } catch (error) {
-        console.error('❌ [RealtimeService] Error en message listener (Kapso):', error);
-      }
-    });
-  };
+  //   // Notificar a los listeners
+  //   messageListeners.current.forEach(callback => {
+  //     try {
+  //       callback(message);
+  //     } catch (error) {
+  //       console.error('❌ [RealtimeService] Error en message listener (Kapso):', error);
+  //     }
+  //   });
+  // };
 
   const handleKapsoDocumentUpdate = (payload: any) => {
     console.log(`📎 [RealtimeService] Procesando documento desde Kapso:`, payload);
@@ -436,29 +439,31 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // 🔧 SOLUCIÓN OPTIMIZADA: Una sola llamada de suscripción por tipo
     const setupWhatsAppSuscription = async () => {
       try {
+        console.log('🔧 [RealtimeService] Configurando suscripción a whatsapp_messages para usuario:', currentUserId);
         // 🔧 FIX: Agregar filtro por user_id para que RLS permita los mensajes
-        await subscribe(
-          {
-            table: 'whatsapp_messages',
-            event: '*',
-            filter: currentUserId ? `user_id=eq.${currentUserId}` : undefined
-          },
-          {
-            onInsert: handleNewMessage,
-            onUpdate: handleMessageUpdate,
-            onDelete: handleMessageDelete
-          },
-          {
-            debounceMs: 150,
-            retryConfig: {
-              maxRetries: 5,
-              retryDelay: 2000,
-              backoffMultiplier: 1.5
+        const channel = supabase
+          .channel('whatsapp-messages')
+          .on('postgres_changes', 
+            { 
+              event: '*', 
+              schema: 'public', 
+              table: 'whatsapp_messages'
+              // ✅ CORRECCIÓN: Remover filtro para que funcione con RLS
+            }, 
+            (payload) => {
+              console.log('📨 [RealtimeService] Evento postgres_changes recibido:', payload.eventType, (payload.new as any)?.id);
+              if (payload.eventType === 'INSERT') handleNewMessage(payload);
+              else if (payload.eventType === 'UPDATE') handleMessageUpdate(payload);
+              else if (payload.eventType === 'DELETE') handleMessageDelete(payload);
             }
-          }
-        );
-        console.log(`✅ RealtimeService: Suscripción a whatsapp_messages activa para user_id: ${currentUserId}`);
+          )
+          .subscribe((status) => {
+            console.log('📡 [RealtimeService] Estado de suscripción:', status);
+          });
+        
+        subscriptionsRef.current.add(channel);
         setIsConnected(true);
+        console.log('✅ [RealtimeService] Suscripción a whatsapp_messages configurada exitosamente');
       } catch (error) {
         console.error(`❌ RealtimeService: Error configurando suscripción a whatsapp_messages:`, error);
         setIsConnected(false);
@@ -470,28 +475,23 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // 🔧 SOLUCIÓN OPTIMIZADA: Suscripción a órdenes sin filtro (filtrar en handler)
     const setupOrdersSuscription = async () => {
       try {
-        console.log(`🔌 [RealtimeService] Configurando suscripción a orders para usuario: ${currentUserId}`);
-        await subscribe(
-          {
-            table: 'orders',
-            event: '*'
-            // Sin filtro - filtrar en los handlers
-          },
-          {
-            onInsert: handleNewOrder,
-            onUpdate: handleOrderUpdate,
-            onDelete: handleOrderDelete
-          },
-          {
-            debounceMs: 100,
-            retryConfig: {
-              maxRetries: 3,
-              retryDelay: 1000,
-              backoffMultiplier: 2
+        const channel = supabase
+          .channel('orders')
+          .on('postgres_changes', 
+            { 
+              event: '*', 
+              schema: 'public', 
+              table: 'orders'
+            }, 
+            (payload) => {
+              if (payload.eventType === 'INSERT') handleNewOrder(payload);
+              else if (payload.eventType === 'UPDATE') handleOrderUpdate(payload);
+              else if (payload.eventType === 'DELETE') handleOrderDelete(payload);
             }
-          }
-        );
-        console.log(`✅ [RealtimeService] Suscripción a orders configurada exitosamente`);
+          )
+          .subscribe();
+        
+        subscriptionsRef.current.add(channel);
       } catch (error) {
         console.error(`❌ [RealtimeService] Error configurando suscripción a orders:`, error);
       }
@@ -502,7 +502,6 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // 🔧 NUEVO: Suscripción a eventos de Kapso
     const setupKapsoEventsSuscription = async () => {
       try {
-        console.log(`🔌 [RealtimeService] Configurando suscripción a eventos de Kapso`);
         
         // Suscripción a eventos de órdenes de Kapso
         const ordersChannel = supabase
@@ -512,20 +511,11 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
             // Procesar evento de Kapso como si fuera un evento nativo de Supabase
             handleKapsoOrderUpdate(payload);
           })
-          .subscribe((status) => {
-            console.log(`📡 [RealtimeService] Estado suscripción órdenes Kapso:`, status);
-          });
+          .subscribe();
 
-        // Suscripción a eventos de mensajes de Kapso
-        const messagesChannel = supabase
-          .channel('messages-updates')
-          .on('broadcast', { event: 'message_received' }, (payload) => {
-            console.log(`📨 [RealtimeService] Evento de mensaje desde Kapso:`, payload);
-            handleKapsoMessageUpdate(payload);
-          })
-          .subscribe((status) => {
-            console.log(`📡 [RealtimeService] Estado suscripción mensajes Kapso:`, status);
-          });
+        // ✅ CORRECCIÓN: No suscribirse a eventos de mensajes aquí - ChatContext lo maneja
+        // Los mensajes de chat los maneja ChatContext directamente via 'kapso_messages' channel
+        // Esta suscripción causaba duplicación de eventos
 
         // Suscripción a eventos de documentos de Kapso
         const documentsChannel = supabase
@@ -534,11 +524,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
             console.log(`📎 [RealtimeService] Evento de documento desde Kapso:`, payload);
             handleKapsoDocumentUpdate(payload);
           })
-          .subscribe((status) => {
-            console.log(`📡 [RealtimeService] Estado suscripción documentos Kapso:`, status);
-          });
-
-        console.log(`✅ [RealtimeService] Suscripciones a eventos de Kapso configuradas`);
+          .subscribe();
       } catch (error) {
         console.error(`❌ [RealtimeService] Error configurando suscripciones de Kapso:`, error);
       }
@@ -557,20 +543,14 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         // Remover del conjunto de usuarios inicializados
         subscriptionsInitializedRef.current.delete(currentUserId);
         
-        // Una sola llamada de desuscripción por tabla
-        unsubscribe({
-          table: 'whatsapp_messages',
-          event: '*'
+        // Desuscribir todos los canales
+        subscriptionsRef.current.forEach(channel => {
+          supabase.removeChannel(channel);
         });
-        
-        unsubscribe({
-          table: 'orders', 
-          event: '*',
-          filter: currentUserId ? `user_id=eq.${currentUserId}` : undefined
-        });
+        subscriptionsRef.current.clear();
       }
     };
-  }, [currentUserId, subscribe, unsubscribe]);
+  }, [currentUserId]);
 
   // Funciones para agregar/remover listeners
   // 🔧 SOLUCIÓN UNIFICADA: addMessageListener con referencia estable

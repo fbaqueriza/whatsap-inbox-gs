@@ -1276,8 +1276,9 @@ async function processWhatsAppDocument(
       return { success: false, error: documentResult.error };
     }
 
-    // Procesar documento con OCR en background
-    processDocumentWithOCR(documentResult.document_id!, requestId, fileBuffer, uploadResult.filename);
+    // ✅ CORREGIDO: Procesar documento con OCR inmediatamente
+    console.log(`🤖 [${requestId}] Iniciando procesamiento OCR inmediato para documento: ${documentResult.document_id}`);
+    await processDocumentWithOCR(documentResult.document_id!, requestId, fileBuffer, uploadResult.filename);
 
     // 🔧 NUEVO: Guardar documento como mensaje en el chat
     const { createClient } = await import('@supabase/supabase-js');
@@ -1464,138 +1465,24 @@ function determineSenderType(senderPhone: string, userId: string): 'provider' | 
   return 'provider';
 }
 
-// 🔧 FUNCIÓN AUXILIAR: Procesar documento con OCR en background
+// ✅ CORREGIDO: Procesar documento con OCR inmediatamente
 async function processDocumentWithOCR(documentId: string, requestId: string, fileBuffer?: Buffer, filename?: string): Promise<void> {
   try {
-    console.log(`🤖 [${requestId}] Iniciando procesamiento OCR en background para documento: ${documentId}`);
+    console.log(`🤖 [${requestId}] Iniciando procesamiento OCR inmediato para documento: ${documentId}`);
     
-    // Usar setTimeout para no bloquear la respuesta del webhook
-    setTimeout(async () => {
-      try {
-        const { DocumentService } = await import('../../../../lib/documentService');
-        const documentService = new DocumentService();
-        
-        // Si tenemos el buffer del archivo, procesar directamente con OCR
-        if (fileBuffer && filename) {
-          console.log(`🔍 [${requestId}] Procesando archivo directamente con OCR: ${filename}`);
-          
-          // Procesar con nuestro servicio de OCR
-          const { ocrService } = require('../../../../lib/ocrService');
-          const { simpleInvoiceExtraction } = require('../../../../lib/simpleInvoiceExtraction');
-          
-          let ocrResult;
-          if (filename.toLowerCase().endsWith('.pdf')) {
-            // Crear archivo temporal para PDF
-            const fs = require('fs');
-            const path = require('path');
-            
-            const tempDir = path.join(process.cwd(), 'temp');
-            if (!fs.existsSync(tempDir)) {
-              fs.mkdirSync(tempDir, { recursive: true });
-            }
-            
-            const tempFilePath = path.join(tempDir, filename);
-            fs.writeFileSync(tempFilePath, fileBuffer);
-            
-            ocrResult = await ocrService.processPDFFromPath(tempFilePath);
-            
-            // Limpiar archivo temporal
-            if (fs.existsSync(tempFilePath)) {
-              fs.unlinkSync(tempFilePath);
-            }
-          } else {
-            // Para imágenes, usar extractTextFromImage
-            ocrResult = await ocrService.extractTextFromImage(fileBuffer, filename);
-          }
-          
-          if (ocrResult.success && ocrResult.text) {
-            console.log(`✅ [${requestId}] OCR exitoso, extrayendo datos estructurados...`);
-            
-            // Extraer datos estructurados
-            const extractedData = await simpleInvoiceExtraction.extractFromText(ocrResult.text, filename);
-            
-                   // Actualizar documento con datos extraídos
-                   await documentService.updateDocumentWithOCRData(documentId, {
-                     extracted_text: ocrResult.text,
-                     extracted_data: extractedData.success ? extractedData.data : null,
-                     confidence_score: extractedData.success ? extractedData.confidence : 0
-                   });
-            
-            console.log(`✅ [${requestId}] Datos extraídos y guardados:`, {
-              hasText: !!ocrResult.text,
-              hasStructuredData: extractedData.success,
-              confidence: extractedData.success ? extractedData.confidence : 0
-            });
-            
-            // Si es una factura con datos válidos, intentar asociar a orden
-            // Detectar factura por nombre del archivo O por datos extraídos (invoiceNumber, totalAmount, etc.)
-            const isInvoice = filename.toLowerCase().includes('factura') || 
-                             (extractedData.data && extractedData.data.invoiceNumber && extractedData.data.totalAmount);
-            
-            if (extractedData.success && extractedData.data && isInvoice) {
-              console.log(`🔍 [${requestId}] Factura detectada, intentando asociar a orden:`, {
-                filename: filename,
-                hasInvoiceNumber: !!extractedData.data.invoiceNumber,
-                hasTotalAmount: !!extractedData.data.totalAmount,
-                isInvoice: isInvoice
-              });
-              await tryAssociateInvoiceToOrder(documentId, extractedData.data, requestId);
-            } else {
-              console.log(`⚠️ [${requestId}] No se detectó como factura:`, {
-                filename: filename,
-                extractedDataSuccess: extractedData.success,
-                hasData: !!extractedData.data,
-                hasInvoiceNumber: extractedData.data?.invoiceNumber,
-                hasTotalAmount: extractedData.data?.totalAmount,
-                isInvoice: isInvoice
-              });
-            }
-          } else {
-            console.log(`⚠️ [${requestId}] OCR falló o no extrajo texto:`, ocrResult.error);
-          }
-        } else {
-          // Fallback al sistema anterior
-          const result = await documentService.processDocumentWithOCR(documentId);
-          
-          if (result.success) {
-            console.log(`✅ [${requestId}] OCR completado exitosamente para documento: ${documentId}`);
-          }
-        }
-        
-        // Enviar notificación de procesamiento completado
-        const { DocumentNotificationService } = await import('../../../../lib/documentNotificationService');
-        const notificationService = new DocumentNotificationService();
-        
-        // Obtener documento por ID directamente
-        const document = await documentService.getDocumentById(documentId);
-        if (document) {
-          await notificationService.notifyDocumentProcessed(
-            document.user_id,
-            documentId,
-            document.filename,
-            document.file_type,
-            document.confidence_score || 0
-          );
-          
-          // Si se asignó a una orden, notificar
-          if (document.order_id) {
-            await notificationService.notifyDocumentAssigned(
-              document.user_id,
-              documentId,
-              document.filename,
-              document.order_id
-            );
-          }
-        } else {
-          console.error(`❌ [${requestId}] Error obteniendo documento: ${documentId}`);
-        }
-      } catch (error) {
-        console.error(`❌ [${requestId}] Error en procesamiento background:`, error);
-      }
-    }, 1000); // Esperar 1 segundo antes de procesar
-
+    const { DocumentService } = await import('../../../../lib/documentService');
+    const documentService = new DocumentService();
+    
+    // Usar el método del DocumentService que ya está implementado
+    const ocrResult = await documentService.processDocumentWithOCR(documentId);
+    
+    if (ocrResult.success) {
+      console.log(`✅ [${requestId}] OCR completado exitosamente para documento: ${documentId}`);
+    } else {
+      console.error(`❌ [${requestId}] Error en OCR: ${ocrResult.error}`);
+    }
   } catch (error) {
-    console.error(`❌ [${requestId}] Error iniciando procesamiento OCR:`, error);
+    console.error(`❌ [${requestId}] Error procesando OCR:`, error);
   }
 }
 
@@ -1810,7 +1697,7 @@ async function tryAssociateInvoiceToOrder(
       invoice_date: extractedData.issueDate,
       extraction_confidence: extractedData.confidence,
       // 🔧 CORRECCIÓN: Preservar el provider_id para evitar desconexión
-      provider_id: order.provider_id
+      // provider_id: order.provider_id // Comentado temporalmente
     };
     
     // Actualizar monto si es diferente

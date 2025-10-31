@@ -5,8 +5,6 @@ import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSupabaseAuth } from '../hooks/useSupabaseAuth';
 import { Menu, X, User, LogOut, Settings, Bell, MessageSquare } from 'lucide-react';
-import { useChat } from '../contexts/ChatContext';
-import { useGlobalChat } from '../contexts/GlobalChatContext';
 import UserProfile from './UserProfile';
 import es from '../locales/es';
 
@@ -16,10 +14,6 @@ export default function Navigation() {
   const [isMounted, setIsMounted] = useState(false);
   const hasRendered = useRef(false);
   
-  // Chat hooks - usando hooks personalizados
-  const { unreadCounts, totalUnreadCount } = useChat();
-  const { openGlobalChat } = useGlobalChat();
-
   useEffect(() => {
     if (!hasRendered.current) {
       setIsMounted(true);
@@ -43,30 +37,8 @@ export default function Navigation() {
     { name: 'Órdenes', href: '/orders' },
     { name: 'Proveedores', href: '/providers' },
     { name: 'Stock', href: '/stock' },
+    { name: 'Chat', href: '/chat' },
   ];
-
-  // Debug: Log del contador de navegación (solo en desarrollo)
-  // if (process.env.NODE_ENV === 'development') {
-  //   console.log('🧭 NAVEGACIÓN - totalUnreadCount:', totalUnreadCount);
-  //   console.log('🧭 NAVEGACIÓN - unreadCounts:', unreadCounts);
-  // }
-
-  // Cambiar título de la página cuando hay mensajes no leídos
-  useEffect(() => {
-    if (totalUnreadCount > 0) {
-      document.title = `(${totalUnreadCount}) ${es.appName}`;
-    } else {
-      document.title = es.appName;
-    }
-  }, [totalUnreadCount]);
-
-  const handleChatClick = () => {
-    if (openGlobalChat) {
-      openGlobalChat();
-    } else {
-      // openGlobalChat no disponible
-    }
-  };
 
   return (
     <nav className="bg-white shadow-sm border-b border-gray-200">
@@ -102,22 +74,6 @@ export default function Navigation() {
           </div>
 
           <div className="hidden sm:ml-6 sm:flex sm:items-center sm:space-x-4">
-            {/* Chat Button */}
-            <button
-              onClick={handleChatClick}
-              className="relative p-2 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              title={`Abrir chat${totalUnreadCount > 0 ? ` (${totalUnreadCount} mensajes no leídos)` : ''}`}
-            >
-              <MessageSquare className="h-6 w-6" />
-              {totalUnreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center animate-pulse">
-                  {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
-                </span>
-              )}
-            </button>
-
-
-
             {/* Notifications */}
             <button className="p-2 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
               <Bell className="h-6 w-6" />
@@ -182,19 +138,6 @@ export default function Navigation() {
               <UserProfile showEmail={true} className="mb-3" />
             </div>
             <div className="mt-3 space-y-1">
-                             {/* Chat Button Mobile */}
-               <button
-                 onClick={handleChatClick}
-                 className="block w-full text-left px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100"
-               >
-                 <MessageSquare className="h-4 w-4 mr-2 inline" />
-                 Chat
-                 {totalUnreadCount > 0 && (
-                   <span className="ml-2 bg-red-500 text-white text-xs rounded-full px-2 py-1">
-                     {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
-                   </span>
-                 )}
-               </button>
               <button
                 onClick={handleSignOut}
                 className="block w-full text-left px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100"

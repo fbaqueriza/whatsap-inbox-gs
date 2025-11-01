@@ -5,8 +5,6 @@ import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import { DataProvider, useData } from '../../components/DataProvider';
 import { useRouter } from 'next/navigation';
 import { Order, Provider, StockItem, OrderItem } from '../../types';
-import { useChat } from '../../contexts/ChatContext';
-import { useGlobalChat } from '../../contexts/GlobalChatContext';
 import { NotificationService } from '../../lib/notificationService';
 import { PhoneNumberService } from '../../lib/phoneNumberService';
 import { supabase } from '../../lib/supabase/client';
@@ -193,8 +191,8 @@ function DashboardPageContent({
 }) {
   const { addOrder, updateOrder, fetchAll } = useData();
   // Chat hooks
-  const { openChat, isChatOpen: contextIsChatOpen, closeChat } = useChat();
-  const { openGlobalChat } = useGlobalChat();
+  // Chat eliminado: usar navegación a /chat
+  const contextIsChatOpen = false;
   
   // Sincronizar el estado local con el contexto
   useEffect(() => {
@@ -442,41 +440,8 @@ function DashboardPageContent({
   };
 
 
-    const handleOrderClick = (order: Order) => {
-    // Encontrar el proveedor correspondiente
-    const provider = providers.find(p => p.id === order.providerId);
-    
-    if (provider) {
-      // Usar servicio centralizado de normalización
-      const normalizedPhone = PhoneNumberService.normalizePhoneNumber(provider.phone) || provider.phone || '';
-      
-      // Crear contacto para el chat con el formato correcto
-      const contact = {
-        id: provider.id,
-        name: provider.contactName 
-          ? `${provider.name} - ${provider.contactName}`
-          : provider.name,
-        phone: normalizedPhone,
-        providerId: provider.id,
-        lastMessage: '',
-        lastMessageTime: new Date(),
-        unreadCount: 0
-      };
-      
-      // Abrir el chat usando el contexto global
-      openGlobalChat(contact);
-      
-      // También seleccionar el contacto en el chat local
-      if (typeof window !== 'undefined') {
-        // Usar un timeout para asegurar que el chat esté abierto
-        setTimeout(() => {
-          const event = new CustomEvent('selectContact', { 
-            detail: { contact } 
-          });
-          window.dispatchEvent(event);
-        }, 100);
-      }
-    }
+  const handleOrderClick = (order: Order) => {
+    window.location.href = '/chat';
   };
 
   const openReceipt = (receiptUrl: string | undefined) => {

@@ -12,7 +12,6 @@ import {
   csvEscape,
   parseCsvRow,
 } from '../../features/providers/providerUtils';
-import { useChat } from '../../contexts/ChatContext';
 import { DataProvider, useData } from '../../components/DataProvider';
 import es from '../../locales/es';
 import { useRouter } from 'next/navigation';
@@ -58,16 +57,7 @@ function ProvidersPage() {
   const [isDocumentsModalOpen, setIsDocumentsModalOpen] = useState(false);
   const [selectedProviderForDocuments, setSelectedProviderForDocuments] = useState<Provider | null>(null);
   
-  // Chat state - now enabled
-  const { openChat, isChatOpen } = useChat();
-  const [isChatPanelOpen, setIsChatPanelOpen] = useState(false);
-
-  // Sincronizar el estado local con el contexto
-  useEffect(() => {
-    if (isChatOpen !== isChatPanelOpen) {
-      setIsChatPanelOpen(isChatOpen);
-    }
-  }, [isChatOpen, isChatPanelOpen]);
+  // Chat eliminado: navegación a /chat cuando corresponda (no usado aquí)
 
   // PDF upload handler
   const fileInputRef = useRef<HTMLInputElement | null>(null);

@@ -5,9 +5,6 @@ import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import { useRouter } from 'next/navigation';
 import { Order, Provider, StockItem } from '../../types';
 import { DataProvider, useData } from '../../components/DataProvider';
-import { ChatProvider } from '../../contexts/ChatContext';
-import { GlobalChatProvider } from '../../contexts/GlobalChatContext';
-import GlobalChatWrapper from '../../components/GlobalChatWrapper';
 import { useRealtimeService } from '../../services/realtimeService';
 
 // Lazy load components to reduce bundle size
@@ -97,14 +94,9 @@ export default function OrdersPageWrapper() {
 
   return (
     <ErrorBoundary>
-      <ChatProvider>
-        <GlobalChatProvider>
-          <DataProvider userEmail={user?.email ?? undefined} userId={user?.id}>
-            {user && <OrdersPage user={user} />}
-          </DataProvider>
-          <GlobalChatWrapper />
-        </GlobalChatProvider>
-      </ChatProvider>
+      <DataProvider userEmail={user?.email ?? undefined} userId={user?.id}>
+        {user && <OrdersPage user={user} />}
+      </DataProvider>
     </ErrorBoundary>
   );
 }
@@ -314,27 +306,7 @@ function OrdersPage({ user }: OrdersPageProps) {
 
   // 🔧 NUEVO: Manejador para abrir chat con proveedor
   const handleOrderClick = (order: Order) => {
-    // console.log('🔧 DEBUG - Abriendo chat para orden:', order.id);
-    
-    // Buscar el proveedor de la orden
-    const provider = providers.find(p => p.id === order.providerId);
-    if (provider) {
-      // console.log('🔧 DEBUG - Proveedor encontrado:', provider.name, provider.phone);
-      
-      // Abrir el chat global con el proveedor específico
-      // Esto debería abrir el GlobalChatWrapper con el proveedor seleccionado
-      window.dispatchEvent(new CustomEvent('openChatWithProvider', {
-        detail: {
-          providerId: provider.id,
-          providerName: provider.name,
-          providerPhone: provider.phone,
-          orderId: order.id,
-          orderNumber: order.orderNumber
-        }
-      }));
-    } else {
-      console.error('❌ Proveedor no encontrado para orden:', order.id);
-    }
+    window.location.href = '/chat';
   };
 
 

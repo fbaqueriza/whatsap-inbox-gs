@@ -4,10 +4,6 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { SupabaseAuthProvider } from '../hooks/useSupabaseAuth';
 import ConditionalNavigation from '../components/ConditionalNavigation';
-import { ChatProvider } from '../contexts/ChatContext';
-import { GlobalChatProvider } from '../contexts/GlobalChatContext';
-import GlobalChatWrapper from '../components/GlobalChatWrapper';
-import ChatInitializer from '../components/ChatInitializer';
 import { RealtimeServiceProvider } from '../services/realtimeService';
 import ToastContainer from '../components/Toast';
 
@@ -50,17 +46,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={inter.className}>
         <SupabaseAuthProvider>
           <RealtimeServiceProvider>
-            <ChatProvider>
-              <GlobalChatProvider>
-                <ChatInitializer />
-                <ConditionalNavigation />
-                <main className="min-h-screen">
-                  {children}
-                </main>
-                <GlobalChatWrapper />
-                <ToastContainer />
-              </GlobalChatProvider>
-            </ChatProvider>
+            <ConditionalNavigation />
+            <main className="min-h-screen">
+              {children}
+            </main>
+            <ToastContainer />
           </RealtimeServiceProvider>
         </SupabaseAuthProvider>
       </body>

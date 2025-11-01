@@ -130,7 +130,9 @@ gastronomy-saas/
 | `src/app/api/kapso/chat/route.ts` | `GET` - Obtener conversaciones y mensajes | API | 🟩 | KapsoService, Supabase |
 | `src/app/api/whatsapp/send/route.ts` | `POST` - Enviar mensajes WhatsApp | API | 🟨 | MetaWhatsAppService |
 | `src/app/api/orders/send-notification/route.ts` | `POST` - Notificar órdenes | API | 🟩 | ServerOrderFlowService |
-| `src/app/api/facturas/process-invoice/route.ts` | `POST` - Procesar facturas | API | 🟨 | OCRService, DocumentService |
+| `src/app/api/facturas/process-invoice/route.ts` | `POST` - Procesar facturas (OCR/PDF, idempotencia, upsert stock) | API | 🟩 | pdf-parse, Tesseract, Supabase |
+| `src/app/api/facturas/processing-status/route.ts` | `GET` - Estado de procesamiento async (por id o fileUrl) | API | 🟩 | Supabase |
+| `src/app/api/providers/finalize-assignment/route.ts` | `POST` - Asignar proveedor por CUIT a facturas/stock | API | 🟩 | Supabase |
 | `src/app/api/payment-receipts/upload/route.ts` | `POST` - Subir comprobantes | API | 🟨 | StorageService |
 | `src/app/api/debug/simple-table-check/route.ts` | `GET` - Verificar tablas | Debug | 🟨 | Supabase |
 
@@ -165,6 +167,31 @@ gastronomy-saas/
 | `src/hooks/useKapsoChat.ts` | Hook de chat Kapso | Hook | 🟩 | KapsoService |
 | `src/hooks/useSupabaseAuth.ts` | Hook de autenticación | Hook | 🟩 | Supabase Auth |
 | `src/hooks/useWhatsAppConfig.ts` | Hook de configuración WhatsApp | Hook | 🟨 | Supabase |
+
+---
+
+## 🔗 Flujo de Facturas → Proveedor → Stock
+
+```mermaid
+flowchart LR
+    UI[Stock page: Subir factura] --> UP[/api/facturas/upload-invoice/]
+    UP --> PROC[/api/facturas/process-invoice (async)/]
+    PROC -->|202 Accepted| POLL[UI polling: /api/facturas/processing-status]
+    PROC --> INV[(processed_invoices)]
+    PROC --> ITM[(processed_invoice_items)]
+    PROC --> STK[(stock)]
+    INV -->|header_json.supplier_cuit| MODAL{Abrir modal proveedor}
+    MODAL --> SAVE[Crear/editar proveedor]
+    SAVE --> FIN[/api/providers/finalize-assignment/]
+    FIN --> INV
+    FIN --> STK
+```
+
+- **Normalización CUIT:** se guarda y compara siempre en dígitos (sin guiones).
+- **Parser:** si hay proveedor existente para ese CUIT y usuario, se usa; si no existe, se abre modal con CUIT precargado.
+- **Asignación inmediata:** al guardar el modal, se llama a `finalize-assignment` para vincular facturas y actualizar `stock.preferred_provider`.
+
+---
 
 ---
 
@@ -402,6 +429,14 @@ flowchart TB
 - Identificados flujos funcionales entre tablas (🟩)
 - Marcadas tablas no utilizadas como deprecated (🟩)
 - Sistema de documentación de base de datos implementado (🟩)
+
+2025-10-31: Flujo de facturas y proveedor estabilizado (Kapso Inbox branch)
+- Nuevo endpoint `GET /api/facturas/processing-status` para polling de tareas async (🟩)
+- Nuevo endpoint `POST /api/providers/finalize-assignment` para asignar proveedor por CUIT a facturas y stock (🟩)
+- `process-invoice`: ahora usa `pdf-parse` para PDFs, OCR de fallback, parser robusto de ítems, idempotencia por `content_hash`, y upsert en `stock` aun sin proveedor (🟩)
+- Normalización de CUIT sin guiones en todo el pipeline (extractor, BD, matching) (🟩)
+- UI Stock: polling y apertura automática del modal de proveedor con CUIT precargado (🟩)
+- Proveedores: al guardar el modal, asignación inmediata a facturas y `stock.preferred_provider` (🟩)
 ```
 
 ---

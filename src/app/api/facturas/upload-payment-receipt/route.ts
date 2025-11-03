@@ -188,7 +188,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Normalizar número de teléfono
-        const { PhoneNumberService } = await import('../../../lib/phoneNumberService');
+        const { PhoneNumberService } = await import('../../../../lib/phoneNumberService');
         const normalizedPhone = PhoneNumberService.normalizePhoneNumber(provider.phone);
         
         if (!normalizedPhone) {

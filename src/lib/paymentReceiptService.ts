@@ -59,7 +59,7 @@ export interface OrderMatchResult {
   order_id: string;
   order_number: string;
   confidence: number;
-  match_method: 'amount_match' | 'provider_match';
+  match_method: 'amount_match' | 'provider_match' | 'exact_amount_and_provider_match' | 'tolerance_amount_and_provider_match';
   match_details: any;
 }
 
@@ -269,19 +269,60 @@ export class PaymentReceiptService {
         }
         
         // Actualizar estado de la orden a 'pagado'
-        console.log('🎯 [PaymentReceiptService] Actualizando orden a "pagado":', bestOrderMatch.order_id);
-        const { error: orderUpdateError } = await supabase
+        console.log('🎯 [PaymentReceiptService] Actualizando orden a "pagado":', {
+          orderId: bestOrderMatch.order_id,
+          orderNumber: bestOrderMatch.order_number,
+          newStatus: 'pagado',
+          receiptUrl: receipt.file_url
+        });
+        const { data: updatedOrder, error: orderUpdateError } = await supabase
           .from('orders')
           .update({ 
             status: 'pagado',
+            receipt_url: receipt.file_url,
             updated_at: new Date().toISOString()
           })
-          .eq('id', bestOrderMatch.order_id);
+          .eq('id', bestOrderMatch.order_id)
+          .select()
+          .single();
         
         if (orderUpdateError) {
           console.error('❌ [PaymentReceiptService] Error actualizando orden a pagado:', orderUpdateError);
         } else {
-          console.log('✅ [PaymentReceiptService] Orden actualizada a "pagado" exitosamente');
+          console.log('✅ [PaymentReceiptService] Orden actualizada a "pagado" exitosamente:', {
+            orderId: updatedOrder?.id,
+            orderNumber: updatedOrder?.order_number,
+            status: updatedOrder?.status,
+            receiptUrl: updatedOrder?.receipt_url,
+            updatedAt: updatedOrder?.updated_at,
+            userId: updatedOrder?.user_id
+          });
+          console.log('🔔 [PaymentReceiptService] Esta actualización debería disparar un evento Realtime para los suscriptores');
+          
+          // 🔧 WORKAROUND: Emitir broadcast manual para notificar a los clientes Realtime
+          try {
+            const broadcastResult = await supabase
+              .channel('orders-updates')
+              .send({
+                type: 'broadcast' as const,
+                event: 'order_updated',
+                payload: {
+                  orderId: updatedOrder?.id,
+                  status: updatedOrder?.status,
+                  receiptUrl: updatedOrder?.receipt_url,
+                  timestamp: new Date().toISOString(),
+                  source: 'payment_receipt'
+                }
+              });
+            
+            if (broadcastResult === 'error') {
+              console.error('⚠️ [PaymentReceiptService] Error enviando broadcast');
+            } else {
+              console.log('✅ [PaymentReceiptService] Broadcast de actualización enviado');
+            }
+          } catch (broadcastErr) {
+            console.error('⚠️ [PaymentReceiptService] Error en broadcast:', broadcastErr);
+          }
           
           // 📱 ENVIAR COMPROBANTE AUTOMÁTICAMENTE cuando se asigna
           if (bestProviderMatch) {
@@ -672,7 +713,7 @@ export class PaymentReceiptService {
         return { success: false, error: 'Proveedor no encontrado' };
       }
       
-      // 2. Enviar mensaje via WhatsApp
+      // 2. Enviar mensaje via WhatsApp usando Kapso
       const message = `¡Hola ${provider.name}! 👋\n\n` +
         `Te confirmo que hemos realizado el pago correspondiente. ` +
         `Adjunto encontrarás el comprobante de pago.\n\n` +
@@ -681,38 +722,34 @@ export class PaymentReceiptService {
         `📅 Fecha: ${receipt.payment_date || 'N/A'}\n\n` +
         `¡Gracias por tu confianza! 🙏`;
       
-      // Obtenemos la URL base del cliente
-      const baseUrl = typeof window !== 'undefined' ? window.location.origin : process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001';
+      // 🔧 CORRECCIÓN: Usar Kapso directamente en lugar de /api/whatsapp/send
+      const { KapsoService } = await import('./kapsoService');
+      const kapsoService = new KapsoService();
       
-      const response = await fetch(`${baseUrl}/api/whatsapp/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: provider.phone,
-          message: message,
-          mediaUrl: receipt.file_url,
-          mediaType: 'document'
-        })
-      });
+      const filename = receipt.file_url.split('/').pop() || 'comprobante.pdf';
+      const result = await kapsoService.sendStandaloneDocument(
+        provider.phone,
+        receipt.file_url,
+        filename,
+        message
+      );
       
-      const result = await response.json();
-      
-      if (result.success) {
+      if (result?.data?.id) {
         // 3. Actualizar comprobante como enviado
         await supabase
           .from('payment_receipts')
           .update({
             sent_to_provider: true,
             sent_at: new Date().toISOString(),
-            whatsapp_message_id: result.messageId,
+            whatsapp_message_id: result.data.id,
             status: 'sent'
           })
           .eq('id', receiptId);
         
         console.log('✅ [PaymentReceiptService] Comprobante enviado exitosamente');
-        return { success: true, messageId: result.messageId };
+        return { success: true, messageId: result.data.id };
       } else {
-        return { success: false, error: result.error || 'Error enviando mensaje' };
+        return { success: false, error: 'Error enviando mensaje' };
       }
       
     } catch (error) {

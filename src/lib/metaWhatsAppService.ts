@@ -146,7 +146,12 @@ export class MetaWhatsAppService {
         
         logger.apiError('MetaWhatsApp', 'POST', '/messages', errorData);
         
-        const handledError = WhatsAppErrorHandler.handleError(errorData, normalizedPhone);
+        const handledError = WhatsAppErrorHandler.handleError(errorData, {
+          phoneNumber: normalizedPhone,
+          messageType: 'text',
+          attempt: 1,
+          maxRetries: 3
+        });
         throw new Error(handledError.userMessage);
       }
 
@@ -227,7 +232,12 @@ export class MetaWhatsAppService {
         
         logger.apiError('MetaWhatsApp', 'POST', '/messages/template', errorData);
         
-        const handledError = WhatsAppErrorHandler.handleError(errorData, normalizedPhone);
+        const handledError = WhatsAppErrorHandler.handleError(errorData, {
+          phoneNumber: normalizedPhone,
+          messageType: 'template',
+          attempt: 1,
+          maxRetries: 3
+        });
         throw new Error(handledError.userMessage);
       }
 
@@ -298,11 +308,32 @@ export class MetaWhatsAppService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        const errorData = JSON.parse(errorText);
+        let errorData: any;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch (parseError) {
+          logger.error('MetaWhatsApp', 'Error parseando respuesta de error', { errorText, parseError });
+          throw new Error(`Error enviando documento: ${errorText}`);
+        }
         
         logger.apiError('MetaWhatsApp', 'POST', '/messages/document', errorData);
+        logger.error('MetaWhatsApp', 'Detalles del error al enviar documento', {
+          status: response.status,
+          statusText: response.statusText,
+          errorCode: errorData.error?.code,
+          errorMessage: errorData.error?.message,
+          errorTitle: errorData.error?.title,
+          documentUrl: documentUrl,
+          filename: filename,
+          to: normalizedPhone
+        });
         
-        const handledError = WhatsAppErrorHandler.handleError(errorData, normalizedPhone);
+        const handledError = WhatsAppErrorHandler.handleError(errorData.error || errorData, {
+          phoneNumber: normalizedPhone,
+          messageType: 'text',
+          attempt: 1,
+          maxRetries: 3
+        });
         throw new Error(handledError.userMessage);
       }
 

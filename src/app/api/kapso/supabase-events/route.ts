@@ -98,11 +98,8 @@ export async function POST(request: NextRequest) {
     if (messageId) {
       processedMessages.add(messageId);
     }
-    // console.log(`📥 [${requestId}] Body completo recibido:`, JSON.stringify(body, null, 2));
+    console.log(`📥 [${requestId}] Body completo recibido:`, JSON.stringify(body, null, 2));
 
-    // ✅ CORRECCIÓN RAÍZ: Consolidar procesamiento en una sola función
-    const userId = '23cceda2-e52d-4ec4-b93c-277b5576e8af'; // Usuario correcto para webhooks
-    
     // Detectar si es un webhook de WhatsApp (formato Meta) o evento de Kapso
     if (body.object === 'whatsapp_business_account' && body.entry) {
       console.log(`📱 [${requestId}] Procesando webhook de WhatsApp desde Kapso`);
@@ -113,34 +110,66 @@ export async function POST(request: NextRequest) {
       for (const item of body.data) {
         const message = item.message;
         const conversation = item.conversation;
+        const whatsappConfig = item.whatsapp_config;
         
         console.log(`📨 [${requestId}] Sincronizando mensaje de Kapso: ${message.id}`);
         
-        // Extraer información del mensaje (formato correcto de Kapso)
+        // ✅ RESOLVER userId desde whatsapp_config_id
+        let userId: string | null = null;
+        if (whatsappConfig?.id) {
+          const { data: userConfig } = await supabase
+            .from('user_whatsapp_config')
+            .select('user_id')
+            .eq('kapso_config_id', whatsappConfig.id)
+            .single();
+          userId = userConfig?.user_id || null;
+          console.log(`👤 [${requestId}] Usuario resuelto desde whatsapp_config: ${userId}`);
+        }
+        
+        if (!userId) {
+          console.error(`❌ [${requestId}] No se pudo resolver userId desde whatsapp_config`);
+          continue; // Skip this message
+        }
+        
+        // Extraer información del mensaje (formato Kapso v2)
         const messageId = message.id;
-        const fromNumber = message.from;
-        const content = message.text?.body || '';
-        const messageType = message.type;
-        const timestamp = new Date(parseInt(message.timestamp) * 1000).toISOString();
+        // Kapso v2 usa conversation_phone_number en lugar de from
+        const fromNumber = message.conversation_phone_number || message.from || message.phone_number;
+        // Kapso v2 usa content en lugar de text.body
+        const content = message.content || message.text?.body || '';
+        // Kapso v2 usa message_type en lugar de type
+        const messageType = message.message_type || message.type;
+        // Validar timestamp antes de convertir - Kapso v2 usa metadata.timestamp
+        let timestamp: string;
+        const timestampValue = message.metadata?.timestamp || message.timestamp;
+        if (timestampValue && !isNaN(parseInt(timestampValue))) {
+          timestamp = new Date(parseInt(timestampValue) * 1000).toISOString();
+        } else {
+          // Si no hay timestamp válido, usar la fecha actual
+          timestamp = new Date().toISOString();
+          console.warn(`⚠️ [${requestId}] Timestamp inválido o faltante, usando fecha actual`);
+        }
         const contactName = conversation.contact_name || fromNumber;
         
         console.log(`👤 [${requestId}] Usando usuario actual: ${userId}`);
         
-        // ✅ NUEVO: Procesar documentos de Kapso
-        if (messageType === 'document' && message.kapso?.has_media && message.document) {
+        // ✅ NUEVO: Procesar documentos de Kapso (formato Kapso v2)
+        // Kapso v2 usa media_data en lugar de message.document
+        const mediaData = message.media_data || message.kapso?.media_info || message.document;
+        if (messageType === 'document' && (message.kapso?.has_media || message.has_media || mediaData)) {
           console.log(`📎 [${requestId}] ✅ DOCUMENTO DETECTADO - Procesando documento de Kapso:`, {
-            filename: message.document.filename,
-            mimeType: message.document.mime_type,
-            url: message.document.url || message.document.link || message.kapso?.mediaUrl,
-            fileSize: message.document.file_size
+            filename: message.filename || mediaData?.filename,
+            mimeType: message.mime_type || mediaData?.mime_type || mediaData?.content_type,
+            url: mediaData?.url || message.document?.url || message.document?.link,
+            fileSize: mediaData?.byte_size || mediaData?.file_size || message.document?.file_size
           });
           
           const documentData = {
-            filename: message.document.filename,
-            mimeType: message.document.mime_type,
-            url: message.document.url || message.document.link || message.kapso?.mediaUrl,
+            filename: message.filename || mediaData?.filename,
+            mimeType: message.mime_type || mediaData?.mime_type || mediaData?.content_type,
+            url: mediaData?.url || message.document?.url || message.document?.link || message.kapso?.mediaUrl,
             id: messageId,
-            fileSize: message.document.file_size
+            fileSize: mediaData?.byte_size || mediaData?.file_size || message.document?.file_size
           };
           
           // ✅ CORRECCIÓN: Procesar documento con OCR primero, luego guardar con URL de Supabase
@@ -1018,7 +1047,9 @@ async function updateOrderWithExtractedData(
       `)
       .eq('user_id', userId)
       .in('status', ['enviado', 'pendiente_de_pago'])
-      .eq('provider_id', document.provider_id);
+      .eq('provider_id', document.provider_id)
+      .order('updated_at', { ascending: false })
+      .limit(1);
     
     if (ordersError) {
       console.error(`❌ [${requestId}] Error obteniendo órdenes:`, ordersError);
@@ -1030,7 +1061,7 @@ async function updateOrderWithExtractedData(
       return;
     }
     
-    // Tomar la orden más reciente
+    // Tomar la orden más reciente (ya está ordenada y limitada)
     const order = orders[0];
     console.log(`📋 [${requestId}] Orden encontrada para actualizar:`, {
       id: order.id,
@@ -1041,10 +1072,15 @@ async function updateOrderWithExtractedData(
     
     // Extraer datos de la factura del texto OCR
     const extractedData = document.ocr_data;
+    const invoiceData = extractedData?.invoice_data || {};
     let invoiceTotal = null;
     
     // Buscar monto total en los datos extraídos
-    if (extractedData.totalAmount) {
+    if (invoiceData.total_amount) {
+      invoiceTotal = invoiceData.total_amount;
+    } else if (invoiceData.totalAmount) {
+      invoiceTotal = invoiceData.totalAmount;
+    } else if (extractedData.totalAmount) {
       invoiceTotal = extractedData.totalAmount;
     } else if (extractedData.total) {
       invoiceTotal = extractedData.total;
@@ -1066,9 +1102,9 @@ async function updateOrderWithExtractedData(
     const updateData: any = {
       updated_at: new Date().toISOString(),
       invoice_data: extractedData,
-      invoice_number: extractedData.invoiceNumber || extractedData.number,
-      invoice_currency: extractedData.currency || 'ARS',
-      invoice_date: extractedData.issueDate || extractedData.date,
+      invoice_number: invoiceData.invoice_number || invoiceData.invoiceNumber,
+      invoice_currency: invoiceData.currency || 'ARS',
+      invoice_date: invoiceData.issue_date || invoiceData.issueDate,
       extraction_confidence: document.confidence_score,
       receipt_url: document.file_url
     };
@@ -1097,8 +1133,39 @@ async function updateOrderWithExtractedData(
         orderId: order.id,
         orderNumber: order.order_number,
         newStatus: 'pendiente_de_pago',
-        newAmount: invoiceTotal || order.total_amount
+        newAmount: invoiceTotal || order.total_amount,
+        invoiceNumber: updateData.invoice_number,
+        invoiceCurrency: updateData.invoice_currency,
+        invoiceDate: updateData.invoice_date
       });
+      console.log(`🔔 [${requestId}] Esta actualización debería disparar un evento Realtime para los suscriptores`);
+      
+      // 🔧 WORKAROUND: Emitir broadcast manual para notificar a los clientes Realtime
+      try {
+        const broadcastResult = await supabase
+          .channel('orders-updates')
+          .send({
+            type: 'broadcast' as const,
+            event: 'order_updated',
+            payload: {
+              orderId: order.id,
+              status: updateData.status || order.status,
+              receiptUrl: updateData.receipt_url,
+              totalAmount: invoiceTotal,
+              invoiceNumber: updateData.invoice_number,
+              timestamp: new Date().toISOString(),
+              source: 'invoice_ocr'
+            }
+          });
+
+        if (broadcastResult === 'error') {
+          console.error(`⚠️ [${requestId}] Error enviando broadcast`);
+        } else {
+          console.log(`✅ [${requestId}] Broadcast de actualización enviado`);
+        }
+      } catch (broadcastErr) {
+        console.error(`⚠️ [${requestId}] Error en broadcast:`, broadcastErr);
+      }
     }
     
   } catch (error) {

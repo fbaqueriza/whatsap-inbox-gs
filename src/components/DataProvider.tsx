@@ -209,6 +209,12 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
     }
 
            const unsubscribeOrderUpdates = realtimeService.addOrderListener((updatedOrder) => {
+             console.log('📢 [DataProvider] Recibida actualización de Realtime:', {
+               orderId: updatedOrder.id,
+               newStatus: updatedOrder.status,
+               receiptUrl: updatedOrder.receiptUrl,
+               source: updatedOrder.source
+             });
              // 🔧 OPTIMIZADO: Actualizar solo la orden específica en lugar de recargar todas
              setOrders(prevOrders => {
                const existingOrderIndex = prevOrders.findIndex(order => order.id === updatedOrder.id);
@@ -216,7 +222,13 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
                if (existingOrderIndex >= 0) {
                  // Actualizar orden existente
                  const updatedOrders = [...prevOrders];
+                 const previousOrder = updatedOrders[existingOrderIndex];
                  updatedOrders[existingOrderIndex] = { ...updatedOrders[existingOrderIndex], ...updatedOrder };
+                 console.log('📊 [DataProvider] Orden actualizada:', {
+                   id: previousOrder.id,
+                   oldStatus: previousOrder.status,
+                   newStatus: updatedOrders[existingOrderIndex].status
+                 });
                  return updatedOrders;
                } else {
                  // Agregar nueva orden

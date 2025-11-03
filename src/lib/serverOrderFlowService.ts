@@ -222,12 +222,12 @@ export class ServerOrderFlowService {
       }
 
       // ✅ ENVIAR TEMPLATE evio_orden usando la API de Kapso
-      // evio_orden actualmente tiene 1 parámetro en BODY -> usar solo el nombre del contacto
+      // evio_orden tiene 2 parámetros: header (provider_name) y body (contact_name)
       const templateResult = await this.sendTemplateMessage(
         phone,
         'evio_orden',
         'es_AR',
-        [templateVariables.contact_name],
+        [templateVariables.contact_name, templateVariables.provider_name],
         order.user_id
       );
 
@@ -330,39 +330,94 @@ export class ServerOrderFlowService {
             const all = (tplData?.data || tplData?.message_templates || []) as any[];
             const match = all.find((t: any) => t?.name === templateName && (t?.language === languageCode || t?.languages?.includes?.(languageCode)));
 
+            console.log('🔍 [ServerOrderFlow] Template match from Kapso:', JSON.stringify(match, null, 2));
+
             if (match?.components) {
               const comps: any[] = match.components;
-
-              const pick = (idx: number): string => parameters[idx] ?? parameters[parameters.length - 1] ?? '';
+              const isNamed = match.parameter_format === 'NAMED';
 
               const headerComp = comps.find(c => c.type === 'HEADER' && (!c.format || c.format === 'TEXT'));
-              const headerPlaceholders = typeof headerComp?.text === 'string' ? (headerComp.text.match(/\{\{\d+\}\}/g) || []).length : 0;
-
               const bodyComp = comps.find(c => c.type === 'BODY');
-              const bodyPlaceholders = typeof bodyComp?.text === 'string' ? (bodyComp.text.match(/\{\{\d+\}\}/g) || []).length : 0;
 
               // Reconstruir options según definición
               const templateOptionsDyn: any = { name: templateName, language: languageCode };
-              if (headerPlaceholders > 0) {
-                templateOptionsDyn.header = { type: 'text', text: pick(0) };
-              }
-              if (bodyPlaceholders > 0) {
-                templateOptionsDyn.body = Array.from({ length: bodyPlaceholders }, (_, i) => ({ type: 'text', text: pick(headerPlaceholders + i) }));
+
+              if (isNamed) {
+                // Templates con parámetros NAMED: mapear por nombre
+                if (headerComp) {
+                  const headerExample = headerComp.example?.header_text_named_params?.[0];
+                  if (headerExample) {
+                    const paramName = headerExample.param_name;
+                    // Mapear por posición lógica: [0]=contact, [1]=provider
+                    const value = paramName === 'provider_name' && parameters.length > 1 ? parameters[1] : parameters[0];
+                    if (value) templateOptionsDyn.header = { type: 'text', parameter_name: paramName, text: value };
+                  }
+                }
+                if (bodyComp) {
+                  const bodyExample = bodyComp.example?.body_text_named_params?.[0];
+                  if (bodyExample) {
+                    const paramName = bodyExample.param_name;
+                    // Mapear por posición lógica: [0]=contact, [1]=provider
+                    const value = paramName === 'contact_name' ? parameters[0] : (parameters.length > 1 ? parameters[1] : parameters[0]);
+                    if (value) templateOptionsDyn.body = [{ type: 'text', parameter_name: paramName, text: value }];
+                  }
+                }
+              } else {
+                // Templates con parámetros NUMERIC: mapear por posición
+                const pick = (idx: number): string => parameters[idx] ?? parameters[parameters.length - 1] ?? '';
+                const headerPlaceholders = typeof headerComp?.text === 'string' ? (headerComp.text.match(/\{\{\d+\}\}/g) || []).length : 0;
+                const bodyPlaceholders = typeof bodyComp?.text === 'string' ? (bodyComp.text.match(/\{\{\d+\}\}/g) || []).length : 0;
+
+                if (headerPlaceholders > 0) {
+                  templateOptionsDyn.header = { type: 'text', text: pick(0) };
+                }
+                if (bodyPlaceholders > 0) {
+                  const bodyParams = Array.from({ length: bodyPlaceholders }, (_, i) => {
+                    const txt = pick(headerPlaceholders + i);
+                    if (!txt) {
+                      throw new Error(`Empty parameter at index ${headerPlaceholders + i}, parameters=${JSON.stringify(parameters)}`);
+                    }
+                    return { type: 'text', text: txt };
+                  });
+                  templateOptionsDyn.body = bodyParams;
+                }
               }
 
-              // Sustituir options calculadas
-              // eslint-disable-next-line @typescript-eslint/no-unused-vars
-              const _old = parameters;
-              // Usaremos templateOptionsDyn más abajo
-              const templatePayloadDyn = buildTemplateSendPayload(templateOptionsDyn);
-              const resultDyn = await whatsappClient.messages.sendTemplate({ phoneNumberId, to: phone, template: templatePayloadDyn });
-              console.log('✅ [ServerOrderFlow] Template enviado (definición dinámica):', resultDyn.messages?.[0]?.id);
-              return { success: true };
+              // Construir payload manualmente para evitar problemas con buildTemplateSendPayload
+              const manualPayload = {
+                name: templateName,
+                language: { code: languageCode },
+                components: [] as any[]
+              };
+              
+              if (templateOptionsDyn.header) {
+                manualPayload.components.push({
+                  type: 'header',
+                  parameters: [templateOptionsDyn.header]
+                });
+              }
+              
+              if (templateOptionsDyn.body) {
+                manualPayload.components.push({
+                  type: 'body',
+                  parameters: templateOptionsDyn.body
+                });
+              }
+              
+              console.log('🔍 [ServerOrderFlow] Template payload manual:', JSON.stringify(manualPayload, null, 2));
+              try {
+                const resultDyn = await whatsappClient.messages.sendTemplate({ phoneNumberId, to: phone, template: manualPayload });
+                console.log('✅ [ServerOrderFlow] Template enviado (definición dinámica):', resultDyn.messages?.[0]?.id);
+                return { success: true };
+              } catch (sendError: any) {
+                console.error('❌ [ServerOrderFlow] Error al enviar payload manual:', sendError);
+                throw sendError; // Re-lanzar para que sea capturado por el catch externo
+              }
             }
           }
         }
       } catch (e) {
-        console.warn('⚠️ [ServerOrderFlow] No se pudo leer definición del template, usando envío básico');
+        console.warn('⚠️ [ServerOrderFlow] Error en envío dinámico:', e);
       }
 
       // Construir payload del template usando buildTemplateSendPayload

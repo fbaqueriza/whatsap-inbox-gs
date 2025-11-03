@@ -325,18 +325,11 @@ function DashboardPageContent({
     }
   }, []);
 
-  // Usar nuestro RealtimeService unificado
-  const { orders: realtimeOrders, isConnected } = useRealtimeService();
+  // 🔧 REMOVIDO: listener duplicado - DataProvider ya maneja las actualizaciones de Realtime
+  // const { orders: realtimeOrders, isConnected } = useRealtimeService();
   
-  // Sincronizar con órdenes de tiempo real
-  useEffect(() => {
-    if (realtimeOrders && realtimeOrders.length > 0) {
-      setOrders(realtimeOrders);
-    }
-  }, [realtimeOrders]);
-
-  const isSubscribed = isConnected;
-  const connectionStatus = isConnected ? 'connected' : 'disconnected';
+  // const isSubscribed = false; // Ya no se necesita
+  const connectionStatus = 'connected'; // Asumir conectado siempre ya que DataProvider maneja esto
 
   // Sincronizar con lógica de página de órdenes
   const currentOrders = useMemo(() => {

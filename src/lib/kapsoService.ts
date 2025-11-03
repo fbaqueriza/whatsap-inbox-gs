@@ -378,6 +378,54 @@ export class KapsoService {
   }
 
   /**
+   * Enviar documento standalone (sin conversación existente) a través de Kapso
+   */
+  async sendStandaloneDocument(
+    phoneNumber: string, 
+    documentUrl: string, 
+    filename: string, 
+    caption?: string,
+    userId?: string
+  ): Promise<any> {
+    try {
+      logger.info('KapsoService', 'Enviando documento standalone', { 
+        phone: phoneNumber,
+        filename,
+        userId
+      });
+
+      // Obtener phone_number_id del usuario
+      const phoneNumberId = await this.getPhoneNumberId(userId);
+      
+      // Usar WhatsAppClient de Kapso SDK
+      const whatsappClient = new WhatsAppClient({
+        baseUrl: 'https://api.kapso.ai/meta/whatsapp',
+        kapsoApiKey: this.apiKey,
+        graphVersion: 'v24.0'
+      });
+      
+      const result = await whatsappClient.messages.sendDocument({
+        phoneNumberId,
+        to: phoneNumber,
+        document: {
+          link: documentUrl,
+          filename: filename,
+          ...(caption && { caption })
+        }
+      });
+
+      logger.info('KapsoService', 'Documento standalone enviado exitosamente', { 
+        messageId: result.messages?.[0]?.id
+      });
+
+      return { data: { id: result.messages?.[0]?.id } };
+    } catch (error) {
+      logger.error('KapsoService', 'Error enviando documento standalone', error);
+      throw error;
+    }
+  }
+
+  /**
    * Obtener phone_number_id del usuario desde user_whatsapp_config
    */
   private async getPhoneNumberId(userId?: string): Promise<string> {

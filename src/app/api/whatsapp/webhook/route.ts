@@ -1726,6 +1726,32 @@ async function tryAssociateInvoiceToOrder(
     
     console.log(`✅ [${requestId}] Factura asociada exitosamente a orden ${order.order_number}`);
     console.log(`🔄 [${requestId}] Orden actualizada de '${order.status}' a 'pendiente_de_pago'`);
+    console.log(`🔔 [${requestId}] Esta actualización debería disparar un evento Realtime para los suscriptores`);
+    
+    // 🔧 WORKAROUND: Emitir broadcast manual para notificar a los clientes Realtime
+    try {
+      const broadcastResult = await supabase
+        .channel('orders-updates')
+        .send({
+          type: 'broadcast' as const,
+          event: 'order_updated',
+          payload: {
+            orderId: order.id,
+            status: 'pendiente_de_pago',
+            receiptUrl: updateData.receipt_url,
+            timestamp: new Date().toISOString(),
+            source: 'invoice_association'
+          }
+        });
+
+      if (broadcastResult === 'error') {
+        console.error(`⚠️ [${requestId}] Error enviando broadcast`);
+      } else {
+        console.log(`✅ [${requestId}] Broadcast de actualización enviado`);
+      }
+    } catch (broadcastErr) {
+      console.error(`⚠️ [${requestId}] Error en broadcast:`, broadcastErr);
+    }
     
     // 🔧 CORRECCIÓN: Actualizar documento con order_id para que aparezca asociado en el modal
     const { error: documentUpdateError } = await supabase

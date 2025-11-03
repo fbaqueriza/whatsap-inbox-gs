@@ -239,7 +239,31 @@ export class ExtensibleOrderFlowService {
       }
 
       console.log(`✅ [ExtensibleFlow] Orden ${order.id} actualizada exitosamente a '${transition.next}'`);
+      console.log('🔔 [ExtensibleFlow] Esta actualización debería disparar un evento Realtime para los suscriptores');
+      
+      // 🔧 WORKAROUND: Emitir broadcast manual para notificar a los clientes Realtime
+      try {
+        const broadcastResult = await supabase
+          .channel('orders-updates')
+          .send({
+            type: 'broadcast' as const,
+            event: 'order_updated',
+            payload: {
+              orderId: order.id,
+              status: transition.next,
+              timestamp: new Date().toISOString(),
+              source: 'order_flow_transition'
+            }
+          });
 
+        if (broadcastResult === 'error') {
+          console.error('⚠️ [ExtensibleFlow] Error enviando broadcast');
+        } else {
+          console.log('✅ [ExtensibleFlow] Broadcast de actualización enviado');
+        }
+      } catch (broadcastErr) {
+        console.error('⚠️ [ExtensibleFlow] Error en broadcast:', broadcastErr);
+      }
 
       // 2. Ejecutar acción asociada
       if (transition.action) {

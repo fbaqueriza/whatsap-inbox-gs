@@ -25,12 +25,12 @@ interface RealtimeMessage {
 interface RealtimeOrder {
   id: string;
   status: string;
-  order_number?: string;
-  total_amount?: number;
-  invoice_number?: string;
-  receipt_url?: string;
-  invoice_data?: any;
-  updated_at?: string;
+  orderNumber?: string;
+  totalAmount?: number;
+  invoiceNumber?: string;
+  receiptUrl?: string;
+  invoiceData?: any;
+  updatedAt?: string;
 }
 
 interface RealtimeServiceContextType {
@@ -79,20 +79,20 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   // Handlers para mensajes
   const handleNewMessage = async (payload: any) => {
     const newMessage = payload.new;
-    console.log('🔍 [RealtimeService] Nuevo mensaje recibido:', newMessage?.id);
+    // Silenciado logs
 
     if (!newMessage || !currentUserId) {
-      console.log('🔐 RealtimeService: Ignorando mensaje - usuario no autenticado');
+      // Silenciado
       return;
     }
 
     // 🔧 LÓGICA SIMPLIFICADA: Aceptar mensajes del usuario actual O mensajes sin user_id
     const isValidMessage = newMessage.user_id === currentUserId || !newMessage.user_id;
 
-    console.log('🔍 [RealtimeService] Validación de mensaje:', isValidMessage, 'user_id:', newMessage.user_id, 'currentUserId:', currentUserId);
+    // Silenciado
 
     if (!isValidMessage) {
-      console.log('❌ [RealtimeService] Mensaje rechazado - user_id no coincide');
+      // Silenciado
       return; // Ignorar mensaje no válido
     }
 
@@ -116,16 +116,12 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
     setMessages(prev => {
       const exists = prev.some(msg => msg.id === message.id);
-      if (exists) {
-        console.log('🔄 [RealtimeService] Mensaje ya existe, ignorando:', message.id);
-        return prev;
-      }
-      console.log('✅ [RealtimeService] Agregando nuevo mensaje al estado:', message.id);
+      if (exists) { return prev; }
       return [...prev, message];
     });
 
     // 🔧 OPTIMIZACIÓN: Notificar a todos los listeners de forma segura
-    console.log('📢 [RealtimeService] Notificando a', messageListeners.current.size, 'listeners');
+    // Silenciado
     messageListeners.current.forEach(callback => {
       try {
         callback(message);
@@ -133,32 +129,6 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         console.error('Error en message listener:', error);
       }
     });
-
-    // 🔧 FALLBACK: Actualizar órdenes cuando se recibe un mensaje nuevo
-    try {
-      const response = await fetch(`/api/data/orders?user_id=${currentUserId}`);
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && result.orders) {
-          const updatedOrders = result.orders.map(mapOrderFromDb);
-          setOrders(updatedOrders);
-          
-          // Notificar a los listeners sobre las órdenes actualizadas
-          updatedOrders.forEach(order => {
-            orderListeners.current.forEach(callback => {
-              try {
-                callback(order);
-              } catch (error) {
-                console.error('Error en order listener:', error);
-              }
-            });
-          });
-        }
-      }
-    } catch (error) {
-      console.error('Error actualizando órdenes en fallback:', error);
-    }
-
   };
 
   const handleMessageUpdate = (payload: any) => {
@@ -196,65 +166,68 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const handleNewOrder = (payload: any) => {
     const newOrder = payload.new;
     if (!newOrder || !currentUserId) {
-      console.log('🔐 RealtimeService: Ignorando nueva orden - usuario no autenticado');
+      // Silenciado
       return;
     }
 
     // 🔧 OPTIMIZACIÓN: Filtrar nuevas órdenes por user_id
     if (newOrder.user_id && newOrder.user_id !== currentUserId) {
-      console.log('🔍 RealtimeService: Orden filtrada - user_id no coincide');
+      // Silenciado
       return;
     }
 
-      setOrders(prev => {
-        const exists = prev.some(order => order.id === newOrder.id);
-        if (exists) return prev;
-        return [...prev, newOrder];
-      });
+    // Mapear la orden antes de agregarla
+    const mappedOrder = mapOrderFromDb(newOrder);
 
-      // 🔧 OPTIMIZACIÓN: Notificar a los listeners sobre la nueva orden
-      orderListeners.current.forEach(callback => {
-        try {
-          callback(newOrder);
-        } catch (error) {
-          console.error('Error en order listener:', error);
-        }
-      });
+    setOrders(prev => {
+      const exists = prev.some(order => order.id === mappedOrder.id);
+      if (exists) return prev;
+      return [...prev, mappedOrder];
+    });
+
+    // 🔧 OPTIMIZACIÓN: Notificar a los listeners sobre la nueva orden
+    orderListeners.current.forEach(callback => {
+      try {
+        callback(mappedOrder);
+      } catch (error) {
+        console.error('Error en order listener:', error);
+      }
+    });
   };
 
   const handleOrderUpdate = (payload: any) => {
     const updatedOrder = payload.new;
-    console.log(`🔄 [RealtimeService] Evento UPDATE recibido para orden:`, {
+    console.log('🔄 [RealtimeService] handleOrderUpdate llamado:', {
       orderId: updatedOrder?.id,
-      orderNumber: updatedOrder?.order_number,
-      status: updatedOrder?.status,
-      userId: updatedOrder?.user_id,
-      currentUserId: currentUserId
+      newStatus: updatedOrder?.status,
+      userId: currentUserId,
+      orderUserId: updatedOrder?.user_id
     });
 
     if (!updatedOrder || !currentUserId) {
-      console.log(`⚠️ [RealtimeService] Ignorando actualización - datos faltantes`);
+      console.log('⚠️ [RealtimeService] Saltando actualización - sin orden o usuario');
       return;
     }
 
     // Filtrar actualizaciones por user_id
     if (updatedOrder.user_id && updatedOrder.user_id !== currentUserId) {
-      console.log(`🔍 [RealtimeService] Orden filtrada - user_id no coincide: ${updatedOrder.user_id} vs ${currentUserId}`);
+      console.log('⚠️ [RealtimeService] Saltando actualización - userId no coincide');
       return;
     }
 
-    console.log(`✅ [RealtimeService] Procesando actualización de orden: ${updatedOrder.order_number} (${updatedOrder.status})`);
+    console.log('✅ [RealtimeService] Procesando actualización de orden:', updatedOrder.id);
 
     // Mapear la orden una sola vez
     const mappedOrder = mapOrderFromDb(updatedOrder);
     
-    setOrders(prev =>
-      prev.map(order =>
+    setOrders(prev => {
+      console.log('📊 [RealtimeService] Actualizando estado con orden:', mappedOrder.id, 'status:', mappedOrder.status);
+      return prev.map(order =>
         order.id === updatedOrder.id
           ? { ...order, ...mappedOrder }
           : order
-      )
-    );
+      );
+    });
 
     // Notificar a los listeners sobre la actualización
     orderListeners.current.forEach(callback => {
@@ -265,19 +238,19 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       }
     });
 
-    console.log(`✅ [RealtimeService] Orden actualizada en tiempo real: ${updatedOrder.order_number}`);
+    console.log('✅ [RealtimeService] Orden actualizada en tiempo real');
   };
 
   const handleOrderDelete = (payload: any) => {
     const deletedOrder = payload.old;
     if (!deletedOrder || !currentUserId) {
-      console.log('🔐 RealtimeService: Ignorando eliminación de orden - usuario no autenticado');
+      // Silenciado
       return;
     }
 
     // 🔧 OPTIMIZACIÓN: Filtrar eliminaciones por user_id
     if (deletedOrder.user_id && deletedOrder.user_id !== currentUserId) {
-      console.log('🔍 RealtimeService: Eliminación de orden filtrada - user_id no coincide');
+      // Silenciado
       return;
     }
 
@@ -288,10 +261,10 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
   // 🔧 NUEVO: Handlers para eventos de Kapso
   const handleKapsoOrderUpdate = (payload: any) => {
-    console.log(`🔄 [RealtimeService] Procesando actualización de orden desde Kapso:`, payload);
+    // Silenciado
     
     if (!currentUserId) {
-      console.log(`⚠️ [RealtimeService] Ignorando evento de Kapso - usuario no autenticado`);
+      // Silenciado
       return;
     }
 
@@ -299,12 +272,33 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     setOrders(prev => 
       prev.map(order => {
         if (order.id === payload.payload.orderId) {
-          console.log(`✅ [RealtimeService] Actualizando orden desde Kapso: ${order.order_number} → ${payload.payload.status}`);
-          return {
+          console.log('🔄 [RealtimeService] Procesando broadcast de actualización:', {
+            orderId: payload.payload.orderId,
+            newStatus: payload.payload.status,
+            receiptUrl: payload.payload.receiptUrl,
+            totalAmount: payload.payload.totalAmount,
+            invoiceNumber: payload.payload.invoiceNumber,
+            source: payload.payload.source
+          });
+          // 🔧 CORREGIDO: Solo actualizar campos que existen en el payload
+          const updateData: any = {
             ...order,
             status: payload.payload.status,
-            updated_at: payload.payload.timestamp
+            updatedAt: payload.payload.timestamp
           };
+          // Solo incluir receiptUrl si existe en el payload
+          if (payload.payload.receiptUrl !== undefined) {
+            updateData.receiptUrl = payload.payload.receiptUrl;
+          }
+          // Solo incluir totalAmount si existe en el payload
+          if (payload.payload.totalAmount !== undefined) {
+            updateData.totalAmount = payload.payload.totalAmount;
+          }
+          // Solo incluir invoiceNumber si existe en el payload
+          if (payload.payload.invoiceNumber !== undefined) {
+            updateData.invoiceNumber = payload.payload.invoiceNumber;
+          }
+          return updateData;
         }
         return order;
       })
@@ -313,11 +307,23 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // Notificar a los listeners
     orderListeners.current.forEach(callback => {
       try {
-        const updatedOrder = { 
+        const updatedOrder: any = { 
           id: payload.payload.orderId, 
           status: payload.payload.status,
-          source: 'kapso'
+          source: payload.payload.source || 'order_flow'
         };
+        // Solo incluir receiptUrl si existe en el payload
+        if (payload.payload.receiptUrl !== undefined) {
+          updatedOrder.receiptUrl = payload.payload.receiptUrl;
+        }
+        // Solo incluir totalAmount si existe en el payload
+        if (payload.payload.totalAmount !== undefined) {
+          updatedOrder.totalAmount = payload.payload.totalAmount;
+        }
+        // Solo incluir invoiceNumber si existe en el payload
+        if (payload.payload.invoiceNumber !== undefined) {
+          updatedOrder.invoiceNumber = payload.payload.invoiceNumber;
+        }
         callback(updatedOrder);
       } catch (error) {
         console.error('❌ [RealtimeService] Error en order listener (Kapso):', error);
@@ -399,26 +405,19 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       // Órdenes iniciales cargadas
       setOrders(mappedOrders);
       
-        // 🔧 NUEVO: Pasar órdenes iniciales al DataProvider
-        if (mappedOrders && mappedOrders.length > 0) {
-          // Notificar a los listeners de órdenes con las órdenes iniciales mapeadas
-          mappedOrders.forEach(order => {
-            orderListeners.current.forEach(callback => {
-              callback(order);
-            });
-          });
-        }
+      // 🔧 REMOVIDO: No notificar órdenes iniciales - causaba logs duplicados y no es necesario
+      // DataProvider carga las órdenes directamente con fetchAll
     } catch (error) {
       console.error('❌ [RealtimeService] Error inesperado cargando órdenes:', error);
     }
-  }, [currentUserId, supabase]);
+  }, [currentUserId]);
 
   // 🔧 OPTIMIZACIÓN: Configurar suscripciones una sola vez por usuario
   const subscriptionsInitializedRef = useRef<Set<string>>(new Set());
   
   useEffect(() => {
     if (!currentUserId) {
-      // console.log('🔐 RealtimeService: Esperando autenticación...');
+      // Silenciado
       setIsConnected(false);
       return;
     }
@@ -430,7 +429,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
     subscriptionsInitializedRef.current.add(currentUserId);
     
-    // console.log('✅ RealtimeService: Usuario autenticado, configurando tiempo real...');
+    // Silenciado
     setIsConnected(true);
 
     // 🔧 CARGAR ÓRDENES INICIALES
@@ -439,7 +438,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // 🔧 SOLUCIÓN OPTIMIZADA: Una sola llamada de suscripción por tipo
     const setupWhatsAppSuscription = async () => {
       try {
-        console.log('🔧 [RealtimeService] Configurando suscripción a whatsapp_messages para usuario:', currentUserId);
+        // Silenciado
         // 🔧 FIX: Agregar filtro por user_id para que RLS permita los mensajes
         const channel = supabase
           .channel('whatsapp-messages')
@@ -451,19 +450,17 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
               // ✅ CORRECCIÓN: Remover filtro para que funcione con RLS
             }, 
             (payload) => {
-              console.log('📨 [RealtimeService] Evento postgres_changes recibido:', payload.eventType, (payload.new as any)?.id);
+              // Silenciado
               if (payload.eventType === 'INSERT') handleNewMessage(payload);
               else if (payload.eventType === 'UPDATE') handleMessageUpdate(payload);
               else if (payload.eventType === 'DELETE') handleMessageDelete(payload);
             }
           )
-          .subscribe((status) => {
-            console.log('📡 [RealtimeService] Estado de suscripción:', status);
-          });
+          .subscribe();
         
         subscriptionsRef.current.add(channel);
         setIsConnected(true);
-        console.log('✅ [RealtimeService] Suscripción a whatsapp_messages configurada exitosamente');
+        // Silenciado
       } catch (error) {
         console.error(`❌ RealtimeService: Error configurando suscripción a whatsapp_messages:`, error);
         setIsConnected(false);
@@ -475,6 +472,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // 🔧 SOLUCIÓN OPTIMIZADA: Suscripción a órdenes sin filtro (filtrar en handler)
     const setupOrdersSuscription = async () => {
       try {
+        console.log('🔧 [RealtimeService] Configurando suscripción a orders...');
         const channel = supabase
           .channel('orders')
           .on('postgres_changes', 
@@ -484,14 +482,23 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
               table: 'orders'
             }, 
             (payload) => {
-              if (payload.eventType === 'INSERT') handleNewOrder(payload);
-              else if (payload.eventType === 'UPDATE') handleOrderUpdate(payload);
-              else if (payload.eventType === 'DELETE') handleOrderDelete(payload);
+              console.log('📡 [RealtimeService] Evento recibido de orders:', payload.eventType, payload.new?.id);
+              console.log('📡 [RealtimeService] Payload completo:', JSON.stringify(payload, null, 2));
+              try {
+                if (payload.eventType === 'INSERT') handleNewOrder(payload);
+                else if (payload.eventType === 'UPDATE') handleOrderUpdate(payload);
+                else if (payload.eventType === 'DELETE') handleOrderDelete(payload);
+              } catch (error) {
+                console.error('❌ [RealtimeService] Error manejando evento:', error);
+              }
             }
           )
-          .subscribe();
+          .subscribe((status) => {
+            console.log('🔌 [RealtimeService] Estado suscripción orders:', status);
+          });
         
         subscriptionsRef.current.add(channel);
+        console.log('✅ [RealtimeService] Suscripción a orders configurada');
       } catch (error) {
         console.error(`❌ [RealtimeService] Error configurando suscripción a orders:`, error);
       }
@@ -507,7 +514,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         const ordersChannel = supabase
           .channel('orders-updates')
           .on('broadcast', { event: 'order_updated' }, (payload) => {
-            console.log(`🔄 [RealtimeService] Evento de orden desde Kapso:`, payload);
+            console.log('🔄 [RealtimeService] Broadcast order_updated recibido:', payload);
             // Procesar evento de Kapso como si fuera un evento nativo de Supabase
             handleKapsoOrderUpdate(payload);
           })
@@ -521,7 +528,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         const documentsChannel = supabase
           .channel('documents-updates')
           .on('broadcast', { event: 'document_processed' }, (payload) => {
-            console.log(`📎 [RealtimeService] Evento de documento desde Kapso:`, payload);
+            // Silenciado
             handleKapsoDocumentUpdate(payload);
           })
           .subscribe();
@@ -538,7 +545,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     return () => {
       // ✅ SOLUCIÓN: Limpiar suscripciones cuando el usuario cambie
       if (currentUserId && subscriptionsInitializedRef.current.has(currentUserId)) {
-        console.log(`🔌 RealtimeService: Desuscribiendo de mensajes y órdenes para usuario ${currentUserId}`);
+        // Silenciado
         
         // Remover del conjunto de usuarios inicializados
         subscriptionsInitializedRef.current.delete(currentUserId);

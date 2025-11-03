@@ -5,6 +5,36 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+const KAPSO_API_KEY = process.env.KAPSO_API_KEY;
+const KAPSO_BASE_URL = 'https://app.kapso.ai/api/v1';
+
+/**
+ * Obtener detalles de configuración de WhatsApp desde Kapso
+ */
+async function getWhatsAppConfigDetails(whatsappConfigId: string) {
+  if (!KAPSO_API_KEY) {
+    throw new Error('KAPSO_API_KEY no está configurada');
+  }
+
+  const response = await fetch(`${KAPSO_BASE_URL}/whatsapp_configs/${whatsappConfigId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${KAPSO_API_KEY}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('❌ [Config Bypass] Error obteniendo detalles de configuración:', errorText);
+    throw new Error(`Error obteniendo detalles en Kapso: ${response.statusText}`);
+  }
+
+  const details = await response.json();
+  // Algunas respuestas vienen como { data: { ... } }
+  return details?.data ?? details;
+}
+
 export async function GET(request: NextRequest) {
   try {
     console.log('🔄 [Config Bypass] Obteniendo configuración WhatsApp...');
@@ -50,12 +80,40 @@ export async function GET(request: NextRequest) {
 
     console.log('✅ [Config Bypass] Configuración encontrada:', config);
     
-    // 4. Para el phone_number_id, usamos kapso_config_id temporalmente
-    // El inbox local tiene un fallback a PHONE_NUMBER_ID si este no está disponible
-    // TODO: En el futuro, obtener phone_number_id real de Kapso API si es necesario
-    const phoneNumberId = (config as any).phone_number_id || config.kapso_config_id || undefined;
+    // 4. Obtener phone_number_id: primero de la BD, si no está, obtenerlo de Kapso
+    let phoneNumberId: string | undefined = (config as any).phone_number_id;
     
-    // 5. Devolver configuración con phone_number_id incluido
+    // Si no está en la BD pero tenemos kapso_config_id, obtenerlo de Kapso
+    if (!phoneNumberId && config.kapso_config_id) {
+      try {
+        console.log('🔍 [Config Bypass] Obteniendo phone_number_id de Kapso...');
+        const kapsoDetails = await getWhatsAppConfigDetails(config.kapso_config_id);
+        phoneNumberId = kapsoDetails?.phone_number_id;
+        console.log('✅ [Config Bypass] phone_number_id obtenido de Kapso:', phoneNumberId);
+        
+        // Opcionalmente, actualizar la BD con el phone_number_id obtenido
+        if (phoneNumberId) {
+          await supabase
+            .from('user_whatsapp_config')
+            .update({ phone_number_id: phoneNumberId })
+            .eq('id', config.id);
+          console.log('💾 [Config Bypass] phone_number_id guardado en BD');
+        }
+      } catch (error) {
+        console.warn('⚠️ [Config Bypass] No se pudo obtener phone_number_id de Kapso:', error);
+      }
+    }
+    
+    // 5. Si aún no tenemos phone_number_id, no podemos continuar
+    if (!phoneNumberId) {
+      console.error('❌ [Config Bypass] phone_number_id no disponible en BD ni en Kapso');
+      return NextResponse.json({ 
+        success: false, 
+        error: 'phone_number_id no disponible. La configuración puede estar incompleta.' 
+      }, { status: 404 });
+    }
+    
+    // 6. Devolver configuración con phone_number_id
     return NextResponse.json({ 
       success: true, 
       data: {

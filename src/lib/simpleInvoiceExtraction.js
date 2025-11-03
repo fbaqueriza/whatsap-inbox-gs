@@ -48,6 +48,9 @@ class SimpleInvoiceExtraction {
       
       // 6. Buscar nombre del proveedor
       invoiceData.providerName = this.extractProviderName(text);
+      
+      // 7. Buscar items/productos
+      invoiceData.items = this.extractItems(text);
 
       // Calcular confianza
       const confidence = this.calculateConfidence(invoiceData);
@@ -58,6 +61,7 @@ class SimpleInvoiceExtraction {
         currency: invoiceData.currency,
         issueDate: invoiceData.issueDate,
         providerTaxId: invoiceData.providerTaxId,
+        itemsCount: invoiceData.items ? invoiceData.items.length : 0,
         confidence: confidence
       });
 
@@ -182,18 +186,26 @@ class SimpleInvoiceExtraction {
    */
   extractIssueDate(text) {
     const patterns = [
-      /(?:fecha|date|emision)[\s\:\-]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
-      /(?:fecha)[\s\:\-]*(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/i,
-      /(?:fecha de emisión)[\s\:\-]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
+      // Patrón que busca la fecha en la misma línea
+      /(?:fecha|date|emision)[\s:\-]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+      // Patrón para formatos YYYY/MM/DD
+      /(?:fecha)[\s:\-]*(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/i,
+      // Patrón que busca "Fecha de Emisión:" seguido de fecha en línea siguiente
+      /(?:fecha[\s]+de[\s]+emisi[oó]n)[\s:\-]*\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i,
     ];
 
     for (const pattern of patterns) {
       const match = text.match(pattern);
       if (match && match[1]) {
-        return this.normalizeDate(match[1]);
+        const normalized = this.normalizeDate(match[1]);
+        if (normalized) {
+          console.log('✅ [SimpleInvoiceExtraction] Fecha extraída:', match[1], '→', normalized);
+          return normalized;
+        }
       }
     }
 
+    console.log('⚠️ [SimpleInvoiceExtraction] No se encontró fecha de emisión');
     return undefined;
   }
 
@@ -339,6 +351,122 @@ class SimpleInvoiceExtraction {
       const today = new Date();
       return today.toISOString().split('T')[0];
     }
+  }
+
+  /**
+   * 📦 EXTRAER ITEMS/PRODUCTOS
+   */
+  extractItems(text) {
+    console.log('🔍 [SimpleInvoiceExtraction] Extrayendo items de la factura...');
+    
+    const items = [];
+    const lines = text.split('\n');
+    console.log(`📄 [SimpleInvoiceExtraction] Total líneas del texto: ${lines.length}`);
+    
+    // Patrones mejorados para identificar líneas de items
+    const itemPatterns = [
+      // Patrón con separadores: descripción | cantidad | precio | total
+      /^(.{10,80}?)\s*\|\s*(\d+(?:[.,]\d+)?)\s*\|\s*\$?\s*([\d,\.]+)\s*\|\s*\$?\s*([\d,\.]+)$/i,
+      // Patrón genérico: descripción cantidad precio total
+      /^(.{10,80}?)\s+(\d+(?:[.,]\d+)?)\s+\$?\s*([\d,\.]+)\s+\$?\s*([\d,\.]+)$/i,
+      // Patrón con dos campos: descripción + monto
+      /^(.{10,80}?)\s+\$?\s*([\d,\.]+)$/i,
+      // Patrón con tres campos: descripción + cantidad + monto
+      /^(.{10,80}?)\s+(\d+(?:[.,]\d+)?)\s+\$?\s*([\d,\.]+)$/i,
+    ];
+    
+    // Buscar líneas que parecen ser items
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      
+      // Skip líneas que claramente no son items
+      if (!trimmedLine || trimmedLine.length < 5) continue;
+      if (/^(total|subtotal|descuento|iva|importe|neto|base|impuesto)/i.test(trimmedLine)) continue;
+      if (/^(factura|comprobante|fecha|numero|cliente|proveedor|razon social)/i.test(trimmedLine)) continue;
+      if (/^(codigo|cod\.|cantidad|cant\.|precio|unit\.|importe)$/i.test(trimmedLine)) continue; // Headers de tabla
+      if (/^[0-9\-]+$/.test(trimmedLine)) continue; // Solo números (posible CUIT o fecha)
+      
+      // Intentar matchar con los patrones
+      for (let i = 0; i < itemPatterns.length; i++) {
+        const pattern = itemPatterns[i];
+        const match = trimmedLine.match(pattern);
+        
+        if (match && match[1]) {
+          const description = match[1].trim();
+          
+          // Para patrones de 4 campos (desc + qty + price + total)
+          if (match.length === 5) {
+            const quantity = parseFloat(match[2].replace(',', '.')) || 1;
+            const unitPrice = this.parseAmount(match[3]);
+            const total = this.parseAmount(match[4]);
+            
+            // Validar que los valores sean razonables
+            if (description.length >= 3 && unitPrice > 0 && total > 0) {
+              items.push({
+                description: description,
+                quantity: quantity,
+                unitPrice: unitPrice,
+                total: total || (unitPrice * quantity)
+              });
+              console.log('✅ [SimpleInvoiceExtraction] Item extraído (4 campos):', {
+                description: description,
+                quantity: quantity,
+                unitPrice: unitPrice,
+                total: total
+              });
+              break;
+            }
+          }
+          // Para patrones de 3 campos (desc + qty + monto)
+          else if (match.length === 4) {
+            const quantity = parseFloat(match[2].replace(',', '.')) || 1;
+            const total = this.parseAmount(match[3]);
+            
+            // Validar que los valores sean razonables
+            if (description.length >= 3 && total > 0) {
+              const unitPrice = total / quantity;
+              items.push({
+                description: description,
+                quantity: quantity,
+                unitPrice: unitPrice,
+                total: total
+              });
+              console.log('✅ [SimpleInvoiceExtraction] Item extraído (3 campos):', {
+                description: description,
+                quantity: quantity,
+                unitPrice: unitPrice,
+                total: total
+              });
+              break;
+            }
+          }
+          // Para patrones de 2 campos (desc + monto)
+          else if (match.length === 3) {
+            const total = this.parseAmount(match[2]);
+            
+            // Validar que los valores sean razonables
+            if (description.length >= 3 && total > 0) {
+              items.push({
+                description: description,
+                quantity: 1,
+                unitPrice: total,
+                total: total
+              });
+              console.log('✅ [SimpleInvoiceExtraction] Item extraído (2 campos):', {
+                description: description,
+                quantity: 1,
+                unitPrice: total,
+                total: total
+              });
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    console.log(`📦 [SimpleInvoiceExtraction] Items extraídos: ${items.length}`);
+    return items.length > 0 ? items : undefined;
   }
 
   /**

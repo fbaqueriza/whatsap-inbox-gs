@@ -231,10 +231,10 @@ function OrdersPage({ user }: OrdersPageProps) {
     });
   };
 
-  // Filter and sort orders
+  // Filter and sort orders by update date (most recent first)
   const sortedOrders = [...localOrders].sort((a, b) => {
-    const dateA = new Date(a.createdAt || a.orderDate || 0);
-    const dateB = new Date(b.createdAt || b.orderDate || 0);
+    const dateA = new Date(a.updatedAt || a.createdAt || a.orderDate || 0);
+    const dateB = new Date(b.updatedAt || b.createdAt || b.orderDate || 0);
     return dateB.getTime() - dateA.getTime();
   });
 

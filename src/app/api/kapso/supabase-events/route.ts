@@ -997,6 +997,391 @@ async function processKapsoDocumentWithOCR(
   }
 }
 
+// 🔧 NUEVA FUNCIÓN: Crear orden desde factura sin orden existente
+async function createOrderFromInvoice(
+  document: any,
+  requestId: string,
+  userId: string,
+  supabase: any
+): Promise<{ success: boolean; order?: any; error?: string }> {
+  try {
+    console.log(`🆕 [${requestId}] Iniciando creación de orden desde factura...`);
+    
+    // Extraer datos de la factura del texto OCR
+    const extractedData = document.ocr_data;
+    const invoiceData = extractedData?.invoice_data || {};
+    
+    // 🔧 FIX: Buscar extracted_text en múltiples lugares para logging
+    const extractedTextSource = document.extracted_text ? 'document.extracted_text' :
+                                extractedData?.extractedText ? 'extractedData.extractedText' :
+                                extractedData?.extracted_text ? 'extractedData.extracted_text' :
+                                invoiceData?.extractedText ? 'invoiceData.extractedText' : 'none';
+    
+    console.log(`🔍 [${requestId}] Estructura de datos OCR:`, {
+      hasOcrData: !!extractedData,
+      hasInvoiceData: !!invoiceData,
+      invoiceDataKeys: invoiceData ? Object.keys(invoiceData) : [],
+      extractedDataKeys: extractedData ? Object.keys(extractedData) : [],
+      hasDocumentExtractedText: !!document.extracted_text,
+      documentExtractedTextLength: document.extracted_text?.length || 0,
+      extractedTextSource: extractedTextSource,
+      extractedTextLength: (document.extracted_text || extractedData?.extractedText || extractedData?.extracted_text || invoiceData?.extractedText)?.length || 0,
+      documentKeys: document ? Object.keys(document) : []
+    });
+    
+    // Extraer monto total
+    let invoiceTotal = null;
+    if (invoiceData.total_amount) {
+      invoiceTotal = invoiceData.total_amount;
+    } else if (invoiceData.totalAmount) {
+      invoiceTotal = invoiceData.totalAmount;
+    } else if (extractedData.totalAmount) {
+      invoiceTotal = extractedData.totalAmount;
+    } else if (extractedData.total) {
+      invoiceTotal = extractedData.total;
+    } else if (extractedData.amount) {
+      invoiceTotal = extractedData.amount;
+    }
+    
+    // Si no se encuentra en los datos estructurados, intentar extraer del texto
+    if (!invoiceTotal && document.extracted_text) {
+      const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
+      if (amountMatch) {
+        invoiceTotal = parseFloat(amountMatch[1].replace(',', '.'));
+      }
+    }
+    
+    // Si no hay monto total, no podemos crear la orden
+    if (!invoiceTotal || invoiceTotal <= 0) {
+      console.error(`❌ [${requestId}] No se encontró monto válido en la factura`);
+      return { success: false, error: 'No se encontró monto válido en la factura' };
+    }
+    
+    console.log(`💰 [${requestId}] Monto extraído de la factura: $${invoiceTotal}`);
+    
+    // Extraer items de la factura
+    let items: any[] = [];
+    console.log(`📦 [${requestId}] Verificando items en invoice_data:`, {
+      hasInvoiceDataItems: !!invoiceData.items,
+      invoiceDataItemsLength: invoiceData.items?.length,
+      hasExtractedDataItems: !!extractedData.items,
+      extractedDataItemsLength: extractedData.items?.length,
+      firstInvoiceItem: invoiceData.items?.[0],
+      firstExtractedItem: extractedData.items?.[0],
+      hasExtractedText: !!document.extracted_text,
+      extractedTextLength: document.extracted_text?.length || 0
+    });
+    
+    if (invoiceData.items && Array.isArray(invoiceData.items)) {
+      console.log(`✅ [${requestId}] Encontrados items en invoice_data:`, invoiceData.items);
+      items = invoiceData.items.map((item: any) => ({
+        productName: item.description || item.name || 'Producto sin nombre',
+        quantity: item.quantity || 1,
+        unit: item.unit || 'un', // Default a 'un' si no se especifica
+        price: item.unitPrice || item.priceUnitNet || item.price || 0,
+        total: item.total || item.priceTotalNet || (item.unitPrice || item.priceUnitNet || 0) * item.quantity || 0
+      }));
+    } else if (extractedData.items && Array.isArray(extractedData.items)) {
+      console.log(`✅ [${requestId}] Encontrados items en extractedData:`, extractedData.items);
+      items = extractedData.items.map((item: any) => ({
+        productName: item.description || item.name || 'Producto sin nombre',
+        quantity: item.quantity || 1,
+        unit: item.unit || 'un', // Default a 'un' si no se especifica
+        price: item.unitPrice || item.priceUnitNet || item.price || 0,
+        total: item.total || item.priceTotalNet || (item.unitPrice || item.priceUnitNet || 0) * item.quantity || 0
+      }));
+    }
+    
+    // Si no hay items extraídos del OCR estructurado, intentar extraer del texto raw
+    // 🔧 FIX: Buscar extracted_text en múltiples lugares
+    const extractedText = document.extracted_text || 
+                         extractedData?.extractedText || 
+                         extractedData?.extracted_text ||
+                         invoiceData?.extractedText;
+    
+    console.log(`🔍 [${requestId}] DEBUG extracción multilínea: items.length=${items.length}, hasExtractedText=${!!extractedText}`);
+    if (items.length === 0 && extractedText) {
+      console.log(`⚠️ [${requestId}] No se encontraron items en OCR estructurado, intentando extracción del texto raw...`);
+      
+      // 🔧 EXTRACCIÓN ROBUSTA: Múltiples estrategias según formato de factura
+      const lines = extractedText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      const parseNumber = (s: string): number => Number(String(s).replace(/\./g, '').replace(',', '.')) || 0;
+      const isHeader = (s: string) => /producto.*servicio.*cantidad|u\.\s*medida.*precio\s*unit|codigo.*producto/i.test(s.replace(/\s+/g, ''));
+      const isTotalLine = (s: string) => /^importe\s|^total\s|^subtotal|^iva\s|\d+%:.*\$\d|^cae\s*[n°º]|vto\.?\s*de\s*cae|comprobante\s+autorizado|^codigo.*producto.*servicio/i.test(s.toLowerCase());
+      
+      // Buscar inicio de tabla de items
+      let start = lines.findIndex(l => /producto.*servicio|codigo.*producto.*servicio/i.test(l.toLowerCase()));
+      if (start < 0) start = 0; else start += 1;
+      
+      console.log(`🔍 [${requestId}] Iniciando extracción de items desde línea ${start}, total líneas: ${lines.length}`);
+      console.log(`🔍 [${requestId}] Primeras 30 líneas del texto:`, lines.slice(start, start + 30));
+      
+      // ESTRATEGIA 1: Formato de 3 líneas (Producto | Cantidad | Unidad | Precios)
+      for (let i = start; i < lines.length - 2; ) {
+        const line1 = lines[i];
+        const line2 = lines[i + 1] || '';
+        const line3 = lines[i + 2] || '';
+        
+        // Skip headers y líneas de totales
+        if (!line1 || isHeader(line1) || isTotalLine(line1)) { i++; continue; }
+        
+        console.log(`🔍 [${requestId}] Intentando parsear líneas ${i}-${i+2}:`, {
+          line1, line2, line3
+        });
+        
+        // Intentar múltiples patrones de extracción
+        
+        // PATRÓN C: Producto con "x cantidad" (intentamos primero este porque es más específico)
+        // Ejemplo: "Producto x 20" | "unidades" | "1000,00 5000,00"
+        const xPatternMatch = line1.match(/^(.+?)\s+x\s*(\d+(?:\.\d+)?)\s*$/i);
+        if (xPatternMatch && !isTotalLine(line1)) {
+          const name = xPatternMatch[1].trim();
+          const qty = parseNumber(xPatternMatch[2]);
+          // Aceptar cualquier unitLine, incluso si no es una unidad estándar
+          const unit = line2.trim().length > 0 ? line2.toLowerCase() : 'un';
+          
+          const priceMatches = line3.match(/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/g);
+          if (priceMatches && priceMatches.length > 0) {
+            const priceUnit = parseNumber(priceMatches[0]);
+            const total = parseNumber(priceMatches[priceMatches.length - 1]) || (qty * priceUnit);
+            
+            if (name.length >= 3 && qty > 0) {
+              // 🔧 DEDUPLICACIÓN: Verificar si ya existe un item con el mismo nombre y cantidad
+              const exists = items.some(item => 
+                item.productName === name && item.quantity === qty
+              );
+              if (!exists) {
+                items.push({
+                  productName: name,
+                  quantity: qty,
+                  unit: unit,
+                  price: priceUnit,
+                  total: total
+                });
+                console.log(`✅ [${requestId}] Item extraído (Patrón C):`, { name, qty, unit, price: priceUnit, total });
+                i += 3;
+                continue;
+              } else {
+                console.log(`⚠️ [${requestId}] Item duplicado detectado y omitido:`, { name, qty });
+                i += 3;
+                continue;
+              }
+            }
+          }
+        }
+        
+        // PATRÓN A: nameLine con cantidad al final, unitLine, amountsLine
+        // Ejemplo: "Producto 5,00" | "unidades" | "1000,00 5000,00"
+        // Ajustado para capturar "Producto2,00" o "Producto.2,00" también
+        const qtyAtEndMatch = line1.match(/(.+?)[\.]?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})$/);
+        if (qtyAtEndMatch && line2.toLowerCase().match(/^(un|unidad|unidades|kg|kgs|kg\.|litro|litros|m|metros?|cm|metros?)$/)) {
+          const name = qtyAtEndMatch[1].trim();
+          const qty = parseNumber(qtyAtEndMatch[2]);
+          const unit = line2.toLowerCase();
+          
+          // Extraer precio de line3 (puede ser "precio1 precio2" o "precio%descripcionprecio")
+          const priceMatches = line3.match(/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/g);
+          if (priceMatches && priceMatches.length > 0) {
+            const priceUnit = parseNumber(priceMatches[0]);
+            const total = parseNumber(priceMatches[priceMatches.length - 1]) || (qty * priceUnit);
+            
+            if (name.length >= 3 && qty > 0) {
+              // 🔧 DEDUPLICACIÓN: Verificar si ya existe un item con el mismo nombre y cantidad
+              const exists = items.some(item => 
+                item.productName === name && item.quantity === qty
+              );
+              if (!exists) {
+                items.push({
+                  productName: name,
+                  quantity: qty,
+                  unit: unit,
+                  price: priceUnit,
+                  total: total
+                });
+                console.log(`✅ [${requestId}] Item extraído (Patrón A):`, { name, qty, unit, price: priceUnit, total });
+                i += 3;
+                continue;
+              } else {
+                console.log(`⚠️ [${requestId}] Item duplicado detectado y omitido:`, { name, qty });
+                i += 3;
+                continue;
+              }
+            }
+          }
+        }
+        
+        // PATRÓN B: nombre en line1, cantidad en line2, unidad+precios en line3
+        // Ejemplo: "Producto" | "5,00" | "unidades 1000,00 5000,00"
+        const qtyOnlyMatch = line2.match(/^(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})$/);
+        if (qtyOnlyMatch && !isTotalLine(line1)) {
+          const name = line1.trim();
+          const qty = parseNumber(qtyOnlyMatch[1]);
+          const unitPriceMatches = line3.match(/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/g);
+          
+          if (unitPriceMatches && unitPriceMatches.length > 0) {
+            // Extraer unidad de line3 (antes del primer precio)
+            const unitMatch = line3.match(/^([^\d,\.]+?)\s+(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/);
+            const unit = unitMatch ? unitMatch[1].trim().toLowerCase() : 'un';
+            const priceUnit = parseNumber(unitPriceMatches[0]);
+            const total = parseNumber(unitPriceMatches[unitPriceMatches.length - 1]) || (qty * priceUnit);
+            
+            if (name.length >= 3 && qty > 0) {
+              // 🔧 DEDUPLICACIÓN: Verificar si ya existe un item con el mismo nombre y cantidad
+              const exists = items.some(item => 
+                item.productName === name && item.quantity === qty
+              );
+              if (!exists) {
+                items.push({
+                  productName: name,
+                  quantity: qty,
+                  unit: unit,
+                  price: priceUnit,
+                  total: total
+                });
+                console.log(`✅ [${requestId}] Item extraído (Patrón B):`, { name, qty, unit, price: priceUnit, total });
+                i += 3;
+                continue;
+              } else {
+                console.log(`⚠️ [${requestId}] Item duplicado detectado y omitido:`, { name, qty });
+                i += 3;
+                continue;
+              }
+            }
+          }
+        }
+        
+        // Si ningún patrón funcionó, avanzar
+        i++;
+      }
+      
+      console.log(`✅ [${requestId}] Items extraídos del texto raw: ${items.length}`);
+    }
+    
+    // Si aún no hay items, crear un item genérico con el total
+    if (items.length === 0) {
+      console.log(`⚠️ [${requestId}] No se pudieron extraer items, creando item genérico`);
+      items = [{
+        productName: 'Factura sin desglose de items',
+        quantity: 1,
+        unit: 'un',
+        price: invoiceTotal,
+        total: invoiceTotal
+      }];
+    }
+    
+    console.log(`📦 [${requestId}] Items finales:`, items.length);
+    console.log(`📋 [${requestId}] Detalle de items finales:`, JSON.stringify(items, null, 2));
+    
+    // Generar número de orden único
+    const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+    const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const orderNumber = `ORD-${timestamp}-${randomSuffix}`;
+    
+    // Crear la orden
+    const orderData = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      provider_id: document.provider_id,
+      order_number: orderNumber,
+      items: items,
+      status: 'pendiente_de_pago', // Estado inicial: pendiente de pago
+      total_amount: invoiceTotal,
+      currency: invoiceData.currency || 'ARS',
+      invoice_data: extractedData,
+      invoice_number: invoiceData.invoice_number || invoiceData.invoiceNumber,
+      invoice_currency: invoiceData.currency || 'ARS',
+      invoice_date: invoiceData.issue_date || invoiceData.issueDate,
+      extraction_confidence: document.confidence_score,
+      receipt_url: document.file_url,
+      order_date: invoiceData.issue_date || invoiceData.issueDate || new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    console.log(`📝 [${requestId}] Creando orden con datos:`, {
+      orderNumber: orderData.order_number,
+      provider_id: orderData.provider_id,
+      total_amount: orderData.total_amount,
+      items_count: items.length
+    });
+    
+    const { data: createdOrder, error: createError } = await supabase
+      .from('orders')
+      .insert([orderData])
+      .select()
+      .single();
+    
+    if (createError) {
+      console.error(`❌ [${requestId}] Error creando orden:`, createError);
+      return { success: false, error: createError.message };
+    }
+    
+    console.log(`✅ [${requestId}] Orden creada exitosamente:`, {
+      orderId: createdOrder.id,
+      orderNumber: createdOrder.order_number
+    });
+    
+    // Emitir broadcast para notificar al frontend
+    try {
+      const broadcastResult = await supabase
+        .channel('orders-updates')
+        .send({
+          type: 'broadcast' as const,
+          event: 'order_created',
+          payload: {
+            orderId: createdOrder.id,
+            orderNumber: createdOrder.order_number,
+            providerId: createdOrder.provider_id,
+            status: createdOrder.status,
+            items: items,
+            receiptUrl: createdOrder.receipt_url,
+            totalAmount: invoiceTotal,
+            currency: orderData.currency,
+            invoiceNumber: orderData.invoice_number,
+            invoiceDate: orderData.invoice_date,
+            orderDate: orderData.order_date,
+            timestamp: new Date().toISOString(),
+            source: 'invoice_auto_create'
+          }
+        });
+
+      if (broadcastResult === 'error') {
+        console.error(`⚠️ [${requestId}] Error enviando broadcast`);
+      } else {
+        console.log(`✅ [${requestId}] Broadcast de creación enviado`);
+      }
+    } catch (broadcastErr) {
+      console.error(`⚠️ [${requestId}] Error en broadcast:`, broadcastErr);
+    }
+    
+    // 🔧 NUEVO: Actualizar documento con order_id para evitar duplicados
+    try {
+      const { error: documentUpdateError } = await supabase
+        .from('documents')
+        .update({ 
+          order_id: createdOrder.id,
+          status: 'assigned',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', document.id);
+      
+      if (documentUpdateError) {
+        console.error(`⚠️ [${requestId}] Error actualizando documento con order_id:`, documentUpdateError);
+      } else {
+        console.log(`✅ [${requestId}] Documento actualizado con order_id: ${createdOrder.id}`);
+      }
+    } catch (docUpdateErr) {
+      console.error(`⚠️ [${requestId}] Error en actualización de documento:`, docUpdateErr);
+    }
+    
+    return { success: true, order: createdOrder };
+    
+  } catch (error) {
+    console.error(`❌ [${requestId}] Error creando orden desde factura:`, error);
+    return { success: false, error: 'Error creando orden desde factura' };
+  }
+}
+
 // 🔧 FUNCIÓN AUXILIAR: Actualizar orden con datos extraídos del OCR
 async function updateOrderWithExtractedData(
   documentId: string,
@@ -1027,52 +1412,133 @@ async function updateOrderWithExtractedData(
     console.log(`📊 [${requestId}] Datos OCR encontrados:`, {
       hasOcrData: !!document.ocr_data,
       hasExtractedText: !!document.extracted_text,
-      confidence: document.confidence_score
+      confidence: document.confidence_score,
+      orderId: document.order_id
     });
     
-    // Buscar órdenes del proveedor en estado enviado o pendiente_de_pago
-    const { data: orders, error: ordersError } = await supabase
-      .from('orders')
-      .select(`
-        id,
-        order_number,
-        status,
-        total_amount,
-        provider_id,
-        providers (
-          id,
-          name,
-          phone
-        )
-      `)
-      .eq('user_id', userId)
-      .in('status', ['enviado', 'pendiente_de_pago'])
-      .eq('provider_id', document.provider_id)
-      .order('updated_at', { ascending: false })
-      .limit(1);
-    
-    if (ordersError) {
-      console.error(`❌ [${requestId}] Error obteniendo órdenes:`, ordersError);
-      return;
-    }
-    
-    if (!orders || orders.length === 0) {
-      console.log(`⚠️ [${requestId}] No hay órdenes en estado enviado o pendiente_de_pago para el proveedor`);
-      return;
-    }
-    
-    // Tomar la orden más reciente (ya está ordenada y limitada)
-    const order = orders[0];
-    console.log(`📋 [${requestId}] Orden encontrada para actualizar:`, {
-      id: order.id,
-      orderNumber: order.order_number,
-      currentAmount: order.total_amount,
-      status: order.status
-    });
-    
-    // Extraer datos de la factura del texto OCR
+    // Extraer datos del documento una sola vez al inicio
     const extractedData = document.ocr_data;
     const invoiceData = extractedData?.invoice_data || {};
+    
+    let order;
+    
+    // 🔧 NUEVO: Verificar si el documento ya está asociado a una orden
+    if (document.order_id) {
+      console.log(`🔗 [${requestId}] Documento ya está asociado a una orden: ${document.order_id}`);
+      
+      // Obtener la orden existente
+      const { data: existingOrder, error: existingOrderError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', document.order_id)
+        .single();
+      
+      if (existingOrderError || !existingOrder) {
+        console.error(`❌ [${requestId}] Error obteniendo orden asociada:`, existingOrderError);
+        return;
+      }
+      
+      order = existingOrder;
+      console.log(`📋 [${requestId}] Usando orden existente:`, {
+        id: order.id,
+        orderNumber: order.order_number,
+        currentAmount: order.total_amount,
+        status: order.status
+      });
+    } else {
+      // Extraer el número de factura del documento actual ANTES de buscar órdenes
+      const currentInvoiceNumber = invoiceData.invoice_number || invoiceData.invoiceNumber;
+      
+      // Buscar órdenes del proveedor en estado enviado o pendiente_de_pago
+      const { data: orders, error: ordersError } = await supabase
+        .from('orders')
+        .select(`
+          id,
+          order_number,
+          status,
+          total_amount,
+          invoice_number,
+          provider_id,
+          providers (
+            id,
+            name,
+            phone
+          )
+        `)
+        .eq('user_id', userId)
+        .in('status', ['enviado', 'pendiente_de_pago'])
+        .eq('provider_id', document.provider_id)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      
+      if (ordersError) {
+        console.error(`❌ [${requestId}] Error obteniendo órdenes:`, ordersError);
+        return;
+      }
+      
+      if (!orders || orders.length === 0) {
+        console.log(`⚠️ [${requestId}] No hay órdenes en estado enviado o pendiente_de_pago para el proveedor`);
+        console.log(`🆕 [${requestId}] Creando nueva orden desde factura recibida...`);
+        
+        // 🔧 NUEVO: Crear orden automáticamente desde la factura
+        const createResult = await createOrderFromInvoice(
+          document,
+          requestId,
+          userId,
+          supabase
+        );
+        
+        if (!createResult.success || !createResult.order) {
+          console.error(`❌ [${requestId}] Error creando orden desde factura:`, createResult.error);
+          return;
+        }
+        
+        order = createResult.order;
+        console.log(`✅ [${requestId}] Orden creada exitosamente desde factura:`, {
+          orderId: order.id,
+          orderNumber: order.order_number
+        });
+      } else {
+        // Tomar la orden más reciente
+        order = orders[0];
+        
+        // 🔧 VERIFICACIÓN: Si la orden ya tiene un invoice_number diferente, crear nueva orden
+        if (order.invoice_number && currentInvoiceNumber && order.invoice_number !== currentInvoiceNumber) {
+          console.log(`⚠️ [${requestId}] Orden existente tiene factura diferente:`, {
+            existingInvoice: order.invoice_number,
+            newInvoice: currentInvoiceNumber
+          });
+          console.log(`🆕 [${requestId}] Creando nueva orden para factura diferente...`);
+          
+          const createResult = await createOrderFromInvoice(
+            document,
+            requestId,
+            userId,
+            supabase
+          );
+          
+          if (!createResult.success || !createResult.order) {
+            console.error(`❌ [${requestId}] Error creando orden desde factura:`, createResult.error);
+            return;
+          }
+          
+          order = createResult.order;
+          console.log(`✅ [${requestId}] Nueva orden creada para factura diferente:`, {
+            orderId: order.id,
+            orderNumber: order.order_number
+          });
+        } else {
+          console.log(`📋 [${requestId}] Orden encontrada para actualizar:`, {
+            id: order.id,
+            orderNumber: order.order_number,
+            currentAmount: order.total_amount,
+            currentInvoiceNumber: order.invoice_number,
+            status: order.status
+          });
+        }
+      }
+    }
+    
     let invoiceTotal = null;
     
     // Buscar monto total en los datos extraídos
@@ -1153,6 +1619,7 @@ async function updateOrderWithExtractedData(
               receiptUrl: updateData.receipt_url,
               totalAmount: invoiceTotal,
               invoiceNumber: updateData.invoice_number,
+              invoiceDate: updateData.invoice_date,
               timestamp: new Date().toISOString(),
               source: 'invoice_ocr'
             }

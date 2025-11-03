@@ -28,6 +28,11 @@ const nextConfig = {
       tls: false,
     };
     
+    // Configuración específica para pdfjs-dist en server-side
+    if (isServer) {
+      config.externals = [...(config.externals || []), 'canvas'];
+    }
+    
     return config;
   },
 };

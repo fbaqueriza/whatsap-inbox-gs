@@ -874,9 +874,18 @@ function StockPage({ user }: StockPageProps) {
                               const supplierId = js?.data?.supplier_id;
                               const created = header?.supplier_created;
                               const cuit = header?.supplier_cuit || '';
+                              const items = js?.data?.items || [];
+                              console.log('📦 [Stock] Items recibidos:', items.length, items);
                               // Si ya existe proveedor o al menos tenemos CUIT detectado, abrir modal
                               if (supplierId || cuit) {
                                 const razon = header?.supplier_name || '';
+                                // Guardar items en sessionStorage para mostrarlos en el modal
+                                if (items.length > 0) {
+                                  console.log('📦 [Stock] Guardando items en sessionStorage:', items.length);
+                                  sessionStorage.setItem('invoiceItems', JSON.stringify(items));
+                                } else {
+                                  console.log('⚠️ [Stock] No hay items para guardar');
+                                }
                                 window.location.href = `/providers?prefill=1&cuit=${encodeURIComponent(cuit)}&razon=${encodeURIComponent(razon)}`;
                                 break;
                               }
@@ -894,8 +903,17 @@ function StockPage({ user }: StockPageProps) {
                               const header = js?.data?.header_json;
                               const supplierId = js?.data?.supplier_id;
                               const cuit = header?.supplier_cuit || '';
+                              const items = js?.data?.items || [];
+                              console.log('📦 [Stock-Fallback] Items recibidos:', items.length, items);
                               if (supplierId || cuit) {
                                 const razon = header?.supplier_name || '';
+                                // Guardar items en sessionStorage para mostrarlos en el modal
+                                if (items.length > 0) {
+                                  console.log('📦 [Stock-Fallback] Guardando items en sessionStorage:', items.length);
+                                  sessionStorage.setItem('invoiceItems', JSON.stringify(items));
+                                } else {
+                                  console.log('⚠️ [Stock-Fallback] No hay items para guardar');
+                                }
                                 window.location.href = `/providers?prefill=1&cuit=${encodeURIComponent(cuit)}&razon=${encodeURIComponent(razon)}`;
                                 break;
                               }

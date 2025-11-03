@@ -103,40 +103,95 @@ async function runProcessing(
     }
   }
 
-  // Parseo por columnas: Producto/Servicio | Cantidad | U. medida | Precio Unit.
+  // Parseo por columnas: Producto/Servicio | Cantidad | U. medida | Precio Unit. (MEJORADO)
   const lines = ocr.text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  console.log(`📋 [process-invoice] Total líneas: ${lines.length}`);
+  console.log(`📋 [process-invoice] Primeras 30 líneas:`, lines.slice(0, 30));
   const items: any[] = [];
   const parseNumber = (s: string): number => Number(String(s).replace(/\./g, '').replace(',', '.')) || 0;
-  const isHeader = (s: string) => /producto.*servicio.*cantidad|u\.\s*medida.*precio\s*unit/i.test(s.replace(/\s+/g, ''));
-  let start = lines.findIndex(l => /producto.*servicio/i.test(l.toLowerCase()));
+  const isHeader = (s: string) => /producto.*servicio.*cantidad|u\.\s*medida.*precio\s*unit|codigo.*producto.*servicio/i.test(s.replace(/\s+/g, ''));
+  const isTotalLine = (s: string) => /^importe\s|^total\s|^subtotal|^iva\s|\d+%:.*\$\d|^cae\s*[n°º]|vto\.?\s*de\s*cae|comprobante\s+autorizado|^codigo.*producto.*servicio/i.test(s.toLowerCase());
+  let start = lines.findIndex(l => /producto.*servicio|codigo.*producto.*servicio/i.test(l.toLowerCase()));
+  console.log(`📋 [process-invoice] Start index: ${start}`);
   if (start < 0) start = 0; else start += 1; // saltar encabezado
+  
   for (let i = start; i < lines.length - 2; ) {
-    const nameLine = lines[i];
-    if (!nameLine || isHeader(nameLine)) { i++; continue; }
-    // Ignorar líneas de totales y otros pies de página
-    if (/^importe\s|^total\s|^iva\s|^cae\b|vto\.?\s*de\s*cae|comprobante\s+autorizado/i.test(nameLine.toLowerCase())) { i++; continue; }
-    const unitLine = lines[i + 1] || '';
-    const amountsLine = (lines[i + 2] || '').replace(/\s+/g, '');
-
-    // Cantidad es el último número del nameLine
-    const qtyMatch = nameLine.match(/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})(?!.*\d)/);
-    const qty = qtyMatch ? parseNumber(qtyMatch[1]) : 0;
-    const name = qtyMatch ? nameLine.slice(0, nameLine.lastIndexOf(qtyMatch[1])).trim() : nameLine.trim();
-    // Unidad: tomar literal de la línea siguiente (ej: "unidades")
-    const unit = unitLine.toLowerCase();
-    // Precio Unit: primer número de la línea de montos
-    const priceMatch = amountsLine.match(/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/);
-    const priceUnit = priceMatch ? parseNumber(priceMatch[1]) : 0;
-    const subtotal = +(qty * priceUnit).toFixed(2);
-
-    if (name && qty > 0) {
-      const already = items.find(it => it.name === name && it.quantity === qty && it.unit === unit && it.priceUnitNet === priceUnit);
-      if (!already) items.push({ name, quantity: qty, unit, priceUnitNet: priceUnit, priceTotalNet: subtotal });
-      i += 3;
-    } else {
-      i++;
+    const line1 = lines[i] || '';
+    const line2 = lines[i + 1] || '';
+    const line3 = lines[i + 2] || '';
+    
+    // Skip headers y líneas de totales
+    if (!line1 || isHeader(line1) || isTotalLine(line1)) { i++; continue; }
+    
+    // PATRÓN C: Producto con "x cantidad" (intentamos primero este porque es más específico)
+    const xPatternMatch = line1.match(/^(.+?)\s+x\s*(\d+(?:\.\d+)?)\s*$/i);
+    if (xPatternMatch) {
+      const name = xPatternMatch[1].trim();
+      const qty = parseNumber(xPatternMatch[2]);
+      const unit = line2.trim().length > 0 ? line2.toLowerCase() : 'un';
+      const priceMatches = line3.match(/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/g);
+      if (priceMatches && priceMatches.length > 0) {
+        const priceUnit = parseNumber(priceMatches[0]);
+        const total = parseNumber(priceMatches[priceMatches.length - 1]) || (qty * priceUnit);
+        if (name.length >= 3 && qty > 0) {
+          const already = items.find(it => it.name === name && it.quantity === qty);
+          if (!already) items.push({ name, quantity: qty, unit, priceUnitNet: priceUnit, priceTotalNet: total });
+          i += 3;
+          continue;
+        }
+      }
     }
+    
+    // PATRÓN A: nameLine con cantidad al final, unitLine, amountsLine
+    const qtyAtEndMatch = line1.match(/(.+?)[\.]?\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})$/);
+    if (qtyAtEndMatch && line2.toLowerCase().match(/^(un|unidad|unidades|kg|kgs|kg\.|litro|litros|m|metros?|cm|metros?)$/)) {
+      const name = qtyAtEndMatch[1].trim();
+      const qty = parseNumber(qtyAtEndMatch[2]);
+      const unit = line2.toLowerCase();
+      const priceMatches = line3.match(/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/g);
+      if (priceMatches && priceMatches.length > 0) {
+        const priceUnit = parseNumber(priceMatches[0]);
+        const total = parseNumber(priceMatches[priceMatches.length - 1]) || (qty * priceUnit);
+        if (name.length >= 3 && qty > 0) {
+          const already = items.find(it => it.name === name && it.quantity === qty);
+          if (!already) items.push({ name, quantity: qty, unit, priceUnitNet: priceUnit, priceTotalNet: total });
+          i += 3;
+          continue;
+        }
+      }
+    }
+    
+    // PATRÓN B: nombre en line1, cantidad en line2, unidad+precios en line3
+    const qtyOnlyMatch = line2.match(/^(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})$/);
+    if (qtyOnlyMatch) {
+      const name = line1.trim();
+      const qty = parseNumber(qtyOnlyMatch[1]);
+      const unitPriceMatches = line3.match(/(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/g);
+      if (unitPriceMatches && unitPriceMatches.length > 0) {
+        const unitMatch = line3.match(/^([^\d,\.]+?)\s+(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})/);
+        const unit = unitMatch ? unitMatch[1].trim().toLowerCase() : 'un';
+        const priceUnit = parseNumber(unitPriceMatches[0]);
+        const total = parseNumber(unitPriceMatches[unitPriceMatches.length - 1]) || (qty * priceUnit);
+        if (name.length >= 3 && qty > 0) {
+          const already = items.find(it => it.name === name && it.quantity === qty);
+          if (!already) items.push({ name, quantity: qty, unit, priceUnitNet: priceUnit, priceTotalNet: total });
+          i += 3;
+          continue;
+        }
+      }
+    }
+    
+    // Si ningún patrón funcionó, avanzar
+    i++;
   }
+  
+  console.log(`📋 [process-invoice] Items extraídos: ${items.length}`);
+  if (items.length > 0) {
+    console.log(`📋 [process-invoice] Items:`, items);
+  } else {
+    console.log(`⚠️ [process-invoice] NO se extrajeron items`);
+  }
+  
   const extractedData = {
     invoiceNumber: undefined,
     totalAmount: items.reduce((s, it) => s + (it.priceTotalNet || 0), 0),

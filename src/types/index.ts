@@ -72,6 +72,7 @@ export interface Order {
   desiredDeliveryTime?: string[]; // ['14:00-16:00', '09:00-11:00']
   paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
   invoiceNumber?: string;
+  invoiceDate?: Date;
   bankInfo?: {
     iban?: string;
     swift?: string;

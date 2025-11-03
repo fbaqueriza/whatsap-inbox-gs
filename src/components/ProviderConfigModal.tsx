@@ -48,6 +48,31 @@ export default function ProviderConfigModal({
   const [catalogFile, setCatalogFile] = useState<File | null>(null);
   const [catalogFileName, setCatalogFileName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
+
+  // Cargar items de la factura desde sessionStorage
+  useEffect(() => {
+    if (isOpen && !isEditing && prefill) {
+      try {
+        const storedItems = sessionStorage.getItem('invoiceItems');
+        console.log('📦 [ProviderModal] Cargando items de sessionStorage:', !!storedItems);
+        if (storedItems) {
+          const parsed = JSON.parse(storedItems);
+          console.log('📦 [ProviderModal] Items parseados:', parsed.length, parsed);
+          setInvoiceItems(parsed);
+        } else {
+          console.log('⚠️ [ProviderModal] No hay items en sessionStorage');
+        }
+      } catch (e) {
+        console.warn('Error cargando items de factura:', e);
+      }
+    } else if (!isOpen) {
+      // Limpiar items al cerrar modal
+      setInvoiceItems([]);
+      sessionStorage.removeItem('invoiceItems');
+      console.log('🧹 [ProviderModal] Items limpiados');
+    }
+  }, [isOpen, isEditing, prefill]);
 
   // Initialize form when provider changes
   useEffect(() => {
@@ -554,6 +579,45 @@ export default function ProviderConfigModal({
               </div>
             </div>
           </div>
+
+          {/* Items Extraídos de Factura */}
+          {invoiceItems.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-sm font-medium text-gray-900 border-b pb-2 mb-3">
+                <FileText className="inline h-4 w-4 mr-1" />
+                Items Extraídos de Factura
+              </h3>
+              <div className="bg-green-50 border border-green-200 rounded-md p-4">
+                <p className="text-sm text-green-800 mb-3">
+                  La factura procesada contiene los siguientes items que se agregarán a stock:
+                </p>
+                <div className="space-y-2">
+                  {invoiceItems.map((item, idx) => (
+                    <div key={idx} className="bg-white border border-green-200 rounded-md p-3 flex justify-between items-center">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-gray-900">{item.name}</p>
+                        <p className="text-xs text-gray-600">
+                          {item.quantity} {item.unit || 'un'}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        {item.priceUnitNet && (
+                          <p className="text-sm font-medium text-gray-900">
+                            ${new Intl.NumberFormat('es-AR').format(item.priceUnitNet)}
+                          </p>
+                        )}
+                        {item.priceTotalNet && (
+                          <p className="text-xs text-gray-600">
+                            Total: ${new Intl.NumberFormat('es-AR').format(item.priceTotalNet)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Notas */}
           <div className="mb-4">

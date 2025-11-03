@@ -1,0 +1,20 @@
+[33m2b7ac1a[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32minbox-kapso[m[33m, [m[1;31morigin/inbox-kapso[m[33m)[m chore: mejorar manejo de documentos y componentes relacionados
+[33mc01874f[m fix: migrar envío de comprobantes a Kapso y mejorar actualizaciones realtime
+[33mb85845c[m Remove legacy chat system: contexts, components, services, and kapso-chat page; navigation now uses /chat Inbox only
+[33m1129d76[m Kapso Inbox: CUIT sin guiones + asignación inmediata proveedor tras modal; finalize-assignment API; mejoras OCR y stock
+[33mf593107[m[33m ([m[1;32mkapso-integration[m[33m)[m feat: implement Supabase Realtime for chat functionality
+[33mc106e7d[m[33m ([m[1;32mfeature/stock-orders-improvements[m[33m)[m version 14.10 prueba en lo de juanse
+[33m5bc1130[m[33m ([m[1;31morigin/feature/stock-orders-improvements[m[33m)[m fix: ordenes duplicadas (corregido) - ahora verifica si existe antes de crear, evita duplicados pero permite creacion normal
+[33m3b9822d[m fix: ordenes duplicadas - endpoint ya no crea orden de nuevo, solo envia notificacion. mejorar logs de mensajes template
+[33m5d4eecd[m fix: mensaje disparador (inicializador_de_conv) ahora aparece en el chat
+[33mc447ab1[m fix: documentos y mensajes en tiempo real - webhook siempre crea mensajes en chat, realtime con filtro user_id, propagacion campos media
+[33m395d297[m fix: Reactivar sistema viejo de processMediaAsInvoice para integrar documentos con flujo de ordenes - Descomentado codigo completo de processMediaAsInvoice - Modificado processWhatsAppMessage para llamar a processMediaAsInvoice - Sistema ahora busca ordenes en estado esperando_factura y las actualiza con la factura recibida
+[33m5107813[m[33m ([m[1;33mtag: [m[1;33m07_10_falla_recepcion_docs[m[33m)[m debug: 07_10_falla en recepcion de docs - Sistema nuevo con documentos que no aparecen en chat ni se integran con flujo de ordenes
+[33meb862d9[m feat: Implementar funcionalidad completa para enviar y recibir documentos por WhatsApp
+[33mb9dec14[m cleanup: Remover todos los logs de debug temporales del console
+[33m9455d79[m fix: Corregir clasificación de mensajes del proveedor en lógica de 24h - Removido botón temporal Sync Templates del chat - Corregido mapeo de messageType en ChatContext para consistencia - Agregado campo messageType además de type para compatibilidad - Los mensajes del proveedor ahora se clasifican correctamente como received
+[33m3393910[m cleanup: Remover logs de debug del componente IntegratedChatPanel
+[33mf4baa73[m fix: Corregir notificación toast que aparecía aplastada
+[33m0953e46[m fix: Remover recarga automática de página al enviar inicializador
+[33mcecc67e[m fix: Corregir lógica de 24 horas para considerar solo mensajes del proveedor
+[33m85767cf[m fix: Corregir lógica de ventana de 24 horas para contactos sin mensajes

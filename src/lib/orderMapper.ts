@@ -24,6 +24,7 @@ export function mapOrderFromDb(order: any): Order {
     orderDate: order.order_date ? new Date(order.order_date) : new Date(),
     dueDate: order.due_date ? new Date(order.due_date) : undefined,
     invoiceNumber: order.invoice_number,
+    invoiceDate: order.invoice_date ? new Date(order.invoice_date) : undefined,
     bankInfo: order.bank_info,
     receiptUrl: order.receipt_url,
     // Usar estado directo de la BD (ya está normalizado)

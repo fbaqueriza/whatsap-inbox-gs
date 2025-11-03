@@ -14,7 +14,7 @@ interface CreateOrderModalProps {
     notes: string;
     desiredDeliveryDate?: Date;
     desiredDeliveryTime?: string[];
-    paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
+    paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque' | 'none';
     additionalFiles?: OrderFile[];
   }) => void;
   providers: Provider[];
@@ -43,7 +43,7 @@ export default function CreateOrderModal({
   const [notes, setNotes] = useState('');
   const [desiredDeliveryDate, setDesiredDeliveryDate] = useState<string>('');
   const [desiredDeliveryTime, setDesiredDeliveryTime] = useState<string[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'transferencia' | 'tarjeta' | 'cheque'>('efectivo');
+  const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'transferencia' | 'tarjeta' | 'cheque' | 'none'>('efectivo');
   const [additionalFiles, setAdditionalFiles] = useState<OrderFile[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
 
@@ -272,6 +272,15 @@ export default function CreateOrderModal({
           price: 0,
           total: 0,
         });
+      } else {
+        // Si no coincide con el formato, crear un item con el texto completo como nombre
+        items.push({
+          productName: line.trim(),
+          quantity: 1,
+          unit: 'un',
+          price: 0,
+          total: 0,
+        });
       }
     });
 
@@ -324,7 +333,7 @@ export default function CreateOrderModal({
       notes,
       desiredDeliveryDate: desiredDeliveryDate ? new Date(desiredDeliveryDate) : undefined,
       desiredDeliveryTime: desiredDeliveryTime.length > 0 ? desiredDeliveryTime : undefined,
-      paymentMethod,
+      paymentMethod: paymentMethod === 'none' ? undefined : paymentMethod,
       additionalFiles,
     });
     
@@ -457,25 +466,26 @@ export default function CreateOrderModal({
                 <CreditCard className="inline h-4 w-4 mr-1" />
                 Método de pago
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-5 gap-2">
                 {[
                   { value: 'efectivo', label: 'Efectivo', icon: '💵' },
                   { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
                   { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
                   { value: 'cheque', label: 'Cheque', icon: '📄' },
+                  { value: 'none', label: 'No especificar', icon: '○' },
                 ].map((method) => (
                   <button
                     key={method.value}
                     type="button"
                     onClick={() => setPaymentMethod(method.value as any)}
-                    className={`p-3 border rounded-lg text-center transition-colors ${
+                    className={`p-2 border rounded-lg text-center transition-colors ${
                       paymentMethod === method.value
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
                     }`}
                   >
-                    <div className="text-2xl mb-1">{method.icon}</div>
-                    <div className="text-sm font-medium">{method.label}</div>
+                    <div className="text-xl mb-1">{method.icon}</div>
+                    <div className="text-xs font-medium leading-tight">{method.label}</div>
                   </button>
                 ))}
               </div>
@@ -494,7 +504,7 @@ export default function CreateOrderModal({
 
               <div className="mb-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Ítems del pedido (Formato: Producto: Cantidad Unidad - Precio)
+                  Ítems del pedido (Formato: Producto: Cantidad Unidad - Precio, o texto libre)
                 </label>
               </div>
 

@@ -1739,6 +1739,8 @@ async function tryAssociateInvoiceToOrder(
             orderId: order.id,
             status: 'pendiente_de_pago',
             receiptUrl: updateData.receipt_url,
+            invoiceNumber: updateData.invoice_number,
+            invoiceDate: updateData.invoice_date,
             timestamp: new Date().toISOString(),
             source: 'invoice_association'
           }

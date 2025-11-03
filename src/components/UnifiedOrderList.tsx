@@ -69,9 +69,9 @@ export default function UnifiedOrderList({
       !['finalizado', 'cancelled', 'pagado'].includes(order.status)
     );
     
-    // Ordenar por fecha de creación (más recientes primero)
+    // Ordenar por fecha de actualización (más recientes primero)
     const sortedOrders = activeOrders.sort((a, b) => 
-      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime()
     );
     
     if (maxItems) {

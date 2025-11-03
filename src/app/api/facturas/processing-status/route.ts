@@ -28,6 +28,33 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'id o fileUrl requerido' }, { status: 400 });
     }
     if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    
+    // Obtener items de la factura procesada
+    if (data?.id) {
+      const { data: items } = await supabase
+        .from('processed_invoice_items')
+        .select('description, quantity, unit, unit_price_net, total_net')
+        .eq('invoice_id', data.id)
+        .order('line_number', { ascending: true });
+      
+      console.log(`📦 [processing-status] Items encontrados: ${items?.length || 0} para invoice ${data.id}`);
+      
+      if (items && items.length > 0) {
+        data.items = items.map(item => ({
+          name: item.description,
+          quantity: item.quantity,
+          unit: item.unit,
+          priceUnitNet: item.unit_price_net,
+          priceTotalNet: item.total_net
+        }));
+        console.log(`📦 [processing-status] Items mapeados:`, data.items);
+      } else {
+        console.log(`⚠️ [processing-status] No se encontraron items para invoice ${data.id}`);
+      }
+    } else {
+      console.log(`⚠️ [processing-status] No hay invoiceId en data`);
+    }
+    
     return NextResponse.json({ success: true, data });
   } catch (e: any) {
     return NextResponse.json({ success: false, error: e.message || 'Error' }, { status: 500 });

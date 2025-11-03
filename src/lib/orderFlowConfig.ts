@@ -43,9 +43,19 @@ export const ORDER_FLOW_CONFIG = {
   MESSAGES: {
     send_order_details: (order: any, provider: any) => {
       const currentDate = new Date().toLocaleDateString('es-AR');
-      const items = order.items?.map((item: any) => 
-        `• ${item.name || item.productName}: ${item.quantity} ${item.unit || 'unidades'} - $${item.total || item.price || 0}`
-      ).join('\n') || 'No hay items especificados';
+      const items = order.items?.map((item: any) => {
+        const productName = item.name || item.productName;
+        const quantity = item.quantity;
+        const unit = item.unit || 'unidades';
+        
+        // Si es texto libre (quantity=1 y unit='un'), mostrar solo el texto
+        if (quantity === 1 && unit === 'un') {
+          return `• ${productName}`;
+        }
+        
+        // Si es formato estructurado, mostrar con cantidad y unidad
+        return `• ${productName}: ${quantity} ${unit}`;
+      }).join('\n') || 'No hay items especificados';
 
       let deliveryDate = 'No especificada';
       if (order.desired_delivery_date) {
@@ -58,17 +68,20 @@ export const ORDER_FLOW_CONFIG = {
         }
       }
 
-      return `📋 *DETALLES DEL PEDIDO - ${currentDate} - ${provider.name}*
-🆔 *Número de Orden:* ${order.order_number}
-📅 *Fecha de entrega:* ${deliveryDate}
-💳 *Método de pago:* ${order.payment_method || 'No especificado'}
-📝 *Notas:* ${order.notes || 'Sin notas especiales'}
-📦 *Items del pedido:*
-${items}
----
-📄 *SOLICITUD DE FACTURA*
+      // Mover las notas al final si existen
+      const notesSection = order.notes && order.notes.trim() 
+        ? `\n\nNotas: ${order.notes}` 
+        : '';
+      
+      return `🆔 Orden: ${order.order_number}
+📅 Entrega: ${deliveryDate}
+💳 Pago: ${order.payment_method || 'No especificado'}
 
-Gracias por recibir el pedido. Por favor, envíe la factura correspondiente para proceder con el pago.
+📦 Items:
+${items}
+${notesSection}
+
+Gracias. Aguardamos la factura.
 
 Saludos!`;
     },

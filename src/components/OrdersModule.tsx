@@ -95,10 +95,10 @@ export default function OrdersModule({
     });
   };
 
-  // Ordenar órdenes por fecha descendente - EXACTAMENTE como en la página original
+  // Ordenar órdenes por fecha de actualización descendente (más recientes primero)
   const sortedOrders = [...orders].sort((a, b) => {
-    const dateA = new Date(a.createdAt || a.orderDate || 0);
-    const dateB = new Date(b.createdAt || b.orderDate || 0);
+    const dateA = new Date(a.updatedAt || a.createdAt || a.orderDate || 0);
+    const dateB = new Date(b.updatedAt || b.createdAt || b.orderDate || 0);
     return dateB.getTime() - dateA.getTime();
   });
 

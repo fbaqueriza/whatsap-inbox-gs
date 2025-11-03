@@ -278,6 +278,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
             receiptUrl: payload.payload.receiptUrl,
             totalAmount: payload.payload.totalAmount,
             invoiceNumber: payload.payload.invoiceNumber,
+            invoiceDate: payload.payload.invoiceDate,
             source: payload.payload.source
           });
           // 🔧 CORREGIDO: Solo actualizar campos que existen en el payload
@@ -297,6 +298,10 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
           // Solo incluir invoiceNumber si existe en el payload
           if (payload.payload.invoiceNumber !== undefined) {
             updateData.invoiceNumber = payload.payload.invoiceNumber;
+          }
+          // Solo incluir invoiceDate si existe en el payload
+          if (payload.payload.invoiceDate !== undefined) {
+            updateData.invoiceDate = payload.payload.invoiceDate ? new Date(payload.payload.invoiceDate) : undefined;
           }
           return updateData;
         }
@@ -327,6 +332,72 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         callback(updatedOrder);
       } catch (error) {
         console.error('❌ [RealtimeService] Error en order listener (Kapso):', error);
+      }
+    });
+  };
+
+  // 🆕 NUEVO: Manejar creación de orden desde factura
+  const handleKapsoOrderCreate = (payload: any) => {
+    console.log('🆕 [RealtimeService] Procesando broadcast de creación de orden:', {
+      orderId: payload.payload.orderId,
+      orderNumber: payload.payload.orderNumber,
+      providerId: payload.payload.providerId,
+      status: payload.payload.status,
+      items: payload.payload.items,
+      itemsLength: payload.payload.items?.length,
+      firstItem: payload.payload.items?.[0],
+      receiptUrl: payload.payload.receiptUrl,
+      totalAmount: payload.payload.totalAmount,
+      invoiceNumber: payload.payload.invoiceNumber,
+      invoiceDate: payload.payload.invoiceDate,
+      source: payload.payload.source
+    });
+    
+    if (!currentUserId) {
+      console.log('⚠️ [RealtimeService] Ignorando orden creada - usuario no autenticado');
+      return;
+    }
+
+    // Crear objeto de orden completo desde el payload
+    const newOrder: any = {
+      id: payload.payload.orderId,
+      orderNumber: payload.payload.orderNumber,
+      providerId: payload.payload.providerId,
+      status: payload.payload.status,
+      items: payload.payload.items || [],
+      receiptUrl: payload.payload.receiptUrl,
+      totalAmount: payload.payload.totalAmount,
+      currency: payload.payload.currency || 'ARS',
+      invoiceNumber: payload.payload.invoiceNumber,
+      invoiceDate: payload.payload.invoiceDate ? new Date(payload.payload.invoiceDate) : undefined,
+      orderDate: payload.payload.orderDate || payload.payload.timestamp,
+      updatedAt: payload.payload.timestamp,
+      createdAt: payload.payload.timestamp,
+      source: payload.payload.source || 'invoice_auto_create'
+    };
+    
+    console.log('📦 [RealtimeService] Orden creada con items:', {
+      itemsCount: newOrder.items.length,
+      items: newOrder.items
+    });
+    
+    // Agregar la orden al estado si no existe
+    setOrders(prev => {
+      const exists = prev.some(order => order.id === newOrder.id);
+      if (exists) {
+        console.log('🔄 [RealtimeService] Orden ya existe, ignorando:', newOrder.id);
+        return prev;
+      }
+      console.log('✅ [RealtimeService] Agregando nueva orden creada desde factura:', newOrder.id);
+      return [...prev, newOrder];
+    });
+
+    // Notificar a los listeners
+    orderListeners.current.forEach(callback => {
+      try {
+        callback(newOrder);
+      } catch (error) {
+        console.error('❌ [RealtimeService] Error en order listener (Kapso create):', error);
       }
     });
   };
@@ -517,6 +588,11 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
             console.log('🔄 [RealtimeService] Broadcast order_updated recibido:', payload);
             // Procesar evento de Kapso como si fuera un evento nativo de Supabase
             handleKapsoOrderUpdate(payload);
+          })
+          .on('broadcast', { event: 'order_created' }, (payload) => {
+            console.log('🆕 [RealtimeService] Broadcast order_created recibido:', payload);
+            // Procesar nueva orden creada desde factura
+            handleKapsoOrderCreate(payload);
           })
           .subscribe();
 

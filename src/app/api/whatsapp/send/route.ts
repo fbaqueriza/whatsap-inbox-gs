@@ -54,7 +54,9 @@ export async function POST(request: NextRequest) {
       
       const metaService = new MetaWhatsAppService();
       await metaService.initialize();
-      result = await metaService.sendMessageWithDocument(to, messageContent, mediaUrl, mediaType, userId);
+      // Extraer filename de mediaUrl
+      const filename = mediaUrl.split('/').pop() || 'documento.pdf';
+      result = await metaService.sendDocument(to, mediaUrl, filename, messageContent, userId);
     } else if (isTemplate) {
       // 🔧 CORRECCIÓN: Generar contenido para guardar en BD
       messageContent = generateTemplateContent(message, templateVariables);

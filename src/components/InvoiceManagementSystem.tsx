@@ -902,6 +902,7 @@ export default function InvoiceManagementSystem({
          onClose={() => setIsPaymentReceiptModalOpen(false)}
          selectedOrderIds={Array.from(selectedPayments)}
          userId={user?.id || ''}
+         orders={orders.map(o => ({ id: o.id, total_amount: o.total_amount }))}
          onSuccess={() => {
            // 🔧 CORREGIDO: No necesitamos recargar, los datos vienen del DataProvider
             setSelectedPayments(new Set());

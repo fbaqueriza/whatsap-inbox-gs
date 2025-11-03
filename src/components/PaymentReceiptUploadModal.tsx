@@ -22,6 +22,7 @@ interface PaymentReceiptUploadModalProps {
   selectedOrderIds: string[];
   onSuccess: () => void;
   userId: string;
+  orders?: Array<{ id: string; total_amount: string | number }>;
 }
 
 interface UploadedFile {
@@ -35,7 +36,8 @@ export default function PaymentReceiptUploadModal({
   onClose,
   selectedOrderIds,
   onSuccess,
-  userId
+  userId,
+  orders
 }: PaymentReceiptUploadModalProps) {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -153,12 +155,33 @@ export default function PaymentReceiptUploadModal({
           });
         }, 200);
 
-        // Subir archivo usando API endpoint - los datos se extraerán automáticamente
+        // Subir archivo usando API endpoint
         const formData = new FormData();
         formData.append('file', uploadedFile.file);
-        formData.append('userId', userId);
+        
+        // Si hay selectedOrderIds, usar el endpoint que actualiza órdenes
+        if (selectedOrderIds && selectedOrderIds.length > 0) {
+          formData.append('orderIds', selectedOrderIds.join(','));
+          // Calcular el monto total de las órdenes seleccionadas
+          let totalAmount = 0;
+          if (orders) {
+            totalAmount = selectedOrderIds.reduce((sum, orderId) => {
+              const order = orders.find(o => o.id === orderId);
+              return sum + parseFloat(order?.total_amount?.toString() || '0');
+            }, 0);
+          }
+          formData.append('paymentAmount', totalAmount.toString());
+          formData.append('paymentDate', new Date().toISOString().split('T')[0]);
+          formData.append('paymentMethod', 'transferencia');
+        } else {
+          formData.append('userId', userId);
+        }
 
-        const response = await fetch('/api/payment-receipts/upload', {
+        const endpoint = selectedOrderIds && selectedOrderIds.length > 0 
+          ? '/api/facturas/upload-payment-receipt' 
+          : '/api/payment-receipts/upload';
+        
+        const response = await fetch(endpoint, {
           method: 'POST',
           body: formData
         });
@@ -192,7 +215,7 @@ export default function PaymentReceiptUploadModal({
         onClose();
       }, 2000);
     }
-  }, [uploadedFiles, userId, onSuccess, onClose]);
+  }, [uploadedFiles, userId, selectedOrderIds, orders, onSuccess, onClose]);
 
   // Limpiar URLs de preview al desmontar
   React.useEffect(() => {

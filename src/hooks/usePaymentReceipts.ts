@@ -102,15 +102,11 @@ export function usePaymentReceipts() {
   const subscriptionInitializedRef = useRef<Set<string>>(new Set());
   
   const setupRealtimeSubscription = useCallback((userId: string) => {
-    console.log(`🔍 [Realtime] Setup solicitado para usuario: ${userId}`);
-    
     // 🚫 PREVENIR: Múltiples suscripciones simultaneas por usuario
     if (subscriptionInitializedRef.current.has(userId)) {
-      console.log(`🔐 [Realtime] Ya hay suscripción activa para usuario ${userId}, ignorando llamada`);
       return;
     }
     
-    console.log(`📝 [Realtime] Marcando usuario como inicializado: ${userId}`);
     subscriptionInitializedRef.current.add(userId);
     
     // Limpiar suscripción anterior
@@ -118,8 +114,6 @@ export function usePaymentReceipts() {
       subscriptionRef.current.unsubscribe();
       subscriptionRef.current = null;
     }
-
-    console.log(`🔗 [Realtime] Configurando suscripción comprobantes para usuario ${userId}`);
     
     subscriptionRef.current = supabase
       .channel(`payment_receipts_stable_${userId}`) // Nombre único y estable
@@ -132,30 +126,18 @@ export function usePaymentReceipts() {
           filter: `user_id=eq.${userId}`
         },
         (payload) => {
-          console.log('🔄 [Realtime] Evento comprobantes recibido:', payload.eventType, payload.new?.id);
-          
           if (payload.eventType === 'INSERT') {
             const newReceipt = payload.new as PaymentReceiptData;
-            console.log('✅ [Realtime] Nuevo comprobante agregado:', newReceipt.id);
-            console.log('📱 [Realtime] Datos del comprobante:', { 
-              id: newReceipt.id, 
-              filename: newReceipt.filename,
-              amount: newReceipt.payment_amount,
-              status: newReceipt.status 
-            });
             setReceipts(prev => {
               // Verificar que no existe ya
               const exists = prev.find(r => r.id === newReceipt.id);
               if (exists) {
-                console.log('⚠️ [Realtime] Comprobante ya existe en el estado local');
                 return prev;
               }
-              console.log('✅ [Realtime] Agregando comprobante al estado local');
               return [newReceipt, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const updatedReceipt = payload.new as PaymentReceiptData;
-            console.log('🔄 [Realtime] Comprobante actualizado:', updatedReceipt.id);
             setReceipts(prev => prev.map(receipt => 
               receipt.id === updatedReceipt.id 
                 ? { ...receipt, ...updatedReceipt }
@@ -163,18 +145,13 @@ export function usePaymentReceipts() {
             ));
           } else if (payload.eventType === 'DELETE') {
             const deletedReceipt = payload.old as PaymentReceiptData;
-            console.log('❌ [Realtime] Comprobante eliminado:', deletedReceipt.id);
             setReceipts(prev => prev.filter(receipt => receipt.id !== deletedReceipt.id));
           }
         }
       )
         .subscribe((status) => {
-          console.log(`🔗 [Realtime] Estado suscripción comprobantes: ${status}`);
-          if (status === 'SUBSCRIBED') {
-            console.log('✅ [Realtime] Suscripción activa establecida');
-          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-            console.log(`⚠️ [Realtime] Suscripción perdida: ${status}`);
-            subscriptionInitializedRef.current.clear(); // Solo clear en error grave NO delete específico
+          if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            subscriptionInitializedRef.current.clear();
           }
         });
   }, []);
@@ -183,7 +160,6 @@ export function usePaymentReceipts() {
   useEffect(() => {
     return () => {
       if (subscriptionRef.current) {
-        console.log('🔌 [Realtime] Desmontando suscripción comprobantes');
         subscriptionRef.current.unsubscribe();
         subscriptionRef.current = null;
       }

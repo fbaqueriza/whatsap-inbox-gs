@@ -35,26 +35,11 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     // 🔧 AUTENTICACIÓN SIMPLIFICADA: Solo usar onAuthStateChange para evitar múltiples llamadas
     const { data: { subscription: listener } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('🔐 [useSupabaseAuth] Auth state change:', event, session?.user?.email);
-      }
-      
+      // Silenciar logs periódicos de autenticación
       if (event === 'SIGNED_OUT' || !session) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔐 [useSupabaseAuth] Usuario no autenticado');
-        }
         setUser(null);
         setLoading(false);
         return;
-      }
-      
-      if (process.env.NODE_ENV === 'development') {
-        console.log('🔐 [useSupabaseAuth] Usuario autenticado:', {
-          userId: session.user?.id,
-          email: session.user?.email,
-          sessionExpires: session.expires_at,
-          currentTime: Date.now() / 1000
-        });
       }
       setUser(session.user ?? null);
       setLoading(false);

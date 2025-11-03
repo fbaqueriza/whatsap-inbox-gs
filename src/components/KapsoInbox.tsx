@@ -24,7 +24,7 @@ export default function KapsoInbox({ className = '' }: KapsoInboxProps) {
         }
 
         // Usar el inbox local en desarrollo o el de producción en staging
-        const baseUrl = process.env.NEXT_PUBLIC_KAPSO_INBOX_URL || 'http://localhost:4000';
+        const baseUrl = process.env.NEXT_PUBLIC_KAPSO_INBOX_URL || 'https://whatsapp-inbox.vercel.app';
         
         // Pasar el token vía URL para que el inbox lo use en sus requests
         const params = new URLSearchParams({

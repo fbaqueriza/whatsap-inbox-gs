@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     console.log(`🔍 [SetupLink-${requestId}] Buscando customer para usuario: ${user.id}`);
     
     const { data: configData, error: configError } = await supabase
-      .from('whatsapp_configs')
+      .from('user_whatsapp_config')
       .select('kapso_config_id')
       .eq('user_id', user.id)
       .not('kapso_config_id', 'is', null)
@@ -66,54 +66,59 @@ export async function POST(request: NextRequest) {
     const customerId = configData[0].kapso_config_id;
     console.log(`📱 [SetupLink-${requestId}] Creando setup link para customer: ${customerId}`);
     
-        // Crear setup link en Kapso Platform
-        const kapsoPlatform = new KapsoPlatformService();
-        
-        console.log(`🔗 [SetupLink-${requestId}] Creando setup link real en Kapso...`);
-        
-        const setupLinkResponse = await kapsoPlatform.createSetupLink(customerId, {
-          success_redirect_url: 'https://gastronomy-saas.vercel.app/dashboard/whatsapp-config?status=success',
-          failure_redirect_url: 'https://gastronomy-saas.vercel.app/dashboard/whatsapp-config?status=error',
-          allowed_connection_types: ['coexistence', 'dedicated'],
-          theme_config: {
-            primary_color: '#3b82f6'
-          }
-        });
-        
-        const setupLink = setupLinkResponse.data;
+    // Crear setup link en Kapso Platform
+    const kapsoPlatform = new KapsoPlatformService();
     
-        console.log(`✅ [SetupLink-${requestId}] Setup link real creado en Kapso: ${setupLink.url}`);
+    console.log(`🔗 [SetupLink-${requestId}] Creando setup link real en Kapso...`);
     
-    // Guardar el setup link en Supabase para referencia
-    // Nota: La tabla actual no tiene campos específicos para setup link
-    // Podemos usar webhook_url temporalmente para almacenar el setup link URL
-    const { error: updateError } = await supabase
-      .from('whatsapp_configs')
-      .update({
-        webhook_url: setupLink.url // Usar webhook_url temporalmente para almacenar setup link
-      })
-      .eq('user_id', user.id);
+    const setupLinkResponse = await kapsoPlatform.createSetupLink({
+      customer_id: customerId,
+      success_redirect_url: 'https://gastronomy-saas.vercel.app/dashboard/whatsapp-config?status=success',
+      failure_redirect_url: 'https://gastronomy-saas.vercel.app/dashboard/whatsapp-config?status=error',
+      allowed_connection_types: ['coexistence', 'dedicated'],
+      theme_config: {
+        primary_color: '#3b82f6'
+      },
+      expires_in: 86400, // 24 horas
+      metadata: {}
+    });
     
-    if (updateError) {
-      console.error(`❌ [SetupLink-${requestId}] Error guardando setup link en Supabase:`, updateError);
-      // No fallar aquí, el setup link ya está creado en Kapso
+    console.log(`📊 [SetupLink-${requestId}] Respuesta del createSetupLink:`, { 
+      success: setupLinkResponse.success, 
+      hasData: !!setupLinkResponse.data,
+      error: setupLinkResponse.error 
+    });
+    
+    if (!setupLinkResponse.success || !setupLinkResponse.data) {
+      console.error(`❌ [SetupLink-${requestId}] Error creando setup link:`, setupLinkResponse.error);
+      return NextResponse.json({
+        success: false,
+        error: `Error creando setup link: ${setupLinkResponse.error}`
+      }, { status: 500 });
     }
     
-            console.log(`✅ [SetupLink-${requestId}] Setup link configurado exitosamente`);
-            
-            // 🚀 CREAR TEMPLATES AUTOMÁTICAMENTE
-            console.log(`📝 [SetupLink-${requestId}] Creando templates automáticamente...`);
-            await createDefaultTemplates(customerId, requestId);
-            
-            return NextResponse.json({
-              success: true,
-              setup_link: {
-                id: setupLink.id,
-                url: setupLink.url,
-                expires_at: setupLink.expires_at
-              },
-              message: 'Setup link creado exitosamente. Templates creados automáticamente. Comparte este enlace con el usuario para que conecte su WhatsApp.'
-            });
+    const setupLink = setupLinkResponse.data;
+
+    console.log(`✅ [SetupLink-${requestId}] Setup link real creado en Kapso: ${setupLink.url}`);
+
+    // No guardamos el setup link en Supabase porque user_whatsapp_config no tiene ese campo
+    // El setup link se retorna al frontend directamente
+    
+    console.log(`✅ [SetupLink-${requestId}] Setup link configurado exitosamente`);
+    
+    // 🚀 CREAR TEMPLATES AUTOMÁTICAMENTE
+    console.log(`📝 [SetupLink-${requestId}] Creando templates automáticamente...`);
+    await createDefaultTemplates(customerId, requestId);
+    
+    return NextResponse.json({
+      success: true,
+      setup_link: {
+        id: setupLink.id,
+        url: setupLink.url,
+        expires_at: setupLink.expires_at
+      },
+      message: 'Setup link creado exitosamente. Templates creados automáticamente. Comparte este enlace con el usuario para que conecte su WhatsApp.'
+    });
 
   } catch (error: any) {
     console.error(`❌ [SetupLink-${requestId}] Error inesperado:`, error);

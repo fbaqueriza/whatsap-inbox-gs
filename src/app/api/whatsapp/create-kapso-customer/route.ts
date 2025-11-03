@@ -37,22 +37,26 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { business_name } = body;
     
-    // Verificar si el usuario ya tiene un customer en Kapso
-    // Nota: Usamos kapso_config_id para almacenar customer_id temporalmente
-    const { data: existingCustomer } = await supabase
-      .from('whatsapp_configs')
-      .select('kapso_config_id')
+    // Verificar si el usuario ya tiene un registro en user_whatsapp_config
+    const { data: existingConfig, error: existingError } = await supabase
+      .from('user_whatsapp_config')
+      .select('id, kapso_config_id')
       .eq('user_id', user.id)
-      .not('kapso_config_id', 'is', null)
-      .single();
+      .maybeSingle();
     
-    if (existingCustomer?.kapso_config_id) {
-      console.log(`⚠️ [KapsoCustomer-${requestId}] Usuario ya tiene customer en Kapso: ${existingCustomer.kapso_config_id}`);
+    // Si ya hay un registro con kapso_config_id, retornarlo
+    if (existingConfig?.kapso_config_id && !existingError) {
+      console.log(`⚠️ [KapsoCustomer-${requestId}] Usuario ya tiene customer en Kapso: ${existingConfig.kapso_config_id}`);
       return NextResponse.json({
         success: true,
-        customer_id: existingCustomer.kapso_config_id,
+        customer_id: existingConfig.kapso_config_id,
         message: 'Usuario ya tiene un customer en Kapso Platform'
       });
+    }
+    
+    // Si hay un registro pero sin kapso_config_id, actualizarlo
+    if (existingConfig && !existingConfig.kapso_config_id) {
+      console.log(`⚠️ [KapsoCustomer-${requestId}] Usuario ya tiene registro pero sin kapso_config_id, se actualizará más adelante`);
     }
     
     // Crear customer en Kapso Platform
@@ -66,6 +70,15 @@ export async function POST(request: NextRequest) {
       external_customer_id: `customer_${user.id}_${Date.now()}`
     });
     
+    // Verificar si la creación fue exitosa
+    if (!customerResponse.success || !customerResponse.data) {
+      console.error(`❌ [KapsoCustomer-${requestId}] Error creando customer en Kapso:`, customerResponse.error);
+      return NextResponse.json({ 
+        success: false,
+        error: `Error creando customer en Kapso: ${customerResponse.error}` 
+      }, { status: 500 });
+    }
+    
     const customerId = customerResponse.data.id;
     console.log(`✅ [KapsoCustomer-${requestId}] Customer creado en Kapso: ${customerId}`);
     
@@ -73,28 +86,63 @@ export async function POST(request: NextRequest) {
     // Nota: La tabla actual no tiene kapso_customer_id, así que usamos kapso_config_id temporalmente
     console.log(`💾 [KapsoCustomer-${requestId}] Guardando customer en Supabase...`);
     
-    const { data: insertData, error: updateError } = await supabase
-      .from('whatsapp_configs')
-      .insert({
-        user_id: user.id,
-        phone_number: 'pending', // Se configurará cuando conecten WhatsApp
-        kapso_config_id: customerId, // Usar kapso_config_id para almacenar customer_id temporalmente
-        is_sandbox: false,
-        is_active: false // No activo hasta que conecten WhatsApp
-      })
-      .select();
-    
-    console.log(`💾 [KapsoCustomer-${requestId}] Resultado de inserción:`, { insertData, updateError });
-    
-    if (updateError) {
-      console.error(`❌ [KapsoCustomer-${requestId}] Error guardando customer_id en Supabase:`, updateError);
-      return NextResponse.json({ 
-        success: false,
-        error: `Error guardando customer en Supabase: ${updateError.message}` 
-      }, { status: 500 });
+    // Si ya hay un registro, actualizarlo; si no, crearlo
+    let savedData;
+    if (existingConfig) {
+      // Actualizar registro existente
+      console.log(`💾 [KapsoCustomer-${requestId}] Actualizando registro existente...`);
+      const { data: updateData, error: updateError } = await supabase
+        .from('user_whatsapp_config')
+        .update({
+          kapso_config_id: customerId,
+          whatsapp_phone_number: 'pending',
+          is_sandbox: false,
+          is_active: false
+        })
+        .eq('user_id', user.id)
+        .select();
+      
+      console.log(`💾 [KapsoCustomer-${requestId}] Resultado de actualización:`, { updateData, updateError });
+      
+      if (updateError) {
+        console.error(`❌ [KapsoCustomer-${requestId}] Error actualizando:`, updateError);
+        const errorMessage = updateError.message || updateError.details || updateError.hint || JSON.stringify(updateError);
+        return NextResponse.json({ 
+          success: false,
+          error: `Error actualizando customer en Supabase: ${errorMessage}` 
+        }, { status: 500 });
+      }
+      
+      savedData = updateData;
+    } else {
+      // Insertar nuevo registro
+      console.log(`💾 [KapsoCustomer-${requestId}] Insertando nuevo registro...`);
+      const { data: insertData, error: insertError } = await supabase
+        .from('user_whatsapp_config')
+        .insert({
+          user_id: user.id,
+          whatsapp_phone_number: 'pending',
+          kapso_config_id: customerId,
+          is_sandbox: false,
+          is_active: false
+        })
+        .select();
+      
+      console.log(`💾 [KapsoCustomer-${requestId}] Resultado de inserción:`, { insertData, insertError });
+      
+      if (insertError) {
+        console.error(`❌ [KapsoCustomer-${requestId}] Error insertando:`, insertError);
+        const errorMessage = insertError.message || insertError.details || insertError.hint || JSON.stringify(insertError);
+        return NextResponse.json({ 
+          success: false,
+          error: `Error insertando customer en Supabase: ${errorMessage}` 
+        }, { status: 500 });
+      }
+      
+      savedData = insertData;
     }
     
-    console.log(`✅ [KapsoCustomer-${requestId}] Customer guardado en Supabase:`, insertData);
+    console.log(`✅ [KapsoCustomer-${requestId}] Customer guardado en Supabase:`, savedData);
     
     console.log(`✅ [KapsoCustomer-${requestId}] Customer configurado exitosamente`);
     

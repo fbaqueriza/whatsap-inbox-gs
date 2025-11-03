@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getKapsoWebhookUrl } from '@/lib/envUtils';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -38,6 +39,7 @@ export async function POST(request: NextRequest) {
 
     console.log('🔧 [KapsoSetup] Configurando número para usuario:', user.id);
     console.log('📱 [KapsoSetup] Número de WhatsApp:', phoneNumber);
+    console.log('🌐 [KapsoSetup] URL base detectada:', getKapsoWebhookUrl());
 
     // Verificar si ya tiene configuración
     const { data: existingConfig } = await supabase
@@ -138,7 +140,7 @@ async function createWhatsAppConfig(phoneNumber: string) {
     body: JSON.stringify({
       phone_number: phoneNumber,
       name: `WhatsApp Business - ${phoneNumber}`,
-      webhook_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/kapso/supabase-events`,
+      webhook_url: getKapsoWebhookUrl(),
       webhook_secret: '2ea5549880d27417aa21fe65822bd24d01f2017a5a2bc114df9202940634c7eb',
       settings: {
         auto_reply: false,
@@ -187,7 +189,7 @@ async function setupWebhook(whatsappConfigId: string) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      webhook_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/kapso/supabase-events`,
+      webhook_url: getKapsoWebhookUrl(),
       webhook_secret: '2ea5549880d27417aa21fe65822bd24d01f2017a5a2bc114df9202940634c7eb',
       events: [
         'message.received',

@@ -6,6 +6,12 @@ export interface CustomerData {
 
 export interface SetupLinkData {
   customer_id: string;
+  success_redirect_url?: string;
+  failure_redirect_url?: string;
+  allowed_connection_types?: string[];
+  theme_config?: {
+    primary_color?: string;
+  };
   expires_in?: number; // en segundos, por defecto 24 horas
   metadata?: Record<string, any>;
 }
@@ -178,6 +184,18 @@ export class KapsoPlatformService {
       console.log('🔗 [KapsoPlatform] Creando link de configuración para cliente:', setupLinkData.customer_id);
 
       // Según documentación: POST /customers/{customer_id}/setup_links
+      const requestBody = {
+        setup_link: {
+          success_redirect_url: setupLinkData.success_redirect_url,
+          failure_redirect_url: setupLinkData.failure_redirect_url,
+          allowed_connection_types: setupLinkData.allowed_connection_types || ['coexistence', 'dedicated'],
+          theme_config: setupLinkData.theme_config,
+          expires_in: setupLinkData.expires_in || 86400, // 24 horas por defecto
+          metadata: setupLinkData.metadata
+        }
+      };
+      console.log('📦 [KapsoPlatform] Request body:', JSON.stringify(requestBody, null, 2));
+      
       const response = await this.makeRequest<{
         data: {
           id: string;
@@ -188,10 +206,7 @@ export class KapsoPlatformService {
         };
       }>(`/customers/${setupLinkData.customer_id}/setup_links`, {
         method: 'POST',
-        body: JSON.stringify({
-          expires_in: setupLinkData.expires_in || 86400, // 24 horas por defecto
-          metadata: setupLinkData.metadata
-        })
+        body: JSON.stringify(requestBody)
       });
 
       console.log('✅ [KapsoPlatform] Link de configuración creado exitosamente:', response.data.url);

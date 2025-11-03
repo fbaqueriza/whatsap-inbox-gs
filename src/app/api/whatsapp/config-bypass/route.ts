@@ -42,14 +42,27 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
-    // 3. Si no hay configuración, devolver 404 (sin sandbox)
+    // 3. Si no hay configuración, devolver 404 (sin sandbox) 
     if (!config) {
       console.log('⚠️ [Config Bypass] Usuario sin configuración activa');
       return NextResponse.json({ success: false, error: 'Sin configuración activa' }, { status: 404 });
     }
 
     console.log('✅ [Config Bypass] Configuración encontrada:', config);
-    return NextResponse.json({ success: true, data: config });
+    
+    // 4. Para el phone_number_id, usamos kapso_config_id temporalmente
+    // El inbox local tiene un fallback a PHONE_NUMBER_ID si este no está disponible
+    // TODO: En el futuro, obtener phone_number_id real de Kapso API si es necesario
+    const phoneNumberId = (config as any).phone_number_id || config.kapso_config_id || undefined;
+    
+    // 5. Devolver configuración con phone_number_id incluido
+    return NextResponse.json({ 
+      success: true, 
+      data: {
+        ...config,
+        phone_number_id: phoneNumberId
+      }
+    });
 
   } catch (error) {
     console.error('❌ [Config Bypass] Error en bypass:', error);

@@ -78,7 +78,7 @@ const REQUIRED_TEMPLATES: TemplateDefinition[] = [
       },
       {
         type: 'BODY',
-        text: 'Buen día {{contact_name}}! Espero que andes bien!\nEn cuanto me confirmes, paso el pedido de esta semana.',
+        text: 'Buen día {{contact_name}}! Espero que andes bien!\nA continuación, paso el pedido de esta semana.',
         // ✅ CORRECCIÓN: Ejemplos requeridos para templates NAMED según documentación de Meta
         example: {
           body_text_named_params: [

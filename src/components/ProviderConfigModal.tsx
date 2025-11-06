@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Plus, User, Mail, Phone, MapPin, Building, CreditCard, Edit, Upload, FileText, Eye } from 'lucide-react';
+import { X, Plus, User, Mail, Phone, MapPin, Building, CreditCard, Edit, Upload, FileText, Eye, Trash2 } from 'lucide-react';
 import { Provider, Catalog } from '../types';
 import PaymentMethodSelector from './PaymentMethodSelector';
 import WeekDaySelector from './WeekDaySelector';
@@ -15,7 +15,7 @@ interface ProviderConfigModalProps {
   onSave: (updatedProvider: Provider) => void;
   onAdd?: (providerData: Omit<Provider, 'id' | 'createdAt' | 'updatedAt' | 'user_id'>) => void;
   onCatalogUpload?: (providerId: string, file: File) => Promise<void>;
-  prefill?: { cuitCuil?: string; razonSocial?: string; name?: string } | null;
+  prefill?: { cuitCuil?: string; razonSocial?: string; name?: string; address?: string } | null;
 }
 
 export default function ProviderConfigModal({
@@ -43,36 +43,45 @@ export default function ProviderConfigModal({
     defaultDeliveryDays: [] as string[],
     defaultDeliveryTime: [] as string[],
     defaultPaymentMethod: 'efectivo' as 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque',
+    autoOrderFlowEnabled: true, // Por defecto activado
   });
 
   const [catalogFile, setCatalogFile] = useState<File | null>(null);
   const [catalogFileName, setCatalogFileName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
+  const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null);
 
   // Cargar items de la factura desde sessionStorage
   useEffect(() => {
-    if (isOpen && !isEditing && prefill) {
+    if (isOpen && !isEditing) {
       try {
         const storedItems = sessionStorage.getItem('invoiceItems');
         console.log('📦 [ProviderModal] Cargando items de sessionStorage:', !!storedItems);
         if (storedItems) {
           const parsed = JSON.parse(storedItems);
           console.log('📦 [ProviderModal] Items parseados:', parsed.length, parsed);
-          setInvoiceItems(parsed);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setInvoiceItems(parsed);
+            // Guardar en sessionStorage para que estén disponibles al finalizar
+            sessionStorage.setItem('invoiceItems', JSON.stringify(parsed));
+          } else {
+            console.log('⚠️ [ProviderModal] Items vacíos o no es array');
+            setInvoiceItems([]);
+          }
         } else {
           console.log('⚠️ [ProviderModal] No hay items en sessionStorage');
+          setInvoiceItems([]);
         }
       } catch (e) {
         console.warn('Error cargando items de factura:', e);
+        setInvoiceItems([]);
       }
     } else if (!isOpen) {
-      // Limpiar items al cerrar modal
-      setInvoiceItems([]);
-      sessionStorage.removeItem('invoiceItems');
-      console.log('🧹 [ProviderModal] Items limpiados');
+      // No limpiar items al cerrar modal - mantenerlos por si se vuelve a abrir
+      // Solo limpiar cuando se cierra definitivamente o se guarda el proveedor
     }
-  }, [isOpen, isEditing, prefill]);
+  }, [isOpen, isEditing]);
 
   // Initialize form when provider changes
   useEffect(() => {
@@ -101,6 +110,7 @@ export default function ProviderConfigModal({
         defaultDeliveryDays: provider.defaultDeliveryDays || [],
         defaultDeliveryTime: Array.isArray(provider.defaultDeliveryTime) ? provider.defaultDeliveryTime : (provider.defaultDeliveryTime ? [provider.defaultDeliveryTime] : []) as string[],
         defaultPaymentMethod: provider.defaultPaymentMethod || 'efectivo',
+        autoOrderFlowEnabled: provider.autoOrderFlowEnabled !== undefined ? provider.autoOrderFlowEnabled : true,
       });
       
       // console.log('DEBUG: ProviderConfigModal - Form data set:', {
@@ -124,14 +134,16 @@ export default function ProviderConfigModal({
         alias: '',
         cuitCuil: prefill?.cuitCuil || '',
         razonSocial: prefill?.razonSocial || '',
+        address: prefill?.address || '',
         defaultDeliveryDays: [],
         defaultDeliveryTime: [] as string[],
         defaultPaymentMethod: 'efectivo',
+        autoOrderFlowEnabled: true,
       });
     }
   }, [provider, isEditing, isOpen, prefill]);
 
-  const handleInputChange = (field: string, value: string | string[]) => {
+  const handleInputChange = (field: string, value: string | string[] | boolean) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
@@ -151,6 +163,40 @@ export default function ProviderConfigModal({
     setCatalogFileName('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  // Funciones para editar items
+  const handleEditItem = (index: number) => {
+    setEditingItemIndex(index);
+  };
+
+  const handleSaveItem = (index: number) => {
+    setEditingItemIndex(null);
+    // Guardar items modificados en sessionStorage
+    sessionStorage.setItem('invoiceItems', JSON.stringify(invoiceItems));
+  };
+
+  const handleItemFieldChange = (index: number, field: string, value: string | number) => {
+    const updatedItems = [...invoiceItems];
+    updatedItems[index] = {
+      ...updatedItems[index],
+      [field]: value,
+      // Mantener compatibilidad con campos alternativos
+      ...(field === 'name' && { description: value, productName: value }),
+      ...(field === 'quantity' && { quantityItem: value }),
+      ...(field === 'unit' && { unitItem: value }),
+      ...(field === 'priceUnitNet' && { price_unit_net: value, unitPrice: value }),
+      ...(field === 'priceTotalNet' && { price_total_net: value, total: value }),
+    };
+    setInvoiceItems(updatedItems);
+  };
+
+  const handleDeleteItem = (index: number) => {
+    if (confirm('¿Estás seguro de que deseas eliminar este item?')) {
+      const updatedItems = invoiceItems.filter((_, i) => i !== index);
+      setInvoiceItems(updatedItems);
+      sessionStorage.setItem('invoiceItems', JSON.stringify(updatedItems));
     }
   };
 
@@ -216,6 +262,7 @@ export default function ProviderConfigModal({
         defaultDeliveryDays: formData.defaultDeliveryDays,
         defaultDeliveryTime: formData.defaultDeliveryTime as string[],
         defaultPaymentMethod: formData.defaultPaymentMethod,
+        autoOrderFlowEnabled: formData.autoOrderFlowEnabled,
         updatedAt: new Date(),
       };
       
@@ -244,6 +291,11 @@ export default function ProviderConfigModal({
       try {
         onAdd(newProvider);
         console.log('DEBUG: ProviderConfigModal - onAdd called successfully');
+        // Guardar items modificados en sessionStorage antes de limpiar (para que finalize-assignment los use)
+        if (invoiceItems.length > 0) {
+          sessionStorage.setItem('invoiceItems', JSON.stringify(invoiceItems));
+        }
+        // No limpiar items aún - se limpiarán después de finalizar la asignación
       } catch (error) {
         console.error('DEBUG: ProviderConfigModal - Error calling onAdd:', error);
       }
@@ -474,20 +526,47 @@ export default function ProviderConfigModal({
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Horario de entrega por defecto
+                  Rango de horario de entrega por defecto
                 </label>
-                <div className="space-y-2">
-                  <input
-                    type="time"
-                    value={formData.defaultDeliveryTime[0] || ''}
-                    onChange={(e) => handleInputChange('defaultDeliveryTime', [e.target.value])}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Hora de entrega"
-                  />
-                  <p className="text-xs text-gray-500">
-                    Formato: HH:MM (24 horas)
-                  </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Hora inicio
+                    </label>
+                    <input
+                      type="time"
+                      value={formData.defaultDeliveryTime[0] || ''}
+                      onChange={(e) => {
+                        const startTime = e.target.value;
+                        const endTime = formData.defaultDeliveryTime[1] || '';
+                        // Mantener siempre un array de 2 elementos para el rango
+                        handleInputChange('defaultDeliveryTime', [startTime, endTime]);
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="09:00"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Hora fin
+                    </label>
+                    <input
+                      type="time"
+                      value={formData.defaultDeliveryTime[1] || ''}
+                      onChange={(e) => {
+                        const endTime = e.target.value;
+                        const startTime = formData.defaultDeliveryTime[0] || '';
+                        // Mantener siempre un array de 2 elementos para el rango
+                        handleInputChange('defaultDeliveryTime', [startTime, endTime]);
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="18:00"
+                    />
+                  </div>
                 </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Define el rango horario en que el proveedor realiza entregas (formato 24 horas)
+                </p>
               </div>
 
               <div>
@@ -499,6 +578,23 @@ export default function ProviderConfigModal({
                   onChange={(method) => handleInputChange('defaultPaymentMethod', method)}
                   className="w-full"
                 />
+              </div>
+
+              <div>
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={formData.autoOrderFlowEnabled}
+                    onChange={(e) => handleInputChange('autoOrderFlowEnabled', e.target.checked)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">
+                    Activar flujo automático de órdenes
+                  </span>
+                </label>
+                <p className="text-xs text-gray-500 mt-1 ml-6">
+                  Si está activado, el sistema procesará automáticamente los mensajes del proveedor para avanzar el estado de las órdenes
+                </p>
               </div>
             </div>
           </div>
@@ -585,33 +681,137 @@ export default function ProviderConfigModal({
             <div className="mb-6">
               <h3 className="text-sm font-medium text-gray-900 border-b pb-2 mb-3">
                 <FileText className="inline h-4 w-4 mr-1" />
-                Items Extraídos de Factura
+                Items Extraídos de Factura ({invoiceItems.length})
               </h3>
               <div className="bg-green-50 border border-green-200 rounded-md p-4">
                 <p className="text-sm text-green-800 mb-3">
-                  La factura procesada contiene los siguientes items que se agregarán a stock:
+                  La factura procesada contiene los siguientes items que se agregarán a stock. Puedes editarlos si hay errores de extracción:
                 </p>
-                <div className="space-y-2">
+                <div className="space-y-3 max-h-96 overflow-y-auto">
                   {invoiceItems.map((item, idx) => (
-                    <div key={idx} className="bg-white border border-green-200 rounded-md p-3 flex justify-between items-center">
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-gray-900">{item.name}</p>
-                        <p className="text-xs text-gray-600">
-                          {item.quantity} {item.unit || 'un'}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        {item.priceUnitNet && (
-                          <p className="text-sm font-medium text-gray-900">
-                            ${new Intl.NumberFormat('es-AR').format(item.priceUnitNet)}
-                          </p>
-                        )}
-                        {item.priceTotalNet && (
-                          <p className="text-xs text-gray-600">
-                            Total: ${new Intl.NumberFormat('es-AR').format(item.priceTotalNet)}
-                          </p>
-                        )}
-                      </div>
+                    <div key={idx} className="bg-white border border-green-200 rounded-md p-3">
+                      {editingItemIndex === idx ? (
+                        // Modo edición
+                        <div className="space-y-2">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Nombre del producto</label>
+                            <input
+                              type="text"
+                              value={item.name || item.description || item.productName || ''}
+                              onChange={(e) => handleItemFieldChange(idx, 'name', e.target.value)}
+                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              placeholder="Nombre del producto"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Cantidad</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={item.quantity || item.quantityItem || ''}
+                                onChange={(e) => handleItemFieldChange(idx, 'quantity', parseFloat(e.target.value) || 0)}
+                                className="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Unidad</label>
+                              <input
+                                type="text"
+                                value={item.unit || item.unitItem || ''}
+                                onChange={(e) => handleItemFieldChange(idx, 'unit', e.target.value)}
+                                className="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                placeholder="un, kg, litros..."
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Precio unitario</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={item.priceUnitNet || item.price_unit_net || item.unitPrice || ''}
+                                onChange={(e) => handleItemFieldChange(idx, 'priceUnitNet', parseFloat(e.target.value) || 0)}
+                                className="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Precio total</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={item.priceTotalNet || item.price_total_net || item.total || ''}
+                                onChange={(e) => handleItemFieldChange(idx, 'priceTotalNet', parseFloat(e.target.value) || 0)}
+                                className="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex justify-end space-x-2 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => handleSaveItem(idx)}
+                              className="px-3 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                            >
+                              Guardar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingItemIndex(null)}
+                              className="px-3 py-1 text-xs bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        // Modo visualización
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-gray-900">
+                              {item.name || item.description || item.productName || `Item ${idx + 1}`}
+                            </p>
+                            <p className="text-xs text-gray-600 mt-1">
+                              Cantidad: {item.quantity || item.quantityItem || 1} {item.unit || item.unitItem || 'un'}
+                            </p>
+                            {item.category && (
+                              <p className="text-xs text-gray-500 mt-1">
+                                Categoría: {item.category}
+                              </p>
+                            )}
+                          </div>
+                          <div className="text-right ml-4">
+                            {(item.priceUnitNet || item.price_unit_net || item.unitPrice) && (
+                              <p className="text-sm font-medium text-gray-900">
+                                ${new Intl.NumberFormat('es-AR').format(item.priceUnitNet || item.price_unit_net || item.unitPrice || 0)}
+                              </p>
+                            )}
+                            {(item.priceTotalNet || item.price_total_net || item.total) && (
+                              <p className="text-xs text-gray-600">
+                                Total: ${new Intl.NumberFormat('es-AR').format(item.priceTotalNet || item.price_total_net || item.total || 0)}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex space-x-2 ml-4">
+                            <button
+                              type="button"
+                              onClick={() => handleEditItem(idx)}
+                              className="p-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded"
+                              title="Editar item"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteItem(idx)}
+                              className="p-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded"
+                              title="Eliminar item"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

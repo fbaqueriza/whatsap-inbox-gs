@@ -78,7 +78,7 @@ export class KapsoService {
     }
     
     this.baseUrl = process.env.KAPSO_API_URL || 'https://app.kapso.ai/api/v1';
-    this.apiKey = process.env.KAPSO_API_KEY || '';
+    this.apiKey = (process.env.KAPSO_API_KEY || '').trim();
     
     if (!this.apiKey) {
       logger.error('KapsoService', 'KAPSO_API_KEY no está configurada');

@@ -5,7 +5,13 @@ import { normalizePhoneNumber } from '../../../../lib/phoneNormalization';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+// 🔧 CRÍTICO: Crear dos clientes - uno para operaciones que necesitan service role (storage)
+// y otro para operaciones que necesitan disparar Realtime (anon key)
+const supabase = createClient(supabaseUrl, supabaseServiceKey); // Para storage y operaciones admin
+const supabaseRealtime = createClient(
+  supabaseUrl, 
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY! // 🔧 CRÍTICO: Anon key para disparar Realtime
+);
 
 // 🔧 CACHE para evitar procesamiento duplicado
 const processedMessages = new Set<string>();
@@ -172,86 +178,17 @@ export async function POST(request: NextRequest) {
             fileSize: mediaData?.byte_size || mediaData?.file_size || message.document?.file_size
           };
           
-          // ✅ CORRECCIÓN: Procesar documento con OCR primero, luego guardar con URL de Supabase
+          // 🔧 RESTAURAR FLUJO ANTERIOR: Usar processKapsoDocumentWithOCR como funcionaba antes
           try {
-            console.log(`🤖 [${requestId}] Procesando documento con OCR primero...`);
+            console.log(`🔄 [${requestId}] Procesando documento con flujo anterior (restaurado)...`);
             
-            // Procesar documento con OCR (esto sube el archivo a Supabase Storage)
             await processKapsoDocumentWithOCR(
               fromNumber,
               documentData,
               requestId,
               userId,
-              supabase
+              supabase // 🔧 RESTAURAR: Usar supabase (SERVICE_ROLE_KEY) como antes
             );
-            
-            // ✅ NUEVO: Obtener la URL de Supabase Storage después del procesamiento
-            // Buscar el documento recién creado en la tabla documents
-            const { data: createdDocument, error: docError } = await supabase
-              .from('documents')
-              .select('file_url, filename')
-              .eq('user_id', userId)
-              .like('filename', `%${documentData.filename.replace('.pdf', '')}%`) // Buscar por parte del nombre
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .single();
-            
-            if (docError || !createdDocument) {
-              console.warn(`⚠️ [${requestId}] No se pudo obtener la URL de Supabase Storage:`, {
-                error: docError,
-                searchPattern: `%${documentData.filename.replace('.pdf', '')}%`,
-                userId: userId
-              });
-              console.warn(`⚠️ [${requestId}] Usando URL de Kapso como fallback`);
-            } else {
-              console.log(`✅ [${requestId}] URL de Supabase Storage encontrada:`, createdDocument.file_url);
-            }
-            
-            // ✅ CORRECCIÓN: Solo campos que existen en la tabla whatsapp_messages
-            const messageData = {
-              id: crypto.randomUUID(), // ✅ CORRECCIÓN: Generar UUID válido en lugar de usar messageId de WhatsApp
-              content: `📄 **Documento recibido**\n\n${documentData.filename}\n\n✅ Documento procesado exitosamente.`,
-              timestamp: timestamp,
-              contact_id: normalizePhoneNumber(fromNumber).normalized,
-              user_id: userId,
-              message_type: 'received',
-              status: 'received',
-              media_url: createdDocument?.file_url || documentData.url, // Usar URL de Supabase si está disponible
-              media_type: documentData.mimeType,
-              message_sid: messageId, // ✅ CORRECCIÓN: Agregar message_sid requerido
-              created_at: timestamp
-              // ✅ CORRECCIÓN: Incluir todos los campos requeridos
-            };
-            
-            console.log(`💾 [${requestId}] Guardando mensaje de documento en Supabase:`, messageData);
-            
-            const { error: insertError } = await supabase
-              .from('whatsapp_messages')
-              .insert([messageData]);
-            
-            if (insertError) {
-              console.error(`❌ [${requestId}] Error guardando mensaje de documento en Supabase:`, insertError);
-            } else {
-              console.log(`✅ [${requestId}] Mensaje de documento guardado en Supabase exitosamente`);
-              
-              // ✅ CORRECCIÓN: Broadcast después del guardado exitoso
-              await supabase
-                .channel('kapso_messages')
-                .send({
-                  type: 'broadcast',
-                  event: 'new_message',
-                  payload: {
-                    messageId: messageData.id,
-                    contactId: fromNumber,
-                    userId: userId,
-                    type: 'document',
-                    content: messageData.content,
-                    timestamp: messageData.timestamp,
-                    mediaUrl: messageData.media_url,
-                    mediaType: messageData.media_type
-                  }
-                });
-            }
             
           } catch (docError) {
             console.error(`❌ [${requestId}] Error procesando documento de Kapso:`, docError);
@@ -484,12 +421,13 @@ export async function POST(request: NextRequest) {
                       });
                       
                       // Procesar documento con el sistema anterior funcional
-                      await processKapsoDocumentWithOCR(
+                      const { kapsoDocumentProcessor } = await import('../../../../lib/kapsoDocumentProcessor');
+                      await kapsoDocumentProcessor.processDocument(
                         fromNumber,
                         documentData,
-                        requestId,
                         userId,
-                        supabase
+                        requestId,
+                        supabaseRealtime // 🔧 CRÍTICO: Usar cliente con anon key para disparar Realtime
                       );
                     } catch (docError) {
                       console.error(`❌ [${requestId}] Error procesando documento:`, docError);
@@ -860,14 +798,22 @@ async function processKapsoDocument(
       console.error(`❌ [${requestId}] Error enviando notificación de documento:`, notificationError);
     }
     
-    // 🔧 NUEVO: Procesar documento con OCR usando el sistema existente
-    await processKapsoDocumentWithOCR(
+    // ✅ OPTIMIZADO: Usar servicio unificado
+    console.log(`🔍 [${requestId}] DIAGNÓSTICO: Llamando a kapsoDocumentProcessor.processDocument`);
+    const { kapsoDocumentProcessor } = await import('../../../../lib/kapsoDocumentProcessor');
+    const result = await kapsoDocumentProcessor.processDocument(
       fromNumber,
       documentData,
-      requestId,
       userId,
-      supabase
+      requestId,
+      supabaseRealtime // 🔧 CRÍTICO: Usar cliente con anon key para disparar Realtime
     );
+    console.log(`🔍 [${requestId}] DIAGNÓSTICO: Resultado de processDocument:`, {
+      success: result.success,
+      documentId: result.documentId,
+      orderId: result.orderId,
+      error: result.error
+    });
     
   } catch (error) {
     console.error(`❌ [${requestId}] Error procesando documento de Kapso:`, error);
@@ -889,19 +835,142 @@ async function processKapsoDocumentWithOCR(
     const { PhoneNumberService } = await import('../../../../lib/phoneNumberService');
     const normalizedFromNumber = PhoneNumberService.normalizePhoneNumber(fromNumber);
     
-    const { data: provider } = await supabase
-      .from('providers')
-      .select('id, name')
-      .eq('phone', normalizedFromNumber)
-      .eq('user_id', userId)  // ✅ FILTRAR POR USUARIO
-      .single();
+    const { InvoiceOrderLogger } = await import('../../../../lib/invoiceOrderLogger');
+    const logger = InvoiceOrderLogger.getInstance();
     
+    await logger.info(requestId, 'Buscando proveedor para documento de Kapso', {
+      fromNumber: fromNumber,
+      normalizedFromNumber: normalizedFromNumber,
+      userId: userId
+    });
+    console.log(`🔍 [${requestId}] Buscando proveedor:`, {
+      fromNumber: fromNumber,
+      normalizedFromNumber: normalizedFromNumber,
+      userId: userId
+    });
+    
+    // 🔧 OPTIMIZACIÓN: Búsqueda paralela de proveedor (mejora del sistema optimizado)
+    // En lugar de búsqueda secuencial, hacemos todas las búsquedas en paralelo
+    const searchVariants = PhoneNumberService.searchVariants(fromNumber);
+    const lastDigits = normalizedFromNumber.replace(/\D/g, '').slice(-8);
+    
+    console.log(`🔍 [${requestId}] Búsqueda optimizada (paralela): exacta + variantes + parcial`);
+    
+    // 🔧 MEJORA: Búsqueda paralela (exacta + variantes + parcial) en lugar de secuencial
+    const [exactResult, variantsResult, partialResult] = await Promise.allSettled([
+      // Búsqueda exacta
+      supabase
+        .from('providers')
+        .select('id, name, phone, auto_order_flow_enabled')
+        .eq('phone', normalizedFromNumber)
+        .eq('user_id', userId)
+        .single(),
+      
+      // Búsqueda por variantes (solo si hay variantes)
+      searchVariants.length > 0
+        ? supabase
+            .from('providers')
+            .select('id, name, phone, auto_order_flow_enabled')
+            .in('phone', searchVariants)
+            .eq('user_id', userId)
+            .limit(1)
+        : Promise.resolve({ data: null, error: null }),
+      
+      // Búsqueda parcial (solo si hay suficientes dígitos)
+      lastDigits.length >= 8
+        ? supabase
+            .from('providers')
+            .select('id, name, phone, auto_order_flow_enabled')
+            .eq('user_id', userId)
+            .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`)
+            .limit(5)
+        : Promise.resolve({ data: null, error: null })
+    ]);
+
+    // Priorizar: exacta > variantes > parcial
+    let provider = null;
+    if (exactResult.status === 'fulfilled' && exactResult.value.data) {
+      provider = exactResult.value.data;
+      await logger.info(requestId, 'Proveedor encontrado (exacta - optimizado)', {
+        providerId: provider.id,
+        providerName: provider.name,
+        matchedPhone: provider.phone
+      });
+      console.log(`✅ [${requestId}] Proveedor encontrado (exacta): ${provider.name} (${provider.phone})`);
+    } else if (variantsResult.status === 'fulfilled' && variantsResult.value.data?.[0]) {
+      provider = variantsResult.value.data[0];
+      await logger.info(requestId, 'Proveedor encontrado (variante - optimizado)', {
+        providerId: provider.id,
+        providerName: provider.name,
+        matchedPhone: provider.phone
+      });
+      console.log(`✅ [${requestId}] Proveedor encontrado (variante): ${provider.name} (${provider.phone})`);
+    } else if (partialResult.status === 'fulfilled' && partialResult.value.data?.length > 0) {
+      const bestMatch = partialResult.value.data.find((p: any) => 
+        p.phone.replace(/\D/g, '').slice(-8) === lastDigits
+      );
+      if (bestMatch) {
+        provider = bestMatch;
+        await logger.info(requestId, 'Proveedor encontrado (parcial - optimizado)', {
+          providerId: provider.id,
+          providerName: provider.name,
+          matchedPhone: provider.phone,
+          lastDigits: lastDigits
+        });
+        console.log(`✅ [${requestId}] Proveedor encontrado (parcial): ${provider.name} (${provider.phone})`);
+      }
+    }
+    
+    // Si aún no se encuentra, mostrar todos los proveedores del usuario para debugging
     if (!provider) {
+      const { data: allProviders } = await supabase
+        .from('providers')
+        .select('id, name, phone')
+        .eq('user_id', userId)
+        .limit(10);
+      
+      await logger.warn(requestId, 'Proveedor no encontrado para documento de Kapso', {
+        phone: normalizedFromNumber,
+        fromNumber: fromNumber,
+        userId: userId,
+        totalProviders: allProviders?.length || 0,
+        sampleProviders: allProviders?.slice(0, 3).map(p => ({ name: p.name, phone: p.phone })) || []
+      });
       console.log(`⚠️ [${requestId}] Proveedor no encontrado para teléfono: ${normalizedFromNumber}`);
+      console.log(`📋 [${requestId}] Proveedores del usuario (primeros 10):`, allProviders?.map(p => ({ name: p.name, phone: p.phone })) || []);
+      console.log(`📋 [${requestId}] Total de proveedores: ${allProviders?.length || 0}`);
+      
+      // Aún así procesar el documento aunque no se encuentre el proveedor
+      // para que aparezca en la lista de documentos
+      console.log(`ℹ️ [${requestId}] Procesando documento sin proveedor asociado...`);
+      await logger.info(requestId, 'Procesando documento sin proveedor asociado', {
+        fromNumber: fromNumber
+      });
+      // Continuar con el procesamiento pero sin provider_id
+      // TODO: Podríamos crear el documento sin provider_id y luego asignarlo manualmente
+      // Por ahora, retornar sin procesar el documento
       return;
     }
     
-    console.log(`👤 [${requestId}] Proveedor encontrado: ${provider.name} (${provider.id})`);
+    // Verificar si el flujo automático está habilitado para este proveedor
+    const autoOrderFlowEnabled = provider.auto_order_flow_enabled !== false; // Por defecto true si no está definido
+    await logger.info(requestId, 'Proveedor encontrado en Kapso', {
+      providerId: provider.id,
+      providerName: provider.name,
+      autoOrderFlowEnabled: autoOrderFlowEnabled
+    });
+    
+    console.log(`👤 [${requestId}] Proveedor encontrado: ${provider.name} (${provider.id}), flujo automático: ${autoOrderFlowEnabled ? 'habilitado' : 'deshabilitado'}`);
+    
+    if (!autoOrderFlowEnabled) {
+      await logger.info(requestId, 'Flujo automático DESHABILITADO - Solo procesando documento sin crear orden', {
+        providerId: provider.id
+      });
+      console.log(`ℹ️ [${requestId}] Flujo automático deshabilitado para este proveedor, solo procesando documento`);
+      // Procesar documento pero no crear orden
+      // TODO: Podríamos procesar el documento con OCR pero no crear orden
+      return;
+    }
     
     // Descargar archivo desde la URL de Kapso
     console.log(`📥 [${requestId}] Descargando archivo desde: ${documentData.url}`);
@@ -975,10 +1044,23 @@ async function processKapsoDocumentWithOCR(
       const ocrResult = await documentService.processDocumentWithOCR(documentResult.document_id!);
       
       if (ocrResult.success) {
+        const { InvoiceOrderLogger } = await import('../../../../lib/invoiceOrderLogger');
+        const logger = InvoiceOrderLogger.getInstance();
+        await logger.success(requestId, 'OCR completado exitosamente en Kapso', {
+          documentId: documentResult.document_id,
+          confidence: ocrResult.confidence_score
+        });
         console.log(`✅ [${requestId}] OCR completado exitosamente para documento: ${documentResult.document_id}`);
         console.log(`📊 [${requestId}] OCR exitoso, datos procesados`);
         
+        // Esperar un momento para asegurar que los datos OCR estén guardados en la BD
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
         // 🔧 NUEVO: Actualizar orden con datos extraídos del OCR
+        await logger.info(requestId, 'Llamando a updateOrderWithExtractedData desde Kapso', {
+          documentId: documentResult.document_id,
+          userId: userId
+        });
         await updateOrderWithExtractedData(
           documentResult.document_id!,
           requestId,
@@ -986,6 +1068,9 @@ async function processKapsoDocumentWithOCR(
           supabase
         );
       } else {
+        const { InvoiceOrderLogger } = await import('../../../../lib/invoiceOrderLogger');
+        const logger = InvoiceOrderLogger.getInstance();
+        await logger.error(requestId, 'Error en OCR de Kapso', { error: ocrResult.error, documentId: documentResult.document_id });
         console.error(`❌ [${requestId}] Error en OCR: ${ocrResult.error}`);
       }
     } catch (ocrError) {
@@ -1007,9 +1092,118 @@ async function createOrderFromInvoice(
   try {
     console.log(`🆕 [${requestId}] Iniciando creación de orden desde factura...`);
     
-    // Extraer datos de la factura del texto OCR
+    // Extraer datos de la factura del texto OCR (necesario antes de buscar orden)
     const extractedData = document.ocr_data;
     const invoiceData = extractedData?.invoice_data || {};
+    
+    // 🔧 CORRECCIÓN: Buscar orden existente en estado "enviado" para este proveedor
+    if (document.provider_id) {
+      console.log(`🔍 [${requestId}] Buscando orden existente en estado "enviado" para proveedor ${document.provider_id}...`);
+      
+      const { data: existingOrders, error: searchError } = await supabase
+        .from('orders')
+        .select('id, order_number, status, total_amount, created_at')
+        .eq('user_id', userId)
+        .eq('provider_id', document.provider_id)
+        .eq('status', 'enviado')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      
+      if (searchError) {
+        console.error(`❌ [${requestId}] Error buscando orden existente:`, searchError);
+      }
+      
+      console.log(`🔍 [${requestId}] DIAGNÓSTICO: Resultado de búsqueda (createOrderFromInvoice):`, {
+        found: existingOrders?.length || 0,
+        orders: existingOrders?.map(o => ({ id: o.id, order_number: o.order_number, status: o.status })) || [],
+        error: searchError?.message
+      });
+      
+      // Si se encuentra una orden en estado "enviado", actualizarla en lugar de crear nueva
+      if (existingOrders && existingOrders.length > 0) {
+        const existingOrder = existingOrders[0];
+        console.log(`✅ [${requestId}] Orden existente encontrada: ${existingOrder.order_number} (${existingOrder.id})`);
+        console.log(`🔄 [${requestId}] Actualizando orden existente en lugar de crear nueva...`);
+        
+        // Actualizar orden existente con datos de la factura
+        let invoiceTotal = invoiceData.total_amount || invoiceData.totalAmount || 0;
+        
+        // Si no hay monto, intentar extraerlo
+        if (!invoiceTotal && document.extracted_text) {
+          try {
+            const { simpleInvoiceExtraction } = await import('../../../../lib/simpleInvoiceExtraction');
+            const extractedAmount = simpleInvoiceExtraction.extractTotalAmount(document.extracted_text);
+            if (extractedAmount && extractedAmount > 0) {
+              invoiceTotal = extractedAmount;
+            }
+          } catch (e) {
+            console.warn(`⚠️ [${requestId}] Error extrayendo monto:`, e);
+          }
+        }
+        
+        // 🔧 CORRECCIÓN: Guardar items de la factura en invoice_data.invoice_items (no en items de la orden)
+        // Los items de la orden deben mantenerse como están (los originales del usuario)
+        if (extractedData && !extractedData.invoice_items) {
+          // Extraer items de la factura si existen
+          const invoiceItems = invoiceData.items || extractedData.items || [];
+          if (invoiceItems.length > 0) {
+            extractedData.invoice_items = invoiceItems;
+          }
+        }
+        
+        const updateData: any = {
+          status: 'pendiente_de_pago',
+          invoice_data: extractedData, // 🔧 Los items de la factura están aquí en invoice_data.invoice_items
+          invoice_number: invoiceData.invoice_number || invoiceData.invoiceNumber,
+          invoice_currency: invoiceData.currency || 'ARS',
+          invoice_date: invoiceData.issue_date || invoiceData.issueDate,
+          extraction_confidence: document.confidence_score,
+          receipt_url: document.file_url,
+          updated_at: new Date().toISOString()
+        };
+        
+        if (invoiceTotal && invoiceTotal > 0) {
+          updateData.total_amount = invoiceTotal;
+          updateData.invoice_total = invoiceTotal;
+        }
+        
+        const { data: updatedOrder, error: updateError } = await supabase
+          .from('orders')
+          .update(updateData)
+          .eq('id', existingOrder.id)
+          .select()
+          .single();
+        
+        if (updateError) {
+          console.error(`❌ [${requestId}] Error actualizando orden existente:`, updateError);
+        } else {
+          // Actualizar documento con order_id
+          await supabase
+            .from('documents')
+            .update({ order_id: existingOrder.id })
+            .eq('id', document.id);
+          
+          // Emitir broadcast
+          await supabase
+            .channel('orders-updates')
+            .send({
+              type: 'broadcast' as const,
+              event: 'order_updated',
+              payload: {
+                orderId: existingOrder.id,
+                status: 'pendiente_de_pago',
+                receiptUrl: document.file_url,
+                totalAmount: invoiceTotal,
+                timestamp: new Date().toISOString(),
+                source: 'invoice_ocr'
+              }
+            });
+          
+          console.log(`✅ [${requestId}] Orden existente actualizada exitosamente`);
+          return { success: true, order: updatedOrder };
+        }
+      }
+    }
     
     // 🔧 FIX: Buscar extracted_text en múltiples lugares para logging
     const extractedTextSource = document.extracted_text ? 'document.extracted_text' :
@@ -1029,8 +1223,10 @@ async function createOrderFromInvoice(
       documentKeys: document ? Object.keys(document) : []
     });
     
-    // Extraer monto total
+    // 🔧 MEJORA: Extraer monto total usando simpleInvoiceExtraction (patrones más robustos)
     let invoiceTotal = null;
+    
+    // Primero intentar desde los datos estructurados del OCR
     if (invoiceData.total_amount) {
       invoiceTotal = invoiceData.total_amount;
     } else if (invoiceData.totalAmount) {
@@ -1043,18 +1239,47 @@ async function createOrderFromInvoice(
       invoiceTotal = extractedData.amount;
     }
     
-    // Si no se encuentra en los datos estructurados, intentar extraer del texto
+    // 🔧 MEJORA: Si no se encuentra en los datos estructurados, usar simpleInvoiceExtraction
+    // que tiene patrones más robustos y maneja mejor los formatos argentinos
     if (!invoiceTotal && document.extracted_text) {
-      const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
-      if (amountMatch) {
-        invoiceTotal = parseFloat(amountMatch[1].replace(',', '.'));
+      console.log(`🔍 [${requestId}] Monto no encontrado en datos estructurados, usando simpleInvoiceExtraction...`);
+      try {
+        const { simpleInvoiceExtraction } = await import('../../../../lib/simpleInvoiceExtraction');
+        const extractedAmount = simpleInvoiceExtraction.extractTotalAmount(document.extracted_text);
+        
+        if (extractedAmount && extractedAmount > 0) {
+          invoiceTotal = extractedAmount;
+          console.log(`✅ [${requestId}] Monto extraído con simpleInvoiceExtraction: $${invoiceTotal}`);
+        } else {
+          console.log(`⚠️ [${requestId}] simpleInvoiceExtraction no encontró monto válido`);
+        }
+      } catch (extractionError) {
+        console.error(`❌ [${requestId}] Error usando simpleInvoiceExtraction:`, extractionError);
+        // Fallback al patrón simple anterior
+        const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
+        if (amountMatch) {
+          // Intentar parsear mejor el formato argentino
+          const amountStr = amountMatch[1].replace(/\./g, '').replace(',', '.');
+          invoiceTotal = parseFloat(amountStr) || null;
+        }
       }
     }
     
-    // Si no hay monto total, no podemos crear la orden
+    // 🔧 CORRECCIÓN: Si es una factura, crear la orden aunque no se haya extraído el monto
+    // Si no hay monto total pero es una factura, usar 0 como valor por defecto
     if (!invoiceTotal || invoiceTotal <= 0) {
-      console.error(`❌ [${requestId}] No se encontró monto válido en la factura`);
-      return { success: false, error: 'No se encontró monto válido en la factura' };
+      // Verificar si el documento está identificado como factura
+      const isInvoice = document.file_type === 'factura' || 
+                       document.file_type === 'invoice' ||
+                       (document.extracted_text && /factura|invoice|comprobante/i.test(document.extracted_text));
+      
+      if (isInvoice) {
+        console.log(`⚠️ [${requestId}] No se encontró monto válido en la factura, pero es una factura identificada. Creando orden con monto 0.`);
+        invoiceTotal = 0; // Usar 0 como valor por defecto
+      } else {
+        console.error(`❌ [${requestId}] No se encontró monto válido y el documento no está identificado como factura`);
+        return { success: false, error: 'No se encontró monto válido en la factura' };
+      }
     }
     
     console.log(`💰 [${requestId}] Monto extraído de la factura: $${invoiceTotal}`);
@@ -1264,13 +1489,30 @@ async function createOrderFromInvoice(
         productName: 'Factura sin desglose de items',
         quantity: 1,
         unit: 'un',
-        price: invoiceTotal,
-        total: invoiceTotal
+        price: invoiceTotal || 0,
+        total: invoiceTotal || 0
       }];
     }
     
-    console.log(`📦 [${requestId}] Items finales:`, items.length);
-    console.log(`📋 [${requestId}] Detalle de items finales:`, JSON.stringify(items, null, 2));
+    console.log(`📦 [${requestId}] Items extraídos de la factura:`, items.length);
+    console.log(`📋 [${requestId}] Detalle de items extraídos de factura:`, JSON.stringify(items, null, 2));
+    
+    // 🔧 CORRECCIÓN: Los items extraídos de la factura NO deben guardarse en el campo items de la orden
+    // Los items de la factura solo se usan en la página de stock
+    // El campo items de la orden debe mantener los items originales que el usuario ingresó al crear la orden
+    // Si la orden se crea desde una factura, usar un item genérico o dejar items vacío
+    const orderItems = [{
+      productName: 'Factura recibida',
+      quantity: 1,
+      unit: 'un',
+      price: invoiceTotal || 0,
+      total: invoiceTotal || 0
+    }];
+    
+    // Guardar los items de la factura en invoice_data para uso en stock
+    if (!extractedData.invoice_items) {
+      extractedData.invoice_items = items;
+    }
     
     // Generar número de orden único
     const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
@@ -1283,11 +1525,11 @@ async function createOrderFromInvoice(
       user_id: userId,
       provider_id: document.provider_id,
       order_number: orderNumber,
-      items: items,
+      items: orderItems, // 🔧 CORRECCIÓN: Usar items genéricos, NO los items extraídos de la factura
       status: 'pendiente_de_pago', // Estado inicial: pendiente de pago
       total_amount: invoiceTotal,
       currency: invoiceData.currency || 'ARS',
-      invoice_data: extractedData,
+      invoice_data: extractedData, // 🔧 Los items de la factura están aquí en invoice_data.invoice_items
       invoice_number: invoiceData.invoice_number || invoiceData.invoiceNumber,
       invoice_currency: invoiceData.currency || 'ARS',
       invoice_date: invoiceData.issue_date || invoiceData.issueDate,
@@ -1389,7 +1631,14 @@ async function updateOrderWithExtractedData(
   userId: string,
   supabase: any
 ): Promise<void> {
+  const { InvoiceOrderLogger } = await import('../../../../lib/invoiceOrderLogger');
+  const logger = InvoiceOrderLogger.getInstance();
+  
   try {
+    await logger.info(requestId, 'INICIANDO updateOrderWithExtractedData desde Kapso', {
+      documentId: documentId,
+      userId: userId
+    });
     console.log(`🔄 [${requestId}] Actualizando orden con datos extraídos del OCR...`);
     
     // Obtener el documento con datos OCR
@@ -1420,124 +1669,50 @@ async function updateOrderWithExtractedData(
     const extractedData = document.ocr_data;
     const invoiceData = extractedData?.invoice_data || {};
     
-    let order;
-    
-    // 🔧 NUEVO: Verificar si el documento ya está asociado a una orden
+    // 🔧 CORRECCIÓN: Siempre crear una orden nueva para cada factura
+    // Eliminada la restricción del order_id - cada factura siempre crea su propia orden
+    await logger.info(requestId, 'Creando nueva orden desde factura (cada factura crea su propia orden)', {
+      providerId: document.provider_id,
+      documentId: documentId,
+      existingOrderId: document.order_id || null
+    });
+    console.log(`🆕 [${requestId}] Creando nueva orden desde factura recibida (cada factura crea su propia orden)...`);
     if (document.order_id) {
-      console.log(`🔗 [${requestId}] Documento ya está asociado a una orden: ${document.order_id}`);
-      
-      // Obtener la orden existente
-      const { data: existingOrder, error: existingOrderError } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('id', document.order_id)
-        .single();
-      
-      if (existingOrderError || !existingOrder) {
-        console.error(`❌ [${requestId}] Error obteniendo orden asociada:`, existingOrderError);
-        return;
-      }
-      
-      order = existingOrder;
-      console.log(`📋 [${requestId}] Usando orden existente:`, {
-        id: order.id,
-        orderNumber: order.order_number,
-        currentAmount: order.total_amount,
-        status: order.status
-      });
-    } else {
-      // Extraer el número de factura del documento actual ANTES de buscar órdenes
-      const currentInvoiceNumber = invoiceData.invoice_number || invoiceData.invoiceNumber;
-      
-      // Buscar órdenes del proveedor en estado enviado o pendiente_de_pago
-      const { data: orders, error: ordersError } = await supabase
-        .from('orders')
-        .select(`
-          id,
-          order_number,
-          status,
-          total_amount,
-          invoice_number,
-          provider_id,
-          providers (
-            id,
-            name,
-            phone
-          )
-        `)
-        .eq('user_id', userId)
-        .in('status', ['enviado', 'pendiente_de_pago'])
-        .eq('provider_id', document.provider_id)
-        .order('updated_at', { ascending: false })
-        .limit(1);
-      
-      if (ordersError) {
-        console.error(`❌ [${requestId}] Error obteniendo órdenes:`, ordersError);
-        return;
-      }
-      
-      if (!orders || orders.length === 0) {
-        console.log(`⚠️ [${requestId}] No hay órdenes en estado enviado o pendiente_de_pago para el proveedor`);
-        console.log(`🆕 [${requestId}] Creando nueva orden desde factura recibida...`);
-        
-        // 🔧 NUEVO: Crear orden automáticamente desde la factura
-        const createResult = await createOrderFromInvoice(
-          document,
-          requestId,
-          userId,
-          supabase
-        );
-        
-        if (!createResult.success || !createResult.order) {
-          console.error(`❌ [${requestId}] Error creando orden desde factura:`, createResult.error);
-          return;
-        }
-        
-        order = createResult.order;
-        console.log(`✅ [${requestId}] Orden creada exitosamente desde factura:`, {
-          orderId: order.id,
-          orderNumber: order.order_number
-        });
-      } else {
-        // Tomar la orden más reciente
-        order = orders[0];
-        
-        // 🔧 VERIFICACIÓN: Si la orden ya tiene un invoice_number diferente, crear nueva orden
-        if (order.invoice_number && currentInvoiceNumber && order.invoice_number !== currentInvoiceNumber) {
-          console.log(`⚠️ [${requestId}] Orden existente tiene factura diferente:`, {
-            existingInvoice: order.invoice_number,
-            newInvoice: currentInvoiceNumber
-          });
-          console.log(`🆕 [${requestId}] Creando nueva orden para factura diferente...`);
-          
-          const createResult = await createOrderFromInvoice(
-            document,
-            requestId,
-            userId,
-            supabase
-          );
-          
-          if (!createResult.success || !createResult.order) {
-            console.error(`❌ [${requestId}] Error creando orden desde factura:`, createResult.error);
-            return;
-          }
-          
-          order = createResult.order;
-          console.log(`✅ [${requestId}] Nueva orden creada para factura diferente:`, {
-            orderId: order.id,
-            orderNumber: order.order_number
-          });
-        } else {
-          console.log(`📋 [${requestId}] Orden encontrada para actualizar:`, {
-            id: order.id,
-            orderNumber: order.order_number,
-            currentAmount: order.total_amount,
-            currentInvoiceNumber: order.invoice_number,
-            status: order.status
-          });
-        }
-      }
+      console.log(`⚠️ [${requestId}] Documento ya tiene order_id (${document.order_id}), pero creando orden nueva de todas formas`);
     }
+    
+    // Extraer el número de factura del documento actual
+    const currentInvoiceNumber = invoiceData.invoice_number || invoiceData.invoiceNumber;
+    console.log(`📄 [${requestId}] Número de factura: ${currentInvoiceNumber || 'No disponible'}`);
+    
+    // 🔧 NUEVO: Crear orden automáticamente desde la factura
+    const createResult = await createOrderFromInvoice(
+      document,
+      requestId,
+      userId,
+      supabase
+    );
+    
+    if (!createResult.success || !createResult.order) {
+      await logger.error(requestId, 'Error creando orden desde factura', {
+        error: createResult.error,
+        documentId: documentId
+      });
+      console.error(`❌ [${requestId}] Error creando orden desde factura:`, createResult.error);
+      return;
+    }
+    
+    const order = createResult.order;
+    await logger.success(requestId, 'Orden creada exitosamente desde factura de Kapso', {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      documentId: documentId
+    });
+    console.log(`✅ [${requestId}] Orden creada exitosamente desde factura:`, {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      invoiceNumber: currentInvoiceNumber
+    });
     
     let invoiceTotal = null;
     
@@ -1554,11 +1729,29 @@ async function updateOrderWithExtractedData(
       invoiceTotal = extractedData.amount;
     }
     
-    // Si no se encuentra en los datos estructurados, intentar extraer del texto
+    // 🔧 MEJORA: Si no se encuentra en los datos estructurados, usar simpleInvoiceExtraction
+    // que tiene patrones más robustos y maneja mejor los formatos argentinos
     if (!invoiceTotal && document.extracted_text) {
-      const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
-      if (amountMatch) {
-        invoiceTotal = parseFloat(amountMatch[1].replace(',', '.'));
+      console.log(`🔍 [${requestId}] Monto no encontrado en datos estructurados (updateOrder), usando simpleInvoiceExtraction...`);
+      try {
+        const { simpleInvoiceExtraction } = await import('../../../../lib/simpleInvoiceExtraction');
+        const extractedAmount = simpleInvoiceExtraction.extractTotalAmount(document.extracted_text);
+        
+        if (extractedAmount && extractedAmount > 0) {
+          invoiceTotal = extractedAmount;
+          console.log(`✅ [${requestId}] Monto extraído con simpleInvoiceExtraction (updateOrder): $${invoiceTotal}`);
+        } else {
+          console.log(`⚠️ [${requestId}] simpleInvoiceExtraction no encontró monto válido (updateOrder)`);
+        }
+      } catch (extractionError) {
+        console.error(`❌ [${requestId}] Error usando simpleInvoiceExtraction (updateOrder):`, extractionError);
+        // Fallback al patrón simple anterior
+        const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
+        if (amountMatch) {
+          // Intentar parsear mejor el formato argentino
+          const amountStr = amountMatch[1].replace(/\./g, '').replace(',', '.');
+          invoiceTotal = parseFloat(amountStr) || null;
+        }
       }
     }
     

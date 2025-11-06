@@ -189,7 +189,44 @@ export async function POST(request: NextRequest) {
       .from('files')
       .getPublicUrl(storagePath);
 
-    // Crear documento en la base de datos
+    // ✅ OPTIMIZADO: Procesar documento con OCR automáticamente si es factura
+    if (fileType === 'factura') {
+      try {
+        const { manualDocumentProcessor } = await import('../../../../lib/manualDocumentProcessor');
+        const requestId = `manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // 🔧 CRÍTICO: Usar el mismo cliente supabase que se pasa en la función
+        // Este cliente ya tiene el contexto correcto para disparar Realtime
+        const result = await manualDocumentProcessor.processManualDocument({
+          file: fileBuffer,
+          filename: uniqueFilename,
+          mimeType: file.type,
+          providerId,
+          userId,
+          requestId,
+          supabaseClient: supabase // 🔧 CRÍTICO: Usar el cliente que dispara Realtime
+        });
+
+        if (result.success && result.documentId) {
+          return NextResponse.json({
+            success: true,
+            data: {
+              document_id: result.documentId,
+              filename: uniqueFilename,
+              file_url: publicUrl,
+              file_size: fileBuffer.length,
+              order_id: result.orderId,
+              ocr_processed: true
+            }
+          });
+        }
+      } catch (ocrError) {
+        console.error('Error procesando OCR, creando documento sin OCR:', ocrError);
+        // Continuar con creación básica si OCR falla
+      }
+    }
+
+    // Crear documento en la base de datos (fallback si no es factura o OCR falló)
     const { data: documentData, error: documentError } = await supabase
       .from('documents')
       .insert([{
@@ -223,7 +260,8 @@ export async function POST(request: NextRequest) {
         document_id: documentData.id,
         filename: uniqueFilename,
         file_url: publicUrl,
-        file_size: fileBuffer.length
+        file_size: fileBuffer.length,
+        ocr_processed: false
       }
     });
 

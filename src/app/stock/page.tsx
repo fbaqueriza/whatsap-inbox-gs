@@ -71,7 +71,6 @@ function StockPage({ user }: StockPageProps) {
     category: string;
   } | null>(null);
   // Subida manual de facturas
-  const [invoiceProviderId, setInvoiceProviderId] = useState<string>('');
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [invoiceUploading, setInvoiceUploading] = useState(false);
   const [invoiceMessage, setInvoiceMessage] = useState<string | null>(null);
@@ -779,20 +778,10 @@ function StockPage({ user }: StockPageProps) {
             <form onSubmit={(e) => e.preventDefault()} className="mb-6 p-4 border border-gray-200 rounded-md bg-gray-50">
               <div className="flex flex-col md:flex-row md:items-end gap-3">
                 <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Proveedor</label>
-                  <select
-                    value={invoiceProviderId}
-                    onChange={(e) => setInvoiceProviderId(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Seleccionar proveedor</option>
-                    {providers?.map((p: any) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Archivo de factura (PDF/imagen)</label>
+                  <p className="text-xs text-gray-500 mb-2">
+                    El proveedor se detectará automáticamente desde la factura
+                  </p>
                   <input
                     type="file"
                     accept="application/pdf,image/*"
@@ -843,7 +832,6 @@ function StockPage({ user }: StockPageProps) {
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
                             fileUrl: up.fileUrl,
-                            providerId: invoiceProviderId || undefined,
                             userId: user.id,
                             async: true
                           }),
@@ -876,9 +864,12 @@ function StockPage({ user }: StockPageProps) {
                               const cuit = header?.supplier_cuit || '';
                               const items = js?.data?.items || [];
                               console.log('📦 [Stock] Items recibidos:', items.length, items);
+                              console.log('📦 [Stock] Header completo:', JSON.stringify(header, null, 2));
                               // Si ya existe proveedor o al menos tenemos CUIT detectado, abrir modal
                               if (supplierId || cuit) {
-                                const razon = header?.supplier_name || '';
+                                const razon = header?.supplier_razon_social || header?.supplier_name || '';
+                                const address = header?.supplier_address || '';
+                                console.log('📦 [Stock] Datos del proveedor:', { cuit, razon, address });
                                 // Guardar items en sessionStorage para mostrarlos en el modal
                                 if (items.length > 0) {
                                   console.log('📦 [Stock] Guardando items en sessionStorage:', items.length);
@@ -886,7 +877,14 @@ function StockPage({ user }: StockPageProps) {
                                 } else {
                                   console.log('⚠️ [Stock] No hay items para guardar');
                                 }
-                                window.location.href = `/providers?prefill=1&cuit=${encodeURIComponent(cuit)}&razon=${encodeURIComponent(razon)}`;
+                                // Guardar datos adicionales en sessionStorage
+                                if (address) {
+                                  sessionStorage.setItem('invoiceSupplierAddress', address);
+                                }
+                                // Usar router.push en lugar de window.location.href para evitar recarga completa
+                                setTimeout(() => {
+                                  window.location.href = `/providers?prefill=1&cuit=${encodeURIComponent(cuit)}&razon=${encodeURIComponent(razon)}`;
+                                }, 100);
                                 break;
                               }
                             } catch {}
@@ -905,8 +903,11 @@ function StockPage({ user }: StockPageProps) {
                               const cuit = header?.supplier_cuit || '';
                               const items = js?.data?.items || [];
                               console.log('📦 [Stock-Fallback] Items recibidos:', items.length, items);
+                              console.log('📦 [Stock-Fallback] Header completo:', JSON.stringify(header, null, 2));
                               if (supplierId || cuit) {
-                                const razon = header?.supplier_name || '';
+                                const razon = header?.supplier_razon_social || header?.supplier_name || '';
+                                const address = header?.supplier_address || '';
+                                console.log('📦 [Stock-Fallback] Datos del proveedor:', { cuit, razon, address });
                                 // Guardar items en sessionStorage para mostrarlos en el modal
                                 if (items.length > 0) {
                                   console.log('📦 [Stock-Fallback] Guardando items en sessionStorage:', items.length);
@@ -914,7 +915,14 @@ function StockPage({ user }: StockPageProps) {
                                 } else {
                                   console.log('⚠️ [Stock-Fallback] No hay items para guardar');
                                 }
-                                window.location.href = `/providers?prefill=1&cuit=${encodeURIComponent(cuit)}&razon=${encodeURIComponent(razon)}`;
+                                // Guardar datos adicionales en sessionStorage
+                                if (address) {
+                                  sessionStorage.setItem('invoiceSupplierAddress', address);
+                                }
+                                // Usar router.push en lugar de window.location.href para evitar recarga completa
+                                setTimeout(() => {
+                                  window.location.href = `/providers?prefill=1&cuit=${encodeURIComponent(cuit)}&razon=${encodeURIComponent(razon)}`;
+                                }, 100);
                                 break;
                               }
                             } catch {}
@@ -926,7 +934,6 @@ function StockPage({ user }: StockPageProps) {
                         setTimeout(() => { fetchAll(); }, 9000);
                         // Limpiar selección
                         setInvoiceFile(null);
-                        setInvoiceProviderId('');
                       } catch (e: any) {
                         setInvoiceMessage(`❌ ${e.message || 'Error procesando factura'}`);
                       } finally {

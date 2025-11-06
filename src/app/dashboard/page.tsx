@@ -591,6 +591,7 @@ function DashboardPageContent({
          onSubmit={handleCreateOrder}
         providers={providers}
         stockItems={stockItems}
+        orders={orders} // ✅ NUEVO: Pasar orders al modal
         suggestedOrder={suggestedOrder}
         isLoading={false}
       />

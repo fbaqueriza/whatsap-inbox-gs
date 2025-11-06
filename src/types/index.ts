@@ -20,6 +20,8 @@ export interface Provider {
   defaultDeliveryDays?: string[]; // ['monday', 'wednesday', 'friday']
   defaultDeliveryTime?: string[]; // '15:00'
   defaultPaymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
+  // Flujo automático de órdenes
+  autoOrderFlowEnabled?: boolean; // Activar/desactivar flujo automático de órdenes
   catalogs: Catalog[];
   createdAt: Date;
   updatedAt: Date;

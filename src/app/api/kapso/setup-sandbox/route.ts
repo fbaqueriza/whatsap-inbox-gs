@@ -10,7 +10,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-const KAPSO_API_KEY = process.env.KAPSO_API_KEY;
+const KAPSO_API_KEY = process.env.KAPSO_API_KEY?.trim();
 const KAPSO_BASE_URL = 'https://app.kapso.ai/api/v1';
 
 export async function POST(request: NextRequest) {
@@ -82,7 +82,7 @@ async function getKapsoSandboxConfig() {
   const response = await fetch(`${KAPSO_BASE_URL}/whatsapp_configs`, {
     method: 'GET',
     headers: {
-      'Authorization': `Bearer ${KAPSO_API_KEY}`,
+      'X-API-Key': KAPSO_API_KEY,
       'Content-Type': 'application/json'
     }
   });

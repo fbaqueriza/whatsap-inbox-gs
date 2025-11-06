@@ -25,12 +25,21 @@ export class ServerOrderFlowService {
    */
   async createOrderAndNotify(order: any, userId: string): Promise<{ success: boolean; orderId?: string; errors?: string[]; message?: string }> {
     try {
-      console.log('🚀 [ServerOrderFlow] Creando orden y enviando notificación:', order.id);
+      console.log('🚀 [ServerOrderFlow] ===== INICIANDO createOrderAndNotify =====');
+      console.log('🔍 [ServerOrderFlow] Datos recibidos:', {
+        orderId: order?.id,
+        orderNumber: order?.orderNumber,
+        providerId: order?.providerId,
+        userId: userId,
+        hasItems: !!order?.items,
+        itemsCount: order?.items?.length || 0
+      });
 
       // 🔧 FIX: Usar upsert directamente para evitar condiciones de carrera
       // No verificar antes porque puede haber llamadas simultáneas que pasen la verificación
       const orderResult = await this.createOrder(order, userId);
       if (!orderResult.success) {
+        console.error('❌ [ServerOrderFlow] Error en createOrder:', orderResult.errors);
         return { success: false, errors: orderResult.errors };
       }
       const orderId = orderResult.orderId!;
@@ -116,52 +125,102 @@ export class ServerOrderFlowService {
    */
   private async createOrder(order: any, userId: string): Promise<{ success: boolean; orderId?: string; order?: any; errors?: string[] }> {
     try {
+      console.log('🔍 [ServerOrderFlow] ===== INICIANDO createOrder =====');
       console.log('🔍 [ServerOrderFlow] Datos de orden recibidos:', {
         id: order.id,
+        orderNumber: order.orderNumber,
         providerId: order.providerId,
         userId: userId,
-        hasId: !!order.id
+        hasId: !!order.id,
+        hasItems: !!order.items,
+        itemsType: Array.isArray(order.items) ? 'array' : typeof order.items,
+        itemsLength: Array.isArray(order.items) ? order.items.length : 'N/A'
       });
+
+      // Validar campos requeridos
+      if (!order.id) {
+        console.error('❌ [ServerOrderFlow] Error: order.id es requerido');
+        return { success: false, errors: ['order.id es requerido'] };
+      }
+      if (!order.providerId) {
+        console.error('❌ [ServerOrderFlow] Error: order.providerId es requerido');
+        return { success: false, errors: ['order.providerId es requerido'] };
+      }
+      if (!order.orderNumber) {
+        console.error('❌ [ServerOrderFlow] Error: order.orderNumber es requerido');
+        return { success: false, errors: ['order.orderNumber es requerido'] };
+      }
+
+      // 🔧 FIX: Convertir desiredDeliveryDate a string ISO si es un objeto Date
+      let desiredDeliveryDateValue = null;
+      if (order.desiredDeliveryDate) {
+        if (order.desiredDeliveryDate instanceof Date) {
+          desiredDeliveryDateValue = order.desiredDeliveryDate.toISOString();
+        } else if (typeof order.desiredDeliveryDate === 'string') {
+          desiredDeliveryDateValue = order.desiredDeliveryDate;
+        } else {
+          // Intentar convertir si es un formato válido
+          try {
+            desiredDeliveryDateValue = new Date(order.desiredDeliveryDate).toISOString();
+          } catch {
+            desiredDeliveryDateValue = null;
+          }
+        }
+      }
 
       const orderData = {
         id: order.id,
         user_id: userId,
         provider_id: order.providerId,
-        order_number: order.orderNumber, // Agregar order_number
-        items: order.items,
-        status: ORDER_STATUS.STANDBY,
+        order_number: order.orderNumber,
+        items: order.items || [],
+        status: ORDER_STATUS.ENVIADO,
         notes: order.notes || '',
-        desired_delivery_date: order.desiredDeliveryDate,
-        desired_delivery_time: order.desiredDeliveryTime,
-        payment_method: order.paymentMethod || 'efectivo', // 🔧 FIX: Incluir método de pago
+        desired_delivery_date: desiredDeliveryDateValue,
+        desired_delivery_time: Array.isArray(order.desiredDeliveryTime) && order.desiredDeliveryTime.length > 0
+          ? order.desiredDeliveryTime
+          : null,
+        payment_method: order.paymentMethod || 'efectivo',
         total_amount: order.totalAmount || 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
 
-      console.log('📝 [ServerOrderFlow] Insertando orden:', {
+      console.log('📝 [ServerOrderFlow] Datos a insertar:', {
         id: orderData.id,
         order_number: orderData.order_number,
         provider_id: orderData.provider_id,
-        user_id: orderData.user_id
+        user_id: orderData.user_id,
+        items_count: Array.isArray(orderData.items) ? orderData.items.length : 0,
+        status: orderData.status
       });
 
       // Idempotente por id (evitar duplicados si hay doble disparo)
-      // 🔧 FIX: Usar insert con onConflict para evitar duplicados incluso si hay llamadas simultáneas
       const { data, error } = await this.supabase
         .from('orders')
         .upsert(orderData, { 
           onConflict: 'id',
-          ignoreDuplicates: false // Actualizar si existe
+          ignoreDuplicates: false
         })
         .select()
         .single();
 
       if (error) {
-        console.error('❌ [ServerOrderFlow] Error creando orden:', error);
-        return { success: false, errors: [error.message] };
+        console.error('❌ [ServerOrderFlow] Error en upsert de Supabase:', {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint
+        });
+        return { success: false, errors: [error.message || 'Error desconocido creando orden'] };
       }
 
+      if (!data) {
+        console.error('❌ [ServerOrderFlow] Error: upsert no devolvió datos');
+        return { success: false, errors: ['No se devolvieron datos después de crear la orden'] };
+      }
+
+      console.log('✅ [ServerOrderFlow] Orden creada exitosamente:', data.id);
       return { success: true, orderId: data.id, order: data };
 
     } catch (error) {
@@ -258,14 +317,14 @@ export class ServerOrderFlowService {
         order.user_id
       );
 
-            console.log('📤 [ServerOrderFlow] Resultado del envío de template:', templateResult);
+      console.log('📤 [ServerOrderFlow] Resultado del envío de template:', templateResult);
       console.log('📤 [ServerOrderFlow] templateResult.success:', templateResult.success);
       console.log('📤 [ServerOrderFlow] templateResult.error:', templateResult.error);
       console.log('📤 [ServerOrderFlow] templateResult.code:', (templateResult as any).code);
 
-      // Si está pendiente de aprobación, intentar fallback con texto regular 
-      if (!templateResult.success && (templateResult as any).code === 131037) {
-        console.log('⚠️ [ServerOrderFlow] Template pendiente de aprobación, intentando fallback...');
+      // ✅ FALLBACK: Si el template falla por cualquier razón, enviar mensaje de texto normal
+      if (!templateResult.success) {
+        console.log('⚠️ [ServerOrderFlow] Template falló, intentando fallback con texto normal...');
         try {
           // Obtener phone_number_id del usuario
           const { data: config } = await this.supabase
@@ -284,30 +343,68 @@ export class ServerOrderFlowService {
               graphVersion: 'v24.0'
             });
 
-            const body = `Buen día ${templateVariables.contact_name}! Espero que andes bien!\nEn cuanto me confirmes, paso el pedido de esta semana.`;
+            // Construir mensaje de texto con el header del template y detalles de la orden
+            const { ORDER_FLOW_CONFIG } = await import('./orderFlowConfig');
+            // Header del template evio_orden: incluye company_name (razón social del usuario)
+            const headerMessage = `${templateVariables.company_name}\n\nBuen día ${templateVariables.contact_name}! Espero que andes bien!\nA continuación, paso el pedido de esta semana.`;
+            const detailsMessage = ORDER_FLOW_CONFIG.MESSAGES.send_order_details(order, provider);
+            const fullMessage = `${headerMessage}\n\n${detailsMessage}`;
+
+            console.log('📝 [ServerOrderFlow] Enviando fallback de texto:', fullMessage.substring(0, 100) + '...');
 
             const textResult = await whatsappClient.messages.sendText({
               phoneNumberId,
               to: phone,
-              body
+              body: fullMessage
             });
 
-            console.log('✅ [ServerOrderFlow] Fallback texto enviado:', textResult.messages?.[0]?.id);
-            return { success: true, pendingApproval: true, fallbackSent: true };
+            console.log('✅ [ServerOrderFlow] Fallback de texto enviado exitosamente:', textResult.messages?.[0]?.id);
+            // ✅ El fallback ya incluye el header + detalles completos, no necesitamos enviar detalles adicionales
+            return { 
+              success: true, 
+              fallbackSent: true, 
+              pendingApproval: (templateResult as any).code === 131037 
+            };
+          } else {
+            console.error('❌ [ServerOrderFlow] No se encontró phone_number_id para fallback');
+            return { 
+              success: false, 
+              errors: [templateResult.error || 'Error enviando template y no se pudo enviar fallback'], 
+              fallbackSent: false 
+            };
           }
         } catch (fallbackError) {
-          console.warn('⚠️ [ServerOrderFlow] Fallback de texto falló:', fallbackError);
-          return { success: false, errors: ['Pendiente de aprobación y no se pudo enviar texto'], pendingApproval: true, fallbackSent: false };
+          console.error('❌ [ServerOrderFlow] Error en fallback de texto:', fallbackError);
+          return { 
+            success: false, 
+            errors: [
+              templateResult.error || 'Error enviando template',
+              `Error en fallback: ${fallbackError instanceof Error ? fallbackError.message : 'Error desconocido'}`
+            ], 
+            fallbackSent: false 
+          };
         }
       }
 
-            if (templateResult.success) {
+      // ✅ Template enviado exitosamente
+      if (templateResult.success) {
         console.log('✅ [ServerOrderFlow] Template enviado exitosamente');
-      } else {
-        console.error('❌ [ServerOrderFlow] Template NO se envió. Error:', templateResult.error || 'Error desconocido');
+        
+        // ✅ CAMBIO: Enviar detalles inmediatamente después del template (sin esperar respuesta)
+        try {
+          console.log('📋 [ServerOrderFlow] Enviando detalles de la orden inmediatamente...');
+          await this.sendOrderDetailsImmediately(phone, order, provider);
+        } catch (detailsError) {
+          console.error('⚠️ [ServerOrderFlow] Error enviando detalles inmediatamente:', detailsError);
+          // No fallar el flujo completo si falla el envío de detalles
+        }
       }
       
-      return { success: !!templateResult.success, pendingApproval: false, errors: templateResult.success ? undefined : [templateResult.error || 'Error desconocido enviando template'] };     
+      return { 
+        success: !!templateResult.success, 
+        pendingApproval: false, 
+        errors: templateResult.success ? undefined : [templateResult.error || 'Error desconocido enviando template'] 
+      };     
 
     } catch (error) {
       console.error('❌ [ServerOrderFlow] Error enviando notificación:', error);
@@ -316,6 +413,59 @@ export class ServerOrderFlowService {
         success: false, 
         errors: [error instanceof Error ? error.message : 'Error enviando notificación'] 
       };
+    }
+  }
+
+  /**
+   * ✅ NUEVO: Enviar detalles de la orden inmediatamente después del template (sin esperar respuesta)
+   */
+  private async sendOrderDetailsImmediately(phone: string, order: any, provider: any): Promise<void> {
+    try {
+      console.log('📋 [ServerOrderFlow] Enviando detalles de la orden inmediatamente:', {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        phone: phone
+      });
+
+      // Usar el formato de mensaje de ORDER_FLOW_CONFIG
+      const { ORDER_FLOW_CONFIG } = await import('./orderFlowConfig');
+      const message = ORDER_FLOW_CONFIG.MESSAGES.send_order_details(order, provider);
+      
+      console.log('📝 [ServerOrderFlow] Mensaje de detalles a enviar:', message);
+
+      // Enviar mensaje usando WhatsAppClient de Kapso
+      const { WhatsAppClient } = await import('@kapso/whatsapp-cloud-api');
+      
+      // Obtener phone_number_id del usuario
+      const { data: config } = await this.supabase
+        .from('user_whatsapp_config')
+        .select('phone_number_id')
+        .eq('user_id', order.user_id)
+        .eq('is_active', true)
+        .single();
+
+      if (!config?.phone_number_id) {
+        console.error('❌ [ServerOrderFlow] No se encontró phone_number_id para enviar detalles');
+        return;
+      }
+
+      const whatsappClient = new WhatsAppClient({
+        baseUrl: 'https://api.kapso.ai/meta/whatsapp',
+        kapsoApiKey: process.env.KAPSO_API_KEY!,
+        graphVersion: 'v24.0'
+      });
+
+      const result = await whatsappClient.messages.sendText({
+        phoneNumberId: config.phone_number_id,
+        to: phone,
+        body: message
+      });
+
+      console.log('✅ [ServerOrderFlow] Detalles de la orden enviados exitosamente:', result.messages?.[0]?.id);
+
+    } catch (error) {
+      console.error('❌ [ServerOrderFlow] Error enviando detalles inmediatamente:', error);
+      throw error; // Re-lanzar para que el caller pueda manejarlo
     }
   }
 
@@ -491,18 +641,32 @@ export class ServerOrderFlowService {
           console.log(`📋 [ServerOrderFlow] Templates encontrados en WABA ${businessAccountId}: ${all.length}`);
           console.log(`📋 [ServerOrderFlow] Nombres de templates: ${all.map((t: any) => `${t.name} (${t.language || t.languages?.join(', ') || 'N/A'})`).join(', ')}`);
           
-          const match = all.find((t: any) => {
+          // ✅ MEJORA: Buscar primero en el idioma solicitado, luego en cualquier idioma
+          let match = all.find((t: any) => {
             const nameMatch = t?.name === templateName;
             const langMatch = t?.language === languageCode || t?.languages?.includes?.(languageCode);
             return nameMatch && langMatch;
           });
           
+          // ✅ FALLBACK: Si no se encuentra en el idioma solicitado, buscar en cualquier idioma
           if (!match) {
-            console.error(`❌ [ServerOrderFlow] Template ${templateName} no existe en ${languageCode} para WABA ${businessAccountId}`);
+            console.warn(`⚠️ [ServerOrderFlow] Template ${templateName} no encontrado en ${languageCode}, buscando en otros idiomas...`);
+            match = all.find((t: any) => t?.name === templateName);
+            
+            if (match) {
+              const foundLanguage = match.language || (match.languages && match.languages[0]) || 'desconocido';
+              console.log(`✅ [ServerOrderFlow] Template ${templateName} encontrado en idioma ${foundLanguage} (se usará este idioma en lugar de ${languageCode})`);
+              // ✅ ACTUALIZAR languageCode para usar el idioma encontrado
+              languageCode = foundLanguage;
+            }
+          }
+          
+          if (!match) {
+            console.error(`❌ [ServerOrderFlow] Template ${templateName} no existe en ningún idioma para WABA ${businessAccountId}`);
             console.error(`❌ [ServerOrderFlow] Templates disponibles en este WABA:`, all.map((t: any) => `${t.name} (${t.language || t.languages?.join(', ') || 'N/A'})`).join(', '));
             return {
               success: false,
-              error: `Template ${templateName} no existe en ${languageCode} para este usuario. Verifica que el template esté aprobado en Meta Business Manager.`,
+              error: `Template ${templateName} no existe para este usuario. Verifica que el template esté creado y aprobado en Meta Business Manager.`,
               code: 132001
             };
           }

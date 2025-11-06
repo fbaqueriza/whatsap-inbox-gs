@@ -151,17 +151,24 @@ function ProvidersPage() {
     if (params.get('prefill') === '1') {
       const cuit = params.get('cuit') || '';
       const razon = params.get('razon') || '';
+      // Obtener dirección desde sessionStorage si está disponible
+      const address = sessionStorage.getItem('invoiceSupplierAddress') || '';
+      console.log('📦 [ProvidersPage] Prefill datos:', { cuit, razon, address });
       setCurrentProvider(null);
       setIsEditing(false);
       setIsModalOpen(true);
-      // Pasar prefill vía estado local
-      setPrefill({ cuitCuil: cuit, razonSocial: razon, name: razon });
+      // Pasar prefill vía estado local (incluyendo dirección si está disponible)
+      setPrefill({ cuitCuil: cuit, razonSocial: razon, name: razon, address });
       // Limpiar query para evitar reabrir al navegar
       window.history.replaceState({}, document.title, window.location.pathname);
+      // Limpiar sessionStorage después de usar
+      if (address) {
+        sessionStorage.removeItem('invoiceSupplierAddress');
+      }
     }
   }, []);
 
-  const [prefill, setPrefill] = useState<{ cuitCuil?: string; razonSocial?: string; name?: string } | null>(null);
+  const [prefill, setPrefill] = useState<{ cuitCuil?: string; razonSocial?: string; name?: string; address?: string } | null>(null);
 
   const handleSaveProviderConfig = async (updatedProvider: Provider) => {
     try {
@@ -170,11 +177,38 @@ function ProvidersPage() {
       try {
         const cuit = updatedProvider.cuitCuil || prefill?.cuitCuil || '';
         if (user?.id && cuit) {
-          await fetch('/api/providers/finalize-assignment', {
+          // Obtener items modificados desde sessionStorage
+          let invoiceItems: any[] = [];
+          try {
+            const storedItems = sessionStorage.getItem('invoiceItems');
+            if (storedItems) {
+              invoiceItems = JSON.parse(storedItems);
+            }
+          } catch (e) {
+            console.warn('Error leyendo items de sessionStorage:', e);
+          }
+          
+          const finalizeResponse = await fetch('/api/providers/finalize-assignment', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: user.id, cuit })
+            body: JSON.stringify({ 
+              userId: user.id, 
+              cuit,
+              invoiceItems: invoiceItems.length > 0 ? invoiceItems : undefined
+            })
           });
+          
+          if (!finalizeResponse.ok) {
+            const errorData = await finalizeResponse.json().catch(() => ({ error: 'Error desconocido' }));
+            console.warn('⚠️ [handleAddProvider] Error en finalize-assignment:', finalizeResponse.status, errorData);
+            // No lanzar error - es solo una advertencia, el proveedor ya se creó
+          } else {
+            const result = await finalizeResponse.json();
+            console.log('✅ [handleAddProvider] Finalize-assignment exitoso:', result);
+          }
+          
+          // Limpiar items después de finalizar
+          sessionStorage.removeItem('invoiceItems');
           await fetchAll();
         }
       } catch (e) {
@@ -187,11 +221,16 @@ function ProvidersPage() {
 
   const handleAddProvider = async (providerData: Omit<Provider, 'id' | 'createdAt' | 'updatedAt' | 'user_id'>) => {
     try {
-
       setAddingProvider(true);
       
       const result = await addProvider(providerData, user?.id || '');
-
+      
+      // Obtener el proveedor que se creó o encontró (puede ser nuevo o existente)
+      let createdProvider: Provider | null = null;
+      if (result?.data && Array.isArray(result.data) && result.data.length > 0) {
+        // Si hay datos, el proveedor se creó o se encontró
+        createdProvider = result.data[0] as any;
+      }
       
       // Cerrar el modal y limpiar el estado
       setIsModalOpen(false);
@@ -203,11 +242,46 @@ function ProvidersPage() {
       try {
         const cuit = providerData.cuitCuil || prefill?.cuitCuil || '';
         if (user?.id && cuit) {
-          await fetch('/api/providers/finalize-assignment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: user.id, cuit })
-          });
+          // Obtener items modificados desde sessionStorage
+          let invoiceItems: any[] = [];
+          try {
+            const storedItems = sessionStorage.getItem('invoiceItems');
+            if (storedItems) {
+              invoiceItems = JSON.parse(storedItems);
+            }
+          } catch (e) {
+            console.warn('Error leyendo items de sessionStorage:', e);
+          }
+          
+          // Intentar finalizar asignación con un pequeño delay para asegurar que el proveedor esté disponible
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          try {
+            const finalizeResponse = await fetch('/api/providers/finalize-assignment', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                userId: user.id, 
+                cuit,
+                invoiceItems: invoiceItems.length > 0 ? invoiceItems : undefined
+              })
+            });
+            
+            if (!finalizeResponse.ok) {
+              const errorData = await finalizeResponse.json().catch(() => ({ error: 'Error desconocido' }));
+              console.warn('⚠️ [handleAddProvider] Error en finalize-assignment:', finalizeResponse.status, errorData);
+              // No lanzar error - es solo una advertencia, el proveedor ya se creó
+            } else {
+              const result = await finalizeResponse.json();
+              console.log('✅ [handleAddProvider] Finalize-assignment exitoso:', result);
+            }
+          } catch (fetchError) {
+            console.warn('⚠️ [handleAddProvider] Error de red en finalize-assignment:', fetchError);
+            // No es crítico, el proveedor ya se creó
+          }
+          
+          // Limpiar items después de finalizar
+          sessionStorage.removeItem('invoiceItems');
         }
       } catch (e) {
         console.warn('Finalize assignment (add) warning:', (e as any)?.message || e);
@@ -217,10 +291,12 @@ function ProvidersPage() {
       if (user?.id) {
         await fetchAll();
       }
-      
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error agregando proveedor:', error);
+      // Mostrar mensaje al usuario si hay error
+      const errorMessage = error?.userMessage || error?.message || 'Error al agregar el proveedor. Por favor, intenta nuevamente.';
+      alert(errorMessage);
     } finally {
       setAddingProvider(false);
     }
@@ -297,11 +373,31 @@ function ProvidersPage() {
       width: 100, 
       editable: true 
     },
-    { 
-      key: 'defaultPaymentMethod', 
-      name: 'Pago por defecto', 
-      width: 120, 
-      editable: true 
+        {
+      key: 'defaultPaymentMethod',
+      name: 'Pago por defecto',
+      width: 120,
+      editable: true
+    },
+    {
+      key: 'autoOrderFlowEnabled',
+      name: 'Flujo Automatizado',
+      width: 140,
+      editable: true,
+      render: (value: boolean | undefined) => {
+        const enabled = value !== undefined ? value : true; // Por defecto true
+        return (
+          <div className="flex items-center gap-2">
+            <span className={`px-2 py-1 rounded text-xs font-medium ${
+              enabled 
+                ? 'bg-green-100 text-green-800' 
+                : 'bg-gray-100 text-gray-800'
+            }`}>
+              {enabled ? '✅ Activo' : '❌ Inactivo'}
+            </span>
+          </div>
+        );
+      } 
     },
   ];
 

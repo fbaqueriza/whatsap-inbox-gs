@@ -68,6 +68,22 @@ export async function POST(request: NextRequest) {
 
     console.log('✅ [WhatsApp Auto-Setup] Configuración creada exitosamente:', newConfig);
 
+    // ✅ NUEVO: Configurar templates automáticamente
+    try {
+      console.log('🔧 [WhatsApp Auto-Setup] Configurando templates automáticamente...');
+      const { whatsappTemplateSetupService } = await import('@/lib/whatsappTemplateSetupService');
+      const templateResult = await whatsappTemplateSetupService.setupTemplatesForUser(userId);
+
+      if (templateResult.success) {
+        console.log(`✅ [WhatsApp Auto-Setup] Templates configurados: ${templateResult.created || 0} creados`);
+      } else {
+        console.warn('⚠️ [WhatsApp Auto-Setup] Templates no se pudieron configurar:', templateResult.error);
+      }
+    } catch (templateError) {
+      console.error('❌ [WhatsApp Auto-Setup] Error configurando templates:', templateError);
+      // No fallar el setup completo si los templates fallan
+    }
+
     return NextResponse.json({ 
       success: true, 
       message: 'Configuración de WhatsApp creada automáticamente',

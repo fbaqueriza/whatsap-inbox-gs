@@ -197,39 +197,31 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
   const handleOrderUpdate = (payload: any) => {
     const updatedOrder = payload.new;
-    console.log('🔄 [RealtimeService] handleOrderUpdate llamado:', {
-      orderId: updatedOrder?.id,
-      newStatus: updatedOrder?.status,
-      userId: currentUserId,
-      orderUserId: updatedOrder?.user_id
-    });
 
     if (!updatedOrder || !currentUserId) {
-      console.log('⚠️ [RealtimeService] Saltando actualización - sin orden o usuario');
       return;
     }
 
     // Filtrar actualizaciones por user_id
     if (updatedOrder.user_id && updatedOrder.user_id !== currentUserId) {
-      console.log('⚠️ [RealtimeService] Saltando actualización - userId no coincide');
       return;
     }
-
-    console.log('✅ [RealtimeService] Procesando actualización de orden:', updatedOrder.id);
 
     // Mapear la orden una sola vez
     const mappedOrder = mapOrderFromDb(updatedOrder);
     
     setOrders(prev => {
-      console.log('📊 [RealtimeService] Actualizando estado con orden:', mappedOrder.id, 'status:', mappedOrder.status);
-      return prev.map(order =>
-        order.id === updatedOrder.id
-          ? { ...order, ...mappedOrder }
-          : order
-      );
+      const existingIndex = prev.findIndex(order => order.id === updatedOrder.id);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex] = { ...updated[existingIndex], ...mappedOrder };
+        return updated;
+      } else {
+        return [mappedOrder, ...prev];
+      }
     });
 
-    // Notificar a los listeners sobre la actualización
+    // Notificar a los listeners sobre la actualización (esto es lo que DataProvider escucha)
     orderListeners.current.forEach(callback => {
       try {
         callback(mappedOrder);
@@ -237,8 +229,6 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         console.error('❌ [RealtimeService] Error en order listener:', error);
       }
     });
-
-    console.log('✅ [RealtimeService] Orden actualizada en tiempo real');
   };
 
   const handleOrderDelete = (payload: any) => {
@@ -261,100 +251,76 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
   // 🔧 NUEVO: Handlers para eventos de Kapso
   const handleKapsoOrderUpdate = (payload: any) => {
-    // Silenciado
-    
     if (!currentUserId) {
-      // Silenciado
+      return;
+    }
+
+    const orderId = payload.payload?.orderId;
+    if (!orderId) {
       return;
     }
 
     // Buscar la orden en el estado actual y actualizarla
-    setOrders(prev => 
-      prev.map(order => {
-        if (order.id === payload.payload.orderId) {
-          console.log('🔄 [RealtimeService] Procesando broadcast de actualización:', {
-            orderId: payload.payload.orderId,
-            newStatus: payload.payload.status,
-            receiptUrl: payload.payload.receiptUrl,
-            totalAmount: payload.payload.totalAmount,
-            invoiceNumber: payload.payload.invoiceNumber,
-            invoiceDate: payload.payload.invoiceDate,
-            source: payload.payload.source
-          });
-          // 🔧 CORREGIDO: Solo actualizar campos que existen en el payload
+    setOrders(prev => {
+      const updated = prev.map(order => {
+        if (order.id === orderId) {
           const updateData: any = {
             ...order,
-            status: payload.payload.status,
-            updatedAt: payload.payload.timestamp
+            status: payload.payload.status || order.status,
+            updatedAt: payload.payload.timestamp ? new Date(payload.payload.timestamp) : order.updatedAt
           };
-          // Solo incluir receiptUrl si existe en el payload
           if (payload.payload.receiptUrl !== undefined) {
             updateData.receiptUrl = payload.payload.receiptUrl;
           }
-          // Solo incluir totalAmount si existe en el payload
           if (payload.payload.totalAmount !== undefined) {
             updateData.totalAmount = payload.payload.totalAmount;
           }
-          // Solo incluir invoiceNumber si existe en el payload
           if (payload.payload.invoiceNumber !== undefined) {
             updateData.invoiceNumber = payload.payload.invoiceNumber;
           }
-          // Solo incluir invoiceDate si existe en el payload
           if (payload.payload.invoiceDate !== undefined) {
             updateData.invoiceDate = payload.payload.invoiceDate ? new Date(payload.payload.invoiceDate) : undefined;
           }
           return updateData;
         }
         return order;
-      })
-    );
+      });
+      return updated;
+    });
 
     // Notificar a los listeners
     orderListeners.current.forEach(callback => {
       try {
         const updatedOrder: any = { 
-          id: payload.payload.orderId, 
+          id: orderId, 
           status: payload.payload.status,
-          source: payload.payload.source || 'order_flow'
+          source: payload.payload.source || 'invoice_ocr'
         };
-        // Solo incluir receiptUrl si existe en el payload
         if (payload.payload.receiptUrl !== undefined) {
           updatedOrder.receiptUrl = payload.payload.receiptUrl;
         }
-        // Solo incluir totalAmount si existe en el payload
         if (payload.payload.totalAmount !== undefined) {
           updatedOrder.totalAmount = payload.payload.totalAmount;
         }
-        // Solo incluir invoiceNumber si existe en el payload
         if (payload.payload.invoiceNumber !== undefined) {
           updatedOrder.invoiceNumber = payload.payload.invoiceNumber;
         }
+        if (payload.payload.invoiceDate !== undefined) {
+          updatedOrder.invoiceDate = payload.payload.invoiceDate;
+        }
         callback(updatedOrder);
       } catch (error) {
-        console.error('❌ [RealtimeService] Error en order listener (Kapso):', error);
+        console.error('❌ [RealtimeService] Error en order listener:', error);
       }
     });
   };
 
   // 🆕 NUEVO: Manejar creación de orden desde factura
   const handleKapsoOrderCreate = (payload: any) => {
-    console.log('🆕 [RealtimeService] Procesando broadcast de creación de orden:', {
-      orderId: payload.payload.orderId,
-      orderNumber: payload.payload.orderNumber,
-      providerId: payload.payload.providerId,
-      status: payload.payload.status,
-      items: payload.payload.items,
-      itemsLength: payload.payload.items?.length,
-      firstItem: payload.payload.items?.[0],
-      receiptUrl: payload.payload.receiptUrl,
-      totalAmount: payload.payload.totalAmount,
-      invoiceNumber: payload.payload.invoiceNumber,
-      invoiceDate: payload.payload.invoiceDate,
-      source: payload.payload.source
-    });
+    // 🔧 LIMPIEZA: Log removido
     
     if (!currentUserId) {
-      console.log('⚠️ [RealtimeService] Ignorando orden creada - usuario no autenticado');
+      // 🔧 LIMPIEZA: Log removido
       return;
     }
 
@@ -376,19 +342,14 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       source: payload.payload.source || 'invoice_auto_create'
     };
     
-    console.log('📦 [RealtimeService] Orden creada con items:', {
-      itemsCount: newOrder.items.length,
-      items: newOrder.items
-    });
-    
     // Agregar la orden al estado si no existe
     setOrders(prev => {
       const exists = prev.some(order => order.id === newOrder.id);
       if (exists) {
-        console.log('🔄 [RealtimeService] Orden ya existe, ignorando:', newOrder.id);
+        // 🔧 LIMPIEZA: Log removido
         return prev;
       }
-      console.log('✅ [RealtimeService] Agregando nueva orden creada desde factura:', newOrder.id);
+      // 🔧 LIMPIEZA: Log removido
       return [...prev, newOrder];
     });
 
@@ -543,9 +504,8 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // 🔧 SOLUCIÓN OPTIMIZADA: Suscripción a órdenes sin filtro (filtrar en handler)
     const setupOrdersSuscription = async () => {
       try {
-        console.log('🔧 [RealtimeService] Configurando suscripción a orders...');
         const channel = supabase
-          .channel('orders')
+          .channel('orders-realtime')
           .on('postgres_changes', 
             { 
               event: '*', 
@@ -553,23 +513,30 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
               table: 'orders'
             }, 
             (payload) => {
-              console.log('📡 [RealtimeService] Evento recibido de orders:', payload.eventType, payload.new?.id);
-              console.log('📡 [RealtimeService] Payload completo:', JSON.stringify(payload, null, 2));
               try {
-                if (payload.eventType === 'INSERT') handleNewOrder(payload);
-                else if (payload.eventType === 'UPDATE') handleOrderUpdate(payload);
-                else if (payload.eventType === 'DELETE') handleOrderDelete(payload);
+                if (payload.eventType === 'INSERT') {
+                  handleNewOrder(payload);
+                } else if (payload.eventType === 'UPDATE') {
+                  handleOrderUpdate(payload);
+                } else if (payload.eventType === 'DELETE') {
+                  handleOrderDelete(payload);
+                }
               } catch (error) {
                 console.error('❌ [RealtimeService] Error manejando evento:', error);
               }
             }
           )
           .subscribe((status) => {
-            console.log('🔌 [RealtimeService] Estado suscripción orders:', status);
+            if (status === 'SUBSCRIBED') {
+              console.log('✅ [RealtimeService] Suscripción a orders ACTIVA');
+              setIsConnected(true);
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              console.error('❌ [RealtimeService] Error en suscripción orders:', status);
+              setIsConnected(false);
+            }
           });
         
         subscriptionsRef.current.add(channel);
-        console.log('✅ [RealtimeService] Suscripción a orders configurada');
       } catch (error) {
         console.error(`❌ [RealtimeService] Error configurando suscripción a orders:`, error);
       }

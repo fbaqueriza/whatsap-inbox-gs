@@ -182,25 +182,32 @@ export class ExtensibleOrderFlowService {
           success: false, 
           message: 'La orden está pendiente de pago. Solo se completará cuando se suba un comprobante de pago real.' 
         };
-      } else if (foundOrder.status === 'standby') {
-        // 🔧 AUTOMÁTICO: En estado 'standby', cualquier respuesta del proveedor activa la transición
-        console.log('✅ [ExtensibleOrderFlow] Respuesta del proveedor recibida, activando transición automática standby → enviado');
-        
-        // Obtener la transición configurada
-        const transition = getNextTransition(foundOrder.status);
-        if (!transition) {
-          console.log('⚠️ [ExtensibleOrderFlow] No hay transición configurada para standby → enviado');
-          return { success: false, message: 'No hay transición configurada' };
+      } else {
+        // ✅ COMENTADO: Ya no esperamos respuesta del proveedor en estado STANDBY
+        // Las órdenes se crean directamente en ENVIADO y los detalles se envían inmediatamente
+        // (El código comentado abajo muestra cómo se manejaba antes el estado STANDBY)
+        /*
+        if (foundOrder.status === 'standby') {
+          // 🔧 AUTOMÁTICO: En estado 'standby', cualquier respuesta del proveedor activa la transición
+          console.log('✅ [ExtensibleOrderFlow] Respuesta del proveedor recibida, activando transición automática standby → enviado');
+          
+          // Obtener la transición configurada
+          const transition = getNextTransition(foundOrder.status);
+          if (!transition) {
+            console.log('⚠️ [ExtensibleOrderFlow] No hay transición configurada para standby → enviado');
+            return { success: false, message: 'No hay transición configurada' };
+          }
+
+          // Ejecutar la transición automática
+          return await this.executeTransition(foundOrder, transition, normalizedPhone, message);
         }
+        */
 
-        // Ejecutar la transición automática
-        return await this.executeTransition(foundOrder, transition, normalizedPhone, message);
+        // 🔧 CORRECCIÓN: Si llegamos aquí, significa que no hay transición válida
+        // No procesar ninguna transición automática
+        console.log('⚠️ [ExtensibleOrderFlow] No hay transición válida para procesar');
+        return { success: false, message: 'No hay transición disponible para este estado' };
       }
-
-      // 🔧 CORRECCIÓN: Si llegamos aquí, significa que no hay transición válida
-      // No procesar ninguna transición automática
-      console.log('⚠️ [ExtensibleOrderFlow] No hay transición válida para procesar');
-      return { success: false, message: 'No hay transición disponible para este estado' };
 
     } catch (error) {
       return {

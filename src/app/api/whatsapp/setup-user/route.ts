@@ -85,6 +85,35 @@ export async function POST(request: NextRequest) {
 
     console.log('✅ [WhatsAppSetup] Configuración de WhatsApp creada exitosamente para usuario:', user.id);
 
+    // ✅ Obtener y guardar WABA_ID automáticamente
+    try {
+      const { WabaIdService } = await import('@/lib/wabaIdService');
+      const wabaId = await WabaIdService.resolveAndSaveWabaId(user.id, {
+        kapsoConfigId: sandboxInfo.config_id
+      });
+      if (wabaId) {
+        console.log('✅ [WhatsAppSetup] WABA_ID obtenido y guardado:', wabaId);
+      }
+    } catch (wabaError) {
+      console.warn('⚠️ [WhatsAppSetup] No se pudo obtener WABA_ID, continuando sin él:', wabaError);
+    }
+
+    // ✅ NUEVO: Configurar templates automáticamente
+    try {
+      console.log('🔧 [WhatsAppSetup] Configurando templates automáticamente...');
+      const { whatsappTemplateSetupService } = await import('@/lib/whatsappTemplateSetupService');
+      const templateResult = await whatsappTemplateSetupService.setupTemplatesForUser(user.id);
+
+      if (templateResult.success) {
+        console.log(`✅ [WhatsAppSetup] Templates configurados: ${templateResult.created || 0} creados`);
+      } else {
+        console.warn('⚠️ [WhatsAppSetup] Templates no se pudieron configurar:', templateResult.error);
+      }
+    } catch (templateError) {
+      console.error('❌ [WhatsAppSetup] Error configurando templates:', templateError);
+      // No fallar el setup completo si los templates fallan
+    }
+
     return NextResponse.json({
       success: true,
       config: createResult.config,

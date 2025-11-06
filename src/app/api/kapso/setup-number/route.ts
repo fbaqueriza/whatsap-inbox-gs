@@ -11,7 +11,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-const KAPSO_API_KEY = process.env.KAPSO_API_KEY;
+const KAPSO_API_KEY = process.env.KAPSO_API_KEY?.trim();
 const KAPSO_BASE_URL = 'https://app.kapso.ai/api/v1';
 
 export async function POST(request: NextRequest) {
@@ -77,7 +77,23 @@ export async function POST(request: NextRequest) {
     await setupWebhook(whatsappConfig.id);
     console.log('✅ [KapsoSetup] Webhook configurado');
 
-    // 3. Guardar configuración en la base de datos (incluyendo phone_number_id)
+    // 3. Obtener WABA_ID desde Kapso antes de guardar
+    let wabaId: string | undefined;
+    try {
+      const { WabaIdService } = await import('../../../../lib/wabaIdService');
+      const resolvedWabaId = await WabaIdService.resolveAndSaveWabaId(user.id, {
+        kapsoConfigId: whatsappConfig.id,
+        phoneNumberId: phoneNumberId
+      });
+      if (resolvedWabaId) {
+        wabaId = resolvedWabaId;
+        console.log('✅ [KapsoSetup] WABA_ID obtenido y guardado:', wabaId);
+      }
+    } catch (wabaError) {
+      console.warn('⚠️ [KapsoSetup] No se pudo obtener WABA_ID, continuando sin él:', wabaError);
+    }
+
+    // 4. Guardar configuración en la base de datos (incluyendo phone_number_id y waba_id)
     const { data: savedConfig, error: saveError } = await supabase
       .from('user_whatsapp_config')
       .insert({
@@ -85,6 +101,7 @@ export async function POST(request: NextRequest) {
         whatsapp_phone_number: phoneNumber,
         kapso_config_id: whatsappConfig.id,
         phone_number_id: phoneNumberId,
+        waba_id: wabaId, // ✅ Guardar WABA_ID si se obtuvo
         is_active: true
       })
       .select()
@@ -134,7 +151,7 @@ async function createWhatsAppConfig(phoneNumber: string) {
   const response = await fetch(`${KAPSO_BASE_URL}/whatsapp_configs`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${KAPSO_API_KEY}`,
+      'X-API-Key': KAPSO_API_KEY,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
@@ -165,7 +182,7 @@ async function getWhatsAppConfigDetails(whatsappConfigId: string) {
   const response = await fetch(`${KAPSO_BASE_URL}/whatsapp_configs/${whatsappConfigId}`, {
     method: 'GET',
     headers: {
-      'Authorization': `Bearer ${KAPSO_API_KEY}`,
+      'X-API-Key': KAPSO_API_KEY,
       'Content-Type': 'application/json'
     }
   });
@@ -185,7 +202,7 @@ async function setupWebhook(whatsappConfigId: string) {
   const response = await fetch(`${KAPSO_BASE_URL}/whatsapp_configs/${whatsappConfigId}/webhook`, {
     method: 'PUT',
     headers: {
-      'Authorization': `Bearer ${KAPSO_API_KEY}`,
+      'X-API-Key': KAPSO_API_KEY,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({

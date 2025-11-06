@@ -106,8 +106,10 @@ export class OrderFlowService {
   }
 
   /**
-   * 🚀 PASO 2: Procesar respuesta del proveedor (cualquier mensaje → enviado)
+   * ✅ COMENTADO: Ya no esperamos respuesta del proveedor en estado STANDBY
+   * Las órdenes se crean directamente en ENVIADO y los detalles se envían inmediatamente después del template
    */
+  /*
   async processProviderResponse(phone: string, message: string, userId?: string): Promise<OrderFlowResult> {
     try {
       console.log('🔄 [OrderFlow] Procesando respuesta del proveedor:', phone);
@@ -148,6 +150,7 @@ export class OrderFlowService {
       };
     }
   }
+  */
 
   /**
    * 🚀 PASO 3: Procesar confirmación del proveedor (cualquier mensaje → esperando_factura)

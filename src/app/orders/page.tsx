@@ -410,6 +410,7 @@ function OrdersPage({ user }: OrdersPageProps) {
           suggestedOrder={suggestedOrder}
           providers={providers}
           stockItems={stockItems}
+          orders={orders} // ✅ NUEVO: Pasar orders al modal
           isLoading={isLoading}
         />
 

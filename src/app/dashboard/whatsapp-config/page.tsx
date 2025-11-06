@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSupabaseAuth } from '../../../hooks/useSupabaseAuth';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useSessionValidator } from '../../../hooks/useSessionValidator';
 import { supabase } from '../../../lib/supabase/client';
 import WhatsAppWizard from '../../../components/WhatsAppWizard';
@@ -45,6 +45,7 @@ interface KapsoSandboxInfo {
 export default function WhatsAppConfigPage() {
   const { user, isLoading: authLoading } = useSupabaseAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [configs, setConfigs] = useState<WhatsAppConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +54,58 @@ export default function WhatsAppConfigPage() {
   
   // Validar sesión automáticamente
   useSessionValidator();
+  
+  // 🔧 DETECTAR STATUS DEL SETUP LINK Y COMPLETAR CONFIGURACIÓN
+  useEffect(() => {
+    const status = searchParams?.get('status');
+    
+    if (status === 'success' && user) {
+      console.log('✅ [WhatsAppConfig] Setup completado exitosamente, completando configuración...');
+      
+      const completeSetup = async () => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          
+          if (!session?.access_token) {
+            console.error('❌ [WhatsAppConfig] No hay sesión activa para completar setup');
+            return;
+          }
+          
+          const response = await fetch('/api/whatsapp/complete-setup', {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`
+            }
+          });
+          
+          const data = await response.json();
+          
+          if (response.ok && data.success) {
+            console.log('✅ [WhatsAppConfig] Configuración completada exitosamente');
+            // Limpiar el parámetro de query para no volver a ejecutarlo
+            router.replace('/dashboard/whatsapp-config');
+            // Recargar configuraciones después de un pequeño delay para asegurar que la actualización se complete
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+          } else {
+            console.error('❌ [WhatsAppConfig] Error completando configuración:', data.error);
+            setError(data.error || 'Error completando la configuración. Por favor, intenta nuevamente.');
+          }
+        } catch (err) {
+          console.error('❌ [WhatsAppConfig] Error al completar setup:', err);
+          setError('Error al completar la configuración. Por favor, intenta nuevamente.');
+        }
+      };
+      
+      completeSetup();
+    } else if (status === 'error') {
+      console.error('❌ [WhatsAppConfig] El setup falló');
+      setError('Error al conectar WhatsApp. Por favor, intenta nuevamente.');
+      // Limpiar el parámetro de query
+      router.replace('/dashboard/whatsapp-config');
+    }
+  }, [searchParams, user, router]);
   
   // Mostrar loading mientras se verifica la autenticación
   if (authLoading) {

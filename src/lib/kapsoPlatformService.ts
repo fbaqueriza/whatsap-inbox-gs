@@ -50,7 +50,7 @@ export class KapsoPlatformService {
       throw new Error('KapsoPlatformService solo puede usarse en el servidor');
     }
     
-    this.apiKey = process.env.KAPSO_API_KEY || '';
+    this.apiKey = (process.env.KAPSO_API_KEY || '').trim();
     if (!this.apiKey) {
       throw new Error('KAPSO_API_KEY no está configurada en las variables de entorno');
     }

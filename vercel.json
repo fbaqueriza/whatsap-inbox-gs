@@ -2,16 +2,5 @@
   "version": 2,
   "buildCommand": "npm run build",
   "outputDirectory": ".next",
-  "installCommand": "npm install",
-  "functions": {
-    "src/app/api/whatsapp/twilio/webhook/route.ts": {
-      "maxDuration": 30
-    },
-    "src/app/api/whatsapp/send/route.ts": {
-      "maxDuration": 30
-    },
-    "src/app/api/whatsapp/status/route.ts": {
-      "maxDuration": 10
-    }
-  }
+  "installCommand": "npm install"
 } 

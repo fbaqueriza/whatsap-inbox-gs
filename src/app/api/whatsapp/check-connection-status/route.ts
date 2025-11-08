@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { KapsoPlatformService } from '@/lib/kapsoPlatformService';
+
+export const dynamic = 'force-dynamic';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest) {
     // Obtener la configuración del usuario
     const { data: configData } = await supabase
       .from('whatsapp_configs')
-      .select('kapso_config_id, webhook_url, is_active')
+      .select('kapso_config_id, webhook_url, is_active, phone_number')
       .eq('user_id', user.id)
       .single();
     
@@ -50,93 +51,36 @@ export async function GET(request: NextRequest) {
       });
     }
     
-    if (!configData.kapso_config_id) {
+    const config = configData;
+
+    if (!config.kapso_config_id) {
       console.log(`❌ [ConnectionStatus-${requestId}] Usuario no tiene customer en Kapso`);
       return NextResponse.json({
         success: true,
         status: 'no_customer',
-        message: 'Usuario no tiene customer en Kapso Platform'
+        message: 'Usuario no tiene customer en Kapso Platform',
       });
     }
-    
-    // Verificar configuraciones de WhatsApp en Kapso
-    const kapsoPlatform = new KapsoPlatformService();
-    
-    try {
-      const whatsappConfigsResponse = await kapsoPlatform.getWhatsAppConfigs(configData.kapso_config_id);
-      const whatsappConfigs = whatsappConfigsResponse.data;
-      
-      console.log(`📱 [ConnectionStatus-${requestId}] Configuraciones encontradas: ${whatsappConfigs.length}`);
-      
-      if (whatsappConfigs.length === 0) {
-        // No hay configuraciones, el usuario necesita conectar
-        return NextResponse.json({
-          success: true,
-          status: 'pending_connection',
-          setup_link: configData.webhook_url, // Usar webhook_url donde almacenamos el setup link
-          message: 'Usuario necesita conectar su WhatsApp usando el setup link'
-        });
-      }
-      
-      // Hay configuraciones, verificar si están activas
-      const activeConfig = whatsappConfigs.find(config => config.status === 'active');
-      
-      if (activeConfig) {
-        // Actualizar la configuración en Supabase
-        await supabase
-          .from('whatsapp_configs')
-          .update({
-            phone_number: activeConfig.phone_number,
-            kapso_config_id: activeConfig.id,
-            is_active: true
-          })
-          .eq('user_id', user.id);
-        
-        console.log(`✅ [ConnectionStatus-${requestId}] WhatsApp conectado: ${activeConfig.phone_number}`);
-        
-        return NextResponse.json({
-          success: true,
-          status: 'connected',
-          whatsapp_config: {
-            id: activeConfig.id,
-            phone_number: activeConfig.phone_number,
-            display_name: activeConfig.display_name,
-            status: activeConfig.status
-          },
-          message: 'WhatsApp conectado exitosamente'
-        });
-      } else {
-        // Hay configuraciones pero no están activas
-        const pendingConfig = whatsappConfigs.find(config => config.status === 'pending');
-        
-        return NextResponse.json({
-          success: true,
-          status: 'pending_verification',
-          whatsapp_config: pendingConfig ? {
-            id: pendingConfig.id,
-            phone_number: pendingConfig.phone_number,
-            display_name: pendingConfig.display_name,
-            status: pendingConfig.status
-          } : null,
-          message: 'WhatsApp configurado pero pendiente de verificación'
-        });
-      }
-      
-    } catch (kapsoError: any) {
-      console.error(`❌ [ConnectionStatus-${requestId}] Error consultando Kapso:`, kapsoError);
-      
-      // Si hay error en Kapso pero tenemos setup link, devolver estado pendiente
-      if (configData.webhook_url) {
-        return NextResponse.json({
-          success: true,
-          status: 'pending_connection',
-          setup_link: configData.webhook_url, // Usar webhook_url donde almacenamos el setup link
-          message: 'Error consultando Kapso, pero setup link disponible'
-        });
-      }
-      
-      throw kapsoError;
+
+    if (!config.is_active) {
+      return NextResponse.json({
+        success: true,
+        status: 'pending_connection',
+        setup_link: config.webhook_url,
+        message: 'Configuración creada pero pendiente de conexión',
+      });
     }
+
+    return NextResponse.json({
+      success: true,
+      status: 'connected',
+      whatsapp_config: {
+        customer_id: config.kapso_config_id,
+        phone_number: config.phone_number,
+        setup_link: config.webhook_url,
+      },
+      message: 'WhatsApp conectado exitosamente',
+    });
 
   } catch (error: any) {
     console.error(`❌ [ConnectionStatus-${requestId}] Error inesperado:`, error);

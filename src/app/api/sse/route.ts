@@ -1,9 +1,16 @@
 import { NextRequest } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 // Store para mantener conexiones SSE activas
 const connections = new Set<ReadableStreamDefaultController>();
 
 export async function GET(request: NextRequest) {
+  if (process.env.NEXT_PHASE === 'phase-production-build') {
+    return new Response('SSE deshabilitado durante el build', { status: 503 });
+  }
+
   // Crear stream SSE
   const stream = new ReadableStream({
     start(controller) {

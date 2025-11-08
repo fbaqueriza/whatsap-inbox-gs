@@ -3,11 +3,20 @@ import { createClient } from '@supabase/supabase-js';
 import { KapsoService } from '@/lib/kapsoService';
 import { normalizePhoneNumber } from '@/lib/phoneNormalization';
 
+export const dynamic = 'force-dynamic';
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({
+      success: false,
+      error: 'Endpoint de diagnóstico deshabilitado en producción',
+    }, { status: 503 });
+  }
+
   try {
     console.log('🔍 [Debug System Status] Verificando estado completo del sistema...');
 
@@ -46,7 +55,7 @@ export async function GET(request: NextRequest) {
     const contactIds = new Set<string>();
 
     for (const conv of conversationsResponse.data) {
-      const phoneNumber = conv.phone_number || conv.phone;
+      const phoneNumber = conv.phone_number;
       if (!phoneNumber) continue;
 
       // Normalizar el número como lo hace el frontend

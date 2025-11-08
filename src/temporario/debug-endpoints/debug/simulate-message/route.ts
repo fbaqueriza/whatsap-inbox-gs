@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '../../../../lib/supabase/server';
+import { createClient } from '../../../../lib/supabase/server';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({
+      success: false,
+      error: 'Endpoint de depuración deshabilitado en producción',
+    }, { status: 503 });
+  }
+
   try {
     console.log('🧪 [SimulateMessage] Simulando mensaje de Kapso...');
+
+    const supabase = await createClient();
 
     const body = await request.json();
     const { content = 'Mensaje de prueba', phone = '+541135562673', type = 'received' } = body;

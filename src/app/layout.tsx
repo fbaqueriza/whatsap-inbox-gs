@@ -2,10 +2,14 @@ import React from 'react';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
-import { SupabaseAuthProvider } from '../hooks/useSupabaseAuth';
+import { SupabaseAuthProvider } from '../hooks/SupabaseAuthProvider';
 import ConditionalNavigation from '../components/ConditionalNavigation';
 import { RealtimeServiceProvider } from '../services/realtimeService';
 import ToastContainer from '../components/Toast';
+
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 const inter = Inter({ subsets: ['latin'] });
 

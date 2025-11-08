@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '../../../../lib/supabase/server';
+import { createClient } from '../../../../lib/supabase/server';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({
+      success: false,
+      error: 'Endpoint de depuración deshabilitado en producción',
+    }, { status: 503 });
+  }
+
   try {
     console.log('🔍 [RealtimeTest] Probando sistema de tiempo real...');
+
+    const supabase = await createClient();
 
     // Verificar conexión a Supabase
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();

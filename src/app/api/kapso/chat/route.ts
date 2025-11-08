@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { KapsoService } from '@/lib/kapsoService';
+import { normalizePhoneNumber } from '@/lib/phoneNormalization';
+import { supabase } from '@/lib/supabase/client';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+export const dynamic = 'force-dynamic';
+
+const MAX_CONVERSATIONS = 200;
 
 // 🔧 RATE LIMITING: Prevenir loops infinitos
 const requestCache = new Map<string, { timestamp: number; response: any }>();

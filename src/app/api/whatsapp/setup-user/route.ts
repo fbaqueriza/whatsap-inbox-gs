@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { WhatsAppConfigService } from '@/lib/whatsappConfigService';
-import { kapsoService } from '@/lib/kapsoService';
+import { KapsoService } from '@/lib/kapsoService';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -34,12 +34,13 @@ export async function POST(request: NextRequest) {
 
     console.log('📱 [WhatsAppSetup] Configurando WhatsApp para usuario nuevo:', user.id);
 
-    // Usar servicios estáticos
-    
-    if (!kapsoService) {
-      console.error('❌ [WhatsAppSetup] KapsoService no está disponible');
-      return NextResponse.json({ 
-        error: 'Servicio de Kapso no disponible' 
+    let kapso: KapsoService;
+    try {
+      kapso = new KapsoService();
+    } catch (serviceError) {
+      console.error('❌ [WhatsAppSetup] KapsoService no está disponible', serviceError);
+      return NextResponse.json({
+        error: 'Servicio de Kapso no disponible'
       }, { status: 503 });
     }
 
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Obtener número de sandbox de Kapso
-    const sandboxInfo = await kapsoService.getSandboxNumber();
+    const sandboxInfo = await kapso.getSandboxNumber();
     
     if (!sandboxInfo) {
       console.error('❌ [WhatsAppSetup] No hay número de sandbox disponible');

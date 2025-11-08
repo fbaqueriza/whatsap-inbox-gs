@@ -2,11 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { KapsoService } from '@/lib/kapsoService';
 
+export const dynamic = 'force-dynamic';
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({
+      success: false,
+      error: 'Endpoint disponible solo en entornos de desarrollo',
+    }, { status: 503 });
+  }
+
   try {
     const { searchParams } = new URL(request.url);
     const phoneNumber = searchParams.get('phoneNumber') || '541135562673';

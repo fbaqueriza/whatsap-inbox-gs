@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
 
     // Verificar que todas las órdenes estén pendientes de pago
     const invalidOrders = orders.filter(order => 
-      order.status === 'pagado'
+      order.status === 'pagado' || order.status === 'comprobante_enviado'
     );
 
     if (invalidOrders.length > 0) {

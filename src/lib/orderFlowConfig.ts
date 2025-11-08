@@ -12,7 +12,8 @@ export const ORDER_FLOW_CONFIG = {
     STANDBY: 'standby',
     ENVIADO: 'enviado', 
     PENDIENTE_DE_PAGO: 'pendiente_de_pago',
-    PAGADO: 'pagado'
+    PAGADO: 'pagado',
+    COMPROBANTE_ENVIADO: 'comprobante_enviado'
   },
 
   // 🔄 Transiciones del flujo (fácil de modificar)
@@ -36,6 +37,13 @@ export const ORDER_FLOW_CONFIG = {
       next: ORDER_STATUS.PAGADO,
       trigger: 'payment_proof_uploaded',
       action: 'complete_order'
+    },
+
+    // pagado → comprobante_enviado (comprobante enviado al usuario)
+    [ORDER_STATUS.PAGADO]: {
+      next: ORDER_STATUS.COMPROBANTE_ENVIADO,
+      trigger: 'comprobante_enviado',
+      action: 'comprobante_enviado'
     }
   },
 
@@ -101,6 +109,12 @@ La orden ${order.order_number} ha sido completada exitosamente.
 ¡Gracias por utilizar nuestros servicios!
 
 Saludos!`;
+    },
+
+    comprobante_enviado: (order: any) => {
+      return `✅ *COMPROBANTE ENVIADO*
+
+El comprobante para la orden ${order.order_number} ha sido enviado al usuario. Saludos!`;
     }
   },
 
@@ -119,6 +133,10 @@ Saludos!`;
       requiredFields: ['order_number', 'receipt_url']
     },
     [ORDER_STATUS.PAGADO]: {
+      canTransitionTo: [ORDER_STATUS.COMPROBANTE_ENVIADO],
+      requiredFields: ['order_number']
+    },
+    [ORDER_STATUS.COMPROBANTE_ENVIADO]: {
       canTransitionTo: [],
       requiredFields: ['order_number']
     }

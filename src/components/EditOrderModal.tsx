@@ -151,6 +151,7 @@ export default function EditOrderModal({
                   <option value="esperando_factura">Esperando Factura</option>
                   <option value="pendiente_de_pago">Pendiente de Pago</option>
                   <option value="pagado">Pagado</option>
+                  <option value="comprobante_enviado">Comprobante enviado</option>
                 </select>
                 <div className="mt-2"><strong>Fecha de creación:</strong> {new Date(order.orderDate).toLocaleDateString()}</div>
                 {order.invoiceDate && <div><strong>Fecha de factura:</strong> {new Date(order.invoiceDate).toLocaleDateString()}</div>}

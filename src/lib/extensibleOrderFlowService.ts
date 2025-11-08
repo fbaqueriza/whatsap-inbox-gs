@@ -6,8 +6,8 @@
 // Importar cliente de Supabase del servidor para usar en el webhook
 import { metaWhatsAppService } from './metaWhatsAppService';
 import { PhoneNumberService } from './phoneNumberService';
-import { ORDER_FLOW_CONFIG, getNextTransition, isValidTransition, getActionMessage } from './orderFlowConfig';
-import { ORDER_STATUS } from './orderConstants';
+import { getNextTransition, getActionMessage } from './orderFlowConfig';
+import { ORDER_STATUS, isValidOrderStatus, normalizeOrderStatus, OrderStatus } from './orderConstants';
 // Importación dinámica de KapsoService para evitar problemas de compilación
 
 export interface FlowResult {
@@ -147,67 +147,46 @@ export class ExtensibleOrderFlowService {
       }
 
 
+      const normalizedStatus = this.normalizeStatus(foundOrder.status);
+
+      if (normalizedStatus !== foundOrder.status) {
+        console.log('🔁 [ExtensibleOrderFlow] Normalizando estado legacy → estándar:', {
+          original: foundOrder.status,
+          normalized: normalizedStatus
+        });
+      }
+
       // 🔧 CORRECCIÓN: Validar si el mensaje actual debe activar una transición
       console.log('🔍 [ExtensibleOrderFlow] Validando si el mensaje debe activar transición:', {
-        currentStatus: foundOrder.status,
+        currentStatus: normalizedStatus,
         messageType: 'text',
         messageContent: message
       });
 
-      // 🔧 NUEVA LÓGICA: Solo procesar transiciones específicas según el estado
-      if (foundOrder.status === 'enviado') {
-        // En estado 'enviado', solo los documentos (facturas) deben activar la transición
-        if (message === 'documento_recibido') {
-          console.log('✅ [ExtensibleOrderFlow] Documento recibido, procesando transición de enviado → pendiente_de_pago');
-          
-          // Obtener la transición configurada
-          const transition = getNextTransition(foundOrder.status);
-          if (!transition) {
-            console.log('⚠️ [ExtensibleOrderFlow] No hay transición configurada para enviado → pendiente_de_pago');
-            return { success: false, message: 'No hay transición configurada' };
-          }
+      const transition = getNextTransition(normalizedStatus);
 
-          // Ejecutar la transición automática
-          return await this.executeTransition(foundOrder, transition, normalizedPhone, message);
-        } else {
-          console.log('⚠️ [ExtensibleOrderFlow] Estado "enviado" requiere documento (factura) para continuar');
-          return { success: false, message: 'Se requiere una factura válida para continuar el flujo' };
-        }
-      } else if (foundOrder.status === 'pendiente_de_pago') {
-        // ✅ CORREGIDO: En estado 'pendiente_de_pago', NO debe completarse automáticamente
-        // La orden solo debe completarse cuando el usuario suba un comprobante de pago real
-        console.log('⚠️ [ExtensibleOrderFlow] Estado "pendiente_de_pago" - La orden solo se completa cuando el usuario sube un comprobante de pago real');
-        console.log('ℹ️ [ExtensibleOrderFlow] El mensaje "documento_recibido" no debe activar la transición automática');
-        return { 
-          success: false, 
-          message: 'La orden está pendiente de pago. Solo se completará cuando se suba un comprobante de pago real.' 
-        };
-      } else {
-        // ✅ COMENTADO: Ya no esperamos respuesta del proveedor en estado STANDBY
-        // Las órdenes se crean directamente en ENVIADO y los detalles se envían inmediatamente
-        // (El código comentado abajo muestra cómo se manejaba antes el estado STANDBY)
-        /*
-        if (foundOrder.status === 'standby') {
-          // 🔧 AUTOMÁTICO: En estado 'standby', cualquier respuesta del proveedor activa la transición
-          console.log('✅ [ExtensibleOrderFlow] Respuesta del proveedor recibida, activando transición automática standby → enviado');
-          
-          // Obtener la transición configurada
-          const transition = getNextTransition(foundOrder.status);
-          if (!transition) {
-            console.log('⚠️ [ExtensibleOrderFlow] No hay transición configurada para standby → enviado');
-            return { success: false, message: 'No hay transición configurada' };
-          }
-
-          // Ejecutar la transición automática
-          return await this.executeTransition(foundOrder, transition, normalizedPhone, message);
-        }
-        */
-
-        // 🔧 CORRECCIÓN: Si llegamos aquí, significa que no hay transición válida
-        // No procesar ninguna transición automática
-        console.log('⚠️ [ExtensibleOrderFlow] No hay transición válida para procesar');
-        return { success: false, message: 'No hay transición disponible para este estado' };
+      if (!transition) {
+        console.log('⚠️ [ExtensibleOrderFlow] No hay transición configurada para este estado:', normalizedStatus);
+        return { success: false, message: 'No hay transición configurada para este estado' };
       }
+
+      const triggerEvaluation = this.shouldTriggerTransition(normalizedStatus, message);
+
+      if (!triggerEvaluation.triggered) {
+        console.log('ℹ️ [ExtensibleOrderFlow] Mensaje no activa transición automática:', {
+          reason: triggerEvaluation.reason,
+          currentStatus: normalizedStatus,
+          message
+        });
+        return { success: false, message: triggerEvaluation.reason || 'El mensaje no activa una transición automática para este estado' };
+      }
+
+      const orderForTransition = normalizedStatus === foundOrder.status
+        ? foundOrder
+        : { ...foundOrder, status: normalizedStatus };
+
+      // Ejecutar la transición automática
+      return await this.executeTransition(orderForTransition, transition, normalizedPhone, message);
 
     } catch (error) {
       return {
@@ -347,7 +326,14 @@ export class ExtensibleOrderFlowService {
   }
 
   /**
-   * ✅ FUNCIÓN AUXILIAR: Enviar mensaje por ambos canales (Meta + Kapso)
+   * 🔧 Ejecutar acción manualmente (expuesta para otros servicios)
+   */
+  public async runManualAction(action: string, order: any, phone: string): Promise<void> {
+    await this.executeAction(action, order, phone);
+  }
+
+  /**
+   * 🔧 Enviar mensaje por ambos canales (Meta + Kapso)
    */
   private async sendMessageToKapso(phone: string, message: string, userId?: string): Promise<void> {
     try {
@@ -400,7 +386,7 @@ export class ExtensibleOrderFlowService {
             );
             
             console.log('📡 [ExtensibleOrderFlow] Enviando broadcast al frontend...');
-            const { error: broadcastError } = await supabase
+            const broadcastResponse = await supabase
               .channel('kapso_messages')
               .send({
                 type: 'broadcast',
@@ -415,10 +401,10 @@ export class ExtensibleOrderFlowService {
                 }
               });
             
-            console.log('📡 [ExtensibleOrderFlow] Broadcast enviado, error:', broadcastError);
+            console.log('📡 [ExtensibleOrderFlow] Resultado del broadcast:', broadcastResponse);
             
-            if (broadcastError) {
-              console.error('❌ [ExtensibleOrderFlow] Error notificando mensaje al frontend:', broadcastError);
+            if (broadcastResponse === 'error') {
+              console.error('❌ [ExtensibleOrderFlow] Error notificando mensaje al frontend');
             } else {
               console.log('✅ [ExtensibleOrderFlow] Mensaje notificado al frontend:', result.data.id);
             }
@@ -506,6 +492,58 @@ export class ExtensibleOrderFlowService {
         const message = getActionMessage('complete_order', order);
         await this.sendMessageToKapso(phone, message, order.user_id);
     } catch (error) {
+    }
+  }
+
+  private normalizeStatus(status: string): OrderStatus {
+    if (isValidOrderStatus(status)) {
+      return status as OrderStatus;
+    }
+    return normalizeOrderStatus(status);
+  }
+
+  private shouldTriggerTransition(currentStatus: OrderStatus, message: string | undefined): { triggered: boolean; reason?: string } {
+    const trimmedMessage = message?.trim() || '';
+
+    switch (currentStatus) {
+      case ORDER_STATUS.STANDBY:
+        if (!trimmedMessage) {
+          return {
+            triggered: false,
+            reason: 'Se requiere una respuesta del proveedor para avanzar la orden'
+          };
+        }
+        return { triggered: true };
+      case ORDER_STATUS.ENVIADO: {
+        const normalizedMessage = trimmedMessage.toLowerCase();
+        if (normalizedMessage === 'documento_recibido') {
+          return { triggered: true };
+        }
+        return {
+          triggered: false,
+          reason: 'Se requiere una factura válida para continuar el flujo'
+        };
+      }
+      case ORDER_STATUS.PENDIENTE_DE_PAGO:
+        return {
+          triggered: false,
+          reason: 'La orden está pendiente de pago. Solo se completará cuando se suba un comprobante real.'
+        };
+      case ORDER_STATUS.PAGADO:
+        return {
+          triggered: false,
+          reason: 'La orden ya fue marcada como pagada. No hay transiciones automáticas disponibles.'
+        };
+      case ORDER_STATUS.COMPROBANTE_ENVIADO:
+        return {
+          triggered: false,
+          reason: 'La orden ya fue completada. No hay transiciones automáticas disponibles.'
+        };
+      default:
+        return {
+          triggered: false,
+          reason: 'No hay transición automática configurada para este estado'
+        };
     }
   }
 }

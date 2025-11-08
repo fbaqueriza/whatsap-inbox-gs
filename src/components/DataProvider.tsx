@@ -66,8 +66,10 @@ function mapOrderFromDb(order: any): Order {
     invoiceNumber: order.invoice_number,
     bankInfo: order.bank_info,
     receiptUrl: order.receipt_url,
+    invoiceFileUrl: order.invoice_file_url || order.receipt_url || undefined,
+    paymentReceiptUrl: order.payment_receipt_url || undefined,
     // 🔧 CORRECCIÓN: Usar estado directo de la BD (ya está normalizado)
-    status: order.status,
+    status: (order.status || 'standby') as Order['status'],
     // 🔧 NUEVAS COLUMNAS NATIVAS: Mapear directamente desde la BD
     desiredDeliveryDate: order.desired_delivery_date ? new Date(order.desired_delivery_date) : undefined,
     desiredDeliveryTime: order.desired_delivery_time || undefined,
@@ -182,11 +184,74 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
 
       // Procesar órdenes
       const { data: ordersData, error: ordersError } = ordersResponse;
+      let paymentReceiptsMap: Record<string, string> = {};
+      let invoiceDocsMap: Record<string, string> = {};
+
+      try {
+        const { data: receiptsData, error: receiptsError } = await supabase
+          .from('payment_receipts')
+          .select('order_id, file_url')
+          .eq('user_id', currentUserId);
+
+        if (receiptsError) {
+          console.warn('⚠️ [DataProvider] Error obteniendo payment_receipts:', receiptsError);
+        } else if (receiptsData) {
+          paymentReceiptsMap = receiptsData.reduce((acc, receipt) => {
+            if (receipt.order_id && receipt.file_url && !acc[receipt.order_id]) {
+              acc[receipt.order_id] = receipt.file_url;
+            }
+            return acc;
+          }, {} as Record<string, string>);
+        }
+      } catch (receiptsCatch) {
+        console.warn('⚠️ [DataProvider] Error inesperado obteniendo payment_receipts:', receiptsCatch);
+      }
+
+      try {
+        const orderIds = (ordersData || []).map(order => order.id).filter(Boolean);
+        if (orderIds.length > 0) {
+          const { data: invoiceDocs, error: invoiceDocsError } = await supabase
+            .from('documents')
+            .select('order_id, file_url, file_type')
+            .eq('user_id', currentUserId)
+            .in('order_id', orderIds);
+
+          if (invoiceDocsError) {
+            console.warn('⚠️ [DataProvider] Error obteniendo documents para facturas:', invoiceDocsError);
+          } else if (invoiceDocs) {
+            invoiceDocsMap = invoiceDocs.reduce((acc, doc) => {
+              if (!doc.order_id || !doc.file_url) return acc;
+              const fileType = typeof (doc as any).file_type === 'string' ? (doc as any).file_type.toLowerCase() : '';
+              const isInvoice = fileType.includes('factura') || fileType.includes('invoice');
+
+              if (isInvoice && !acc[doc.order_id]) {
+                acc[doc.order_id] = doc.file_url;
+              }
+              return acc;
+            }, {} as Record<string, string>);
+          }
+        }
+      } catch (invoiceDocsCatch) {
+        console.warn('⚠️ [DataProvider] Error inesperado obteniendo documentos de factura:', invoiceDocsCatch);
+      }
+
       if (ordersError) {
         console.error('❌ Error fetching orders:', ordersError);
         setOrders([]);
       } else {
-        const validatedOrders = (ordersData || []).map(mapOrderFromDb);
+        const validatedOrders = (ordersData || []).map(order => {
+          const mapped = mapOrderFromDb(order);
+          if (!mapped.paymentReceiptUrl && paymentReceiptsMap[order.id]) {
+            mapped.paymentReceiptUrl = paymentReceiptsMap[order.id];
+          }
+          if (invoiceDocsMap[order.id]) {
+            mapped.invoiceFileUrl = invoiceDocsMap[order.id];
+          }
+          if (!mapped.invoiceFileUrl) {
+            mapped.invoiceFileUrl = mapped.receiptUrl;
+          }
+          return mapped;
+        });
         setOrders(validatedOrders);
       }
       
@@ -218,7 +283,23 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         if (existingOrderIndex >= 0) {
           // Actualizar orden existente
           const updatedOrders = [...prevOrders];
-          updatedOrders[existingOrderIndex] = { ...updatedOrders[existingOrderIndex], ...updatedOrder };
+          const mergedOrder = {
+            ...updatedOrders[existingOrderIndex],
+            ...updatedOrder,
+          } as Order;
+          if (updatedOrder.updatedAt && !(updatedOrder.updatedAt instanceof Date)) {
+            mergedOrder.updatedAt = new Date(updatedOrder.updatedAt);
+          }
+          if (updatedOrder.status) {
+            mergedOrder.status = updatedOrder.status as Order['status'];
+          }
+          if (!mergedOrder.invoiceFileUrl && updatedOrder.invoiceFileUrl) {
+            mergedOrder.invoiceFileUrl = updatedOrder.invoiceFileUrl;
+          }
+          if (!mergedOrder.paymentReceiptUrl && updatedOrder.paymentReceiptUrl) {
+            mergedOrder.paymentReceiptUrl = updatedOrder.paymentReceiptUrl;
+          }
+          updatedOrders[existingOrderIndex] = mergedOrder;
           return updatedOrders;
         } else {
           // Verificar que no sea duplicado antes de agregar
@@ -226,8 +307,14 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
           if (exists) {
             return prevOrders;
           }
-          // Agregar nueva orden al inicio (más reciente primero)
-          return [updatedOrder, ...prevOrders];
+          const newOrder = {
+            ...updatedOrder,
+            status: (updatedOrder.status || 'standby') as Order['status'],
+          } as Order;
+          if (updatedOrder.updatedAt && !(updatedOrder.updatedAt instanceof Date)) {
+            newOrder.updatedAt = new Date(updatedOrder.updatedAt);
+          }
+          return [newOrder, ...prevOrders];
         }
       });
     });
@@ -343,6 +430,8 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         invoice_number: (order as any).invoiceNumber,
         bank_info: (order as any).bankInfo,
         receipt_url: (order as any).receiptUrl,
+        invoice_file_url: order.invoiceFileUrl || order.receiptUrl || null,
+        payment_receipt_url: order.paymentReceiptUrl || null,
         notes: order.notes,
         // 🔧 NUEVAS COLUMNAS NATIVAS para campos del modal
         desired_delivery_date: order.desiredDeliveryDate ? order.desiredDeliveryDate.toISOString() : null,
@@ -359,7 +448,17 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       }
       // 🔧 OPTIMIZACIÓN: Actualizar localmente sin fetchAll completo
       setOrders(prevOrders => 
-        prevOrders.map(o => o.id === order.id ? { ...o, ...order, updatedAt: new Date() } : o)
+        prevOrders.map(o => 
+          o.id === order.id 
+            ? { 
+                ...o, 
+                ...order, 
+                invoiceFileUrl: order.invoiceFileUrl || o.invoiceFileUrl || order.receiptUrl || o.receiptUrl,
+                paymentReceiptUrl: order.paymentReceiptUrl || o.paymentReceiptUrl, 
+                updatedAt: new Date() 
+              } 
+            : o
+        )
       );
     } catch (error) {
       console.error('Error in updateOrder:', error);

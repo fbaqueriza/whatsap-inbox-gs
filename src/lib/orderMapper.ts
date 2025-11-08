@@ -4,6 +4,9 @@ import { Order, Provider } from '@/types';
  * Mapea una orden desde la base de datos al formato del frontend
  */
 export function mapOrderFromDb(order: any): Order {
+  const rawReceiptUrl = order.receipt_url || order.receiptUrl || undefined;
+  const rawInvoiceFileUrl = order.invoice_file_url || order.invoiceFileUrl || rawReceiptUrl || undefined;
+
   return {
     ...order,
     providerId: order.provider_id,
@@ -26,7 +29,9 @@ export function mapOrderFromDb(order: any): Order {
     invoiceNumber: order.invoice_number,
     invoiceDate: order.invoice_date ? new Date(order.invoice_date) : undefined,
     bankInfo: order.bank_info,
-    receiptUrl: order.receipt_url,
+    receiptUrl: rawReceiptUrl,
+    invoiceFileUrl: rawInvoiceFileUrl,
+    paymentReceiptUrl: order.payment_receipt_url || order.paymentReceiptUrl || undefined,
     // Usar estado directo de la BD (ya está normalizado)
     status: order.status,
     // Nuevas columnas nativas: Mapear directamente desde la BD

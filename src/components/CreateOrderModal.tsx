@@ -281,8 +281,17 @@ export default function CreateOrderModal({
     
     return order.items
       .map(item => {
-        // Formato: "Producto: Cantidad Unidad"
-        return `${item.productName}: ${item.quantity} ${item.unit}`;
+        const unitNormalized = (item.unit || '').toLowerCase();
+        const isFreeText =
+          (!item.quantity || item.quantity === 1) &&
+          (!unitNormalized || ['un', 'unidad', 'unidades', 'u', 'und'].includes(unitNormalized)) &&
+          !item.productName.includes(':');
+
+        if (isFreeText) {
+          return item.productName.trim();
+        }
+
+        return `${item.productName}: ${item.quantity} ${item.unit}`.trim();
       })
       .join('\n');
   };

@@ -2,6 +2,7 @@ import { getSupabaseServerClient } from './supabase/serverClient';
 import { metaWhatsAppService } from './metaWhatsAppService';
 import { ORDER_STATUS } from './orderConstants';
 import { ExtensibleOrderFlowService } from './extensibleOrderFlowService';
+import { PhoneNumberService } from './phoneNumberService';
 
 /**
  * Servicio de flujo de órdenes para el SERVIDOR
@@ -9,7 +10,7 @@ import { ExtensibleOrderFlowService } from './extensibleOrderFlowService';
  */
 export class ServerOrderFlowService {
   private static instance: ServerOrderFlowService;
-  private supabase = getSupabaseServerClient();
+  private supabase = getSupabaseServerClient() as any;
 
   private constructor() {}
 
@@ -104,6 +105,8 @@ export class ServerOrderFlowService {
           };
         }
 
+      await this.savePendingOrder(orderData, provider);
+
       console.log('✅ [ServerOrderFlow] Orden creada y notificación enviada exitosamente');
       return { 
         success: true, 
@@ -174,7 +177,7 @@ export class ServerOrderFlowService {
         provider_id: order.providerId,
         order_number: order.orderNumber,
         items: order.items || [],
-        status: ORDER_STATUS.ENVIADO,
+        status: ORDER_STATUS.STANDBY,
         notes: order.notes || '',
         desired_delivery_date: desiredDeliveryDateValue,
         desired_delivery_time: Array.isArray(order.desiredDeliveryTime) && order.desiredDeliveryTime.length > 0
@@ -344,11 +347,9 @@ export class ServerOrderFlowService {
             });
 
             // Construir mensaje de texto con el header del template y detalles de la orden
-            const { ORDER_FLOW_CONFIG } = await import('./orderFlowConfig');
             // Header del template evio_orden: incluye company_name (razón social del usuario)
-            const headerMessage = `${templateVariables.company_name}\n\nBuen día ${templateVariables.contact_name}! Espero que andes bien!\nA continuación, paso el pedido de esta semana.`;
-            const detailsMessage = ORDER_FLOW_CONFIG.MESSAGES.send_order_details(order, provider);
-            const fullMessage = `${headerMessage}\n\n${detailsMessage}`;
+            const headerMessage = `${templateVariables.company_name}\n\nBuen día ${templateVariables.contact_name}! Espero que andes bien!\nPreparé el pedido de esta semana. ¿Me confirmás cuando puedas para pasarte el detalle completo?`;
+            const fullMessage = headerMessage;
 
             console.log('📝 [ServerOrderFlow] Enviando fallback de texto:', fullMessage.substring(0, 100) + '...');
 
@@ -359,7 +360,7 @@ export class ServerOrderFlowService {
             });
 
             console.log('✅ [ServerOrderFlow] Fallback de texto enviado exitosamente:', textResult.messages?.[0]?.id);
-            // ✅ El fallback ya incluye el header + detalles completos, no necesitamos enviar detalles adicionales
+            await this.savePendingOrder(order, provider);
             return { 
               success: true, 
               fallbackSent: true, 
@@ -389,15 +390,6 @@ export class ServerOrderFlowService {
       // ✅ Template enviado exitosamente
       if (templateResult.success) {
         console.log('✅ [ServerOrderFlow] Template enviado exitosamente');
-        
-        // ✅ CAMBIO: Enviar detalles inmediatamente después del template (sin esperar respuesta)
-        try {
-          console.log('📋 [ServerOrderFlow] Enviando detalles de la orden inmediatamente...');
-          await this.sendOrderDetailsImmediately(phone, order, provider);
-        } catch (detailsError) {
-          console.error('⚠️ [ServerOrderFlow] Error enviando detalles inmediatamente:', detailsError);
-          // No fallar el flujo completo si falla el envío de detalles
-        }
       }
       
       return { 
@@ -972,6 +964,47 @@ export class ServerOrderFlowService {
         error: error.message || 'Error enviando template',
         code: typeof error?.code === 'number' ? error.code : undefined
       };
+    }
+  }
+
+  private async savePendingOrder(order: any, provider: any): Promise<void> {
+    try {
+      if (!this.supabase) return;
+
+      const normalizedPhone = PhoneNumberService.normalizePhoneNumber(provider.phone || '');
+      const providerPhone = normalizedPhone || provider.phone;
+
+      const pendingRecord: any = {
+        order_id: order.id,
+        provider_id: provider.id,
+        user_id: order.user_id,
+        provider_phone: providerPhone,
+        order_data: JSON.stringify({
+          id: order.id,
+          orderNumber: order.order_number,
+          items: order.items,
+          totalAmount: order.total_amount,
+          status: order.status,
+          providerId: order.provider_id,
+          userId: order.user_id,
+          createdAt: order.created_at,
+          updatedAt: order.updated_at
+        }),
+        status: 'pending_confirmation',
+        created_at: new Date().toISOString()
+      };
+
+      const { error } = await this.supabase
+        .from('pending_orders')
+        .upsert(pendingRecord, { onConflict: 'order_id' });
+
+      if (error) {
+        console.error('⚠️ [ServerOrderFlow] Error guardando pending_order:', error);
+      } else {
+        console.log('✅ [ServerOrderFlow] pending_order guardado para orden:', order.id);
+      }
+    } catch (error) {
+      console.error('⚠️ [ServerOrderFlow] Error interno guardando pending_order:', error);
     }
   }
 }

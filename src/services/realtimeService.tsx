@@ -5,6 +5,7 @@ import { useSupabaseAuth } from '../hooks/useSupabaseAuth';
 import { mapOrderFromDb } from '../lib/orderMapper';
 import { supabase } from '../lib/supabase/client';
 import { normalizePhoneNumber } from '../lib/phoneNormalization';
+import { Order } from '../types';
 
 // Tipos
 interface RealtimeMessage {
@@ -24,13 +25,19 @@ interface RealtimeMessage {
 
 interface RealtimeOrder {
   id: string;
-  status: string;
+  status?: Order['status'];
   orderNumber?: string;
   totalAmount?: number;
   invoiceNumber?: string;
   receiptUrl?: string;
+  invoiceFileUrl?: string;
+  paymentReceiptUrl?: string;
   invoiceData?: any;
-  updatedAt?: string;
+  updatedAt?: string | Date;
+  providerId?: string;
+  provider?: Order['provider'];
+  items?: Order['items'];
+  source?: string;
 }
 
 interface RealtimeServiceContextType {
@@ -260,7 +267,37 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       return;
     }
 
-    // Buscar la orden en el estado actual y actualizarla
+    const orderFromPayload = payload.payload?.order;
+
+    if (orderFromPayload) {
+      const mappedOrder = mapOrderFromDb(orderFromPayload);
+
+      if (mappedOrder.user_id && mappedOrder.user_id !== currentUserId) {
+        return;
+      }
+
+      setOrders(prev => {
+        const existingIndex = prev.findIndex(order => order.id === mappedOrder.id);
+        if (existingIndex >= 0) {
+          const updated = [...prev];
+          updated[existingIndex] = { ...mappedOrder };
+          return updated;
+        }
+        return [mappedOrder, ...prev];
+      });
+
+      orderListeners.current.forEach(callback => {
+        try {
+          callback(mappedOrder);
+        } catch (error) {
+          console.error('❌ [RealtimeService] Error notificando listener de orden (payload completo):', error);
+        }
+      });
+
+      return;
+    }
+
+    // Buscar la orden en el estado actual y actualizarla cuando sólo llega metadata mínima
     setOrders(prev => {
       const updated = prev.map(order => {
         if (order.id === orderId) {
@@ -271,6 +308,12 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
           };
           if (payload.payload.receiptUrl !== undefined) {
             updateData.receiptUrl = payload.payload.receiptUrl;
+          }
+        if (payload.payload.invoiceFileUrl !== undefined) {
+          updateData.invoiceFileUrl = payload.payload.invoiceFileUrl;
+        }
+          if (payload.payload.paymentReceiptUrl !== undefined) {
+            updateData.paymentReceiptUrl = payload.payload.paymentReceiptUrl;
           }
           if (payload.payload.totalAmount !== undefined) {
             updateData.totalAmount = payload.payload.totalAmount;
@@ -291,13 +334,19 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // Notificar a los listeners
     orderListeners.current.forEach(callback => {
       try {
-        const updatedOrder: any = { 
-          id: orderId, 
+        const updatedOrder: any = {
+          id: orderId,
           status: payload.payload.status,
           source: payload.payload.source || 'invoice_ocr'
         };
         if (payload.payload.receiptUrl !== undefined) {
           updatedOrder.receiptUrl = payload.payload.receiptUrl;
+        }
+        if (payload.payload.invoiceFileUrl !== undefined) {
+          updatedOrder.invoiceFileUrl = payload.payload.invoiceFileUrl;
+        }
+        if (payload.payload.paymentReceiptUrl !== undefined) {
+          updatedOrder.paymentReceiptUrl = payload.payload.paymentReceiptUrl;
         }
         if (payload.payload.totalAmount !== undefined) {
           updatedOrder.totalAmount = payload.payload.totalAmount;
@@ -310,7 +359,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         }
         callback(updatedOrder);
       } catch (error) {
-        console.error('❌ [RealtimeService] Error en order listener:', error);
+        console.error('❌ [RealtimeService] Error notificando listener de orden:', error);
       }
     });
   };
@@ -332,6 +381,8 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       status: payload.payload.status,
       items: payload.payload.items || [],
       receiptUrl: payload.payload.receiptUrl,
+      invoiceFileUrl: payload.payload.invoiceFileUrl,
+      paymentReceiptUrl: payload.payload.paymentReceiptUrl,
       totalAmount: payload.payload.totalAmount,
       currency: payload.payload.currency || 'ARS',
       invoiceNumber: payload.payload.invoiceNumber,

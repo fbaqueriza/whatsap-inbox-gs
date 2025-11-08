@@ -8,6 +8,7 @@ import { getSupabaseServerClient } from './supabase/serverClient';
 import { ORDER_STATUS } from './orderConstants';
 import { metaWhatsAppService } from './metaWhatsAppService';
 import { PhoneNumberService } from './phoneNumberService';
+import { extensibleOrderFlowService } from './extensibleOrderFlowService';
 
 export interface NotificationResult {
   success: boolean;
@@ -212,13 +213,16 @@ export class NotificationService {
         updatedAt: order.updatedAt
       };
 
+      const normalizedPhone = PhoneNumberService.normalizePhoneNumber(provider.phone);
+      const providerPhone = normalizedPhone || provider.phone;
+
       const { error } = await (this.supabase as any)
         .from('pending_orders')
         .insert({
           order_id: order.id,
           provider_id: provider.id,
           user_id: userId,
-          provider_phone: provider.phone,
+          provider_phone: providerPhone,
           order_data: JSON.stringify(orderData), // 🔧 CORRECCIÓN: Incluir order_data
           status: 'pending_confirmation',
           created_at: new Date().toISOString()
@@ -570,21 +574,12 @@ export class NotificationService {
     try {
       console.log('📋 Enviando detalles del pedido a:', providerPhone);
 
-      // Formatear detalles del pedido
-      const orderDetails = this.formatOrderDetails(order);
-      
-      // Enviar mensaje con detalles usando metaWhatsAppService
-      const result = await metaWhatsAppService.sendMessage(
-        providerPhone,
-        orderDetails,
-        order.user_id // CORREGIDO: Pasar user_id para que aparezca en el chat
-      );
+      const normalized = PhoneNumberService.normalizePhoneNumber(providerPhone);
+      const phone = normalized || providerPhone;
 
-      if (result) {
-        console.log('✅ Detalles del pedido enviados exitosamente');
-      } else {
-        console.log('❌ Error enviando detalles del pedido');
-      }
+      await extensibleOrderFlowService.runManualAction('send_order_details', order, phone);
+
+      console.log('✅ Detalles del pedido enviados exitosamente');
 
     } catch (error) {
       console.error('❌ Error enviando detalles del pedido:', error);

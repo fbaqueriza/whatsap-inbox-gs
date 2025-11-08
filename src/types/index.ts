@@ -64,7 +64,7 @@ export interface Order {
   providerId: string;
   provider?: Provider; // 🔧 NUEVO: Información del proveedor incluida
   items: OrderItem[];
-  status: 'standby' | 'enviado' | 'esperando_factura' | 'pendiente_de_pago' | 'pagado';
+  status: 'standby' | 'enviado' | 'esperando_factura' | 'pendiente_de_pago' | 'pagado' | 'comprobante_enviado' | 'finalizado' | 'cancelled';
   totalAmount: number;
   currency: string;
   orderDate: Date;
@@ -82,6 +82,8 @@ export interface Order {
     bankName?: string;
   };
   receiptUrl?: string;
+  invoiceFileUrl?: string;
+  paymentReceiptUrl?: string;
   notes?: string;
   // Nuevo campo para archivos adicionales
   additionalFiles?: OrderFile[];

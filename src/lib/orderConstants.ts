@@ -6,38 +6,49 @@
 export const ORDER_STATUS = {
   STANDBY: 'standby',
   ENVIADO: 'enviado',
+  ESPERANDO_FACTURA: 'esperando_factura',
   PENDIENTE_DE_PAGO: 'pendiente_de_pago',
-  PAGADO: 'pagado'
+  PAGADO: 'pagado',
+  COMPROBANTE_ENVIADO: 'comprobante_enviado',
+  FINALIZADO: 'finalizado',
+  CANCELLED: 'cancelled'
 } as const;
 
 export type OrderStatus = typeof ORDER_STATUS[keyof typeof ORDER_STATUS];
 
-export const ORDER_STATUS_LABELS = {
+export const ORDER_STATUS_LABELS: Record<string, string> = {
   [ORDER_STATUS.STANDBY]: 'Standby',
   [ORDER_STATUS.ENVIADO]: 'Enviado',
-  [ORDER_STATUS.PENDIENTE_DE_PAGO]: 'Pendiente de Pago',
-  [ORDER_STATUS.PAGADO]: 'Pagado'
-} as const;
+  [ORDER_STATUS.ESPERANDO_FACTURA]: 'Esperando factura',
+  [ORDER_STATUS.PENDIENTE_DE_PAGO]: 'Pendiente de pago',
+  [ORDER_STATUS.PAGADO]: 'Pagado',
+  [ORDER_STATUS.COMPROBANTE_ENVIADO]: 'Comprobante enviado',
+  [ORDER_STATUS.FINALIZADO]: 'Finalizado',
+  [ORDER_STATUS.CANCELLED]: 'Cancelado'
+};
 
 export const ORDER_STATUS_DESCRIPTIONS = {
   [ORDER_STATUS.STANDBY]: 'Orden creada, pendiente de envío al proveedor',
   [ORDER_STATUS.ENVIADO]: 'Orden enviada al proveedor, esperando factura',
   [ORDER_STATUS.PENDIENTE_DE_PAGO]: 'Factura recibida, esperando comprobante de pago',
-  [ORDER_STATUS.PAGADO]: 'Comprobante de pago subido, orden completada'
+  [ORDER_STATUS.PAGADO]: 'Comprobante de pago registrado, pendiente de envío al proveedor',
+  [ORDER_STATUS.COMPROBANTE_ENVIADO]: 'Comprobante enviado al proveedor'
 } as const;
 
 export const ORDER_STATUS_COLORS = {
   [ORDER_STATUS.STANDBY]: 'yellow',
   [ORDER_STATUS.ENVIADO]: 'blue',
   [ORDER_STATUS.PENDIENTE_DE_PAGO]: 'purple',
-  [ORDER_STATUS.PAGADO]: 'green'
+  [ORDER_STATUS.PAGADO]: 'green',
+  [ORDER_STATUS.COMPROBANTE_ENVIADO]: 'green'
 } as const;
 
 export const ORDER_STATUS_ICONS = {
   [ORDER_STATUS.STANDBY]: 'Clock',
   [ORDER_STATUS.ENVIADO]: 'Send',
   [ORDER_STATUS.PENDIENTE_DE_PAGO]: 'CreditCard',
-  [ORDER_STATUS.PAGADO]: 'CheckCircle'
+  [ORDER_STATUS.PAGADO]: 'CheckCircle',
+  [ORDER_STATUS.COMPROBANTE_ENVIADO]: 'CheckCircle'
 } as const;
 
 /**
@@ -61,6 +72,7 @@ export const LEGACY_STATUS_MAPPING = {
   'finalizado': ORDER_STATUS.PAGADO,
   'completed': ORDER_STATUS.PAGADO,
   'delivered': ORDER_STATUS.PAGADO,
+  'comprobante_enviado': ORDER_STATUS.COMPROBANTE_ENVIADO,
   'cancelled': ORDER_STATUS.STANDBY
 } as const;
 
@@ -86,7 +98,8 @@ export function getNextOrderStatus(currentStatus: OrderStatus): OrderStatus | nu
     ORDER_STATUS.STANDBY,
     ORDER_STATUS.ENVIADO,
     ORDER_STATUS.PENDIENTE_DE_PAGO,
-    ORDER_STATUS.PAGADO
+    ORDER_STATUS.PAGADO,
+    ORDER_STATUS.COMPROBANTE_ENVIADO
   ];
   
   const currentIndex = flow.indexOf(currentStatus);
@@ -101,7 +114,8 @@ export function getPreviousOrderStatus(currentStatus: OrderStatus): OrderStatus 
     ORDER_STATUS.STANDBY,
     ORDER_STATUS.ENVIADO,
     ORDER_STATUS.PENDIENTE_DE_PAGO,
-    ORDER_STATUS.PAGADO
+    ORDER_STATUS.PAGADO,
+    ORDER_STATUS.COMPROBANTE_ENVIADO
   ];
   
   const currentIndex = flow.indexOf(currentStatus);

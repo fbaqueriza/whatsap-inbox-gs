@@ -73,6 +73,8 @@ export default function CurrentOrdersModule({
         return <FileText className="h-4 w-4 text-purple-500" />;
       case 'pagado':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case 'comprobante_enviado':
+        return <CheckCircle className="h-4 w-4 text-green-600" />;
       default:
         return <Clock className="h-4 w-4 text-gray-500" />;
     }
@@ -90,6 +92,7 @@ export default function CurrentOrdersModule({
       case "pendiente_de_pago":
         return "bg-purple-100 text-purple-800";
       case "pagado":
+      case "comprobante_enviado":
         return "bg-green-100 text-green-800";
       default:
         return "bg-gray-100 text-gray-800";
@@ -153,7 +156,19 @@ export default function CurrentOrdersModule({
         </div>
       ) : (
         <div className="space-y-4">
-          {orders.slice(0, maxOrders).map((order) => (
+          {orders.slice(0, maxOrders).map((order) => {
+            const invoiceLink =
+              order.invoiceFileUrl ||
+              order.receiptUrl ||
+              (order as any).receipt_url ||
+              undefined;
+            const paymentLink =
+              order.paymentReceiptUrl ||
+              (order as any).payment_receipt_url ||
+              (order as any).comprobante_url ||
+              undefined;
+
+            return (
             <div key={order.id} className="bg-white rounded-lg p-4 border border-blue-200 hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center space-x-3">
@@ -172,6 +187,7 @@ export default function CurrentOrdersModule({
                          order.status === 'esperando_factura' ? 'Esperando Factura' :
                          order.status === 'pendiente_de_pago' ? 'Pendiente de Pago' :
                          order.status === 'pagado' ? 'Pagado' :
+                         order.status === 'comprobante_enviado' ? 'Comprobante enviado' :
                          order.status}
                       </span>
                     </div>
@@ -199,9 +215,9 @@ export default function CurrentOrdersModule({
                   )}
                   
                   {/* Descargar factura - cuando hay factura disponible */}
-                  {['pendiente_de_pago','pagado','enviado'].includes(order.status) && order.receipt_url && (
+                  {['pendiente_de_pago','pagado','comprobante_enviado','enviado'].includes(order.status) && invoiceLink && (
                     <a
-                      href={order.receipt_url}
+                      href={invoiceLink as string}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-gray-400"
@@ -215,14 +231,18 @@ export default function CurrentOrdersModule({
                     <ComprobanteButton
                       comprobante={null}
                       onUpload={(file) => onUploadPaymentProof(order.id, file)}
-                      onView={() => { if(order.receiptUrl) onOpenReceipt(order.receiptUrl); }}
+                      onView={() => {
+                        if (paymentLink && onOpenReceipt) {
+                          onOpenReceipt(paymentLink as string);
+                        }
+                      }}
                     />
                   )}
                   
                   {/* Ver comprobante - cuando hay comprobante disponible */}
-                  {['pagado','finalizado'].includes(order.status) && order.receiptUrl && (
+                  {['pagado','comprobante_enviado','finalizado'].includes(order.status) && paymentLink && onOpenReceipt && (
                     <button
-                      onClick={() => onOpenReceipt(order.receiptUrl)}
+                      onClick={() => onOpenReceipt(paymentLink as string)}
                       className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-gray-400"
                     >
                       <Upload className="h-4 w-4 mr-1" /> Ver comprobante
@@ -230,7 +250,7 @@ export default function CurrentOrdersModule({
                   )}
                   
                   {/* Confirmar recepción - solo en estado pagado */}
-                  {order.status === 'pagado' && (
+                  {['pagado','comprobante_enviado'].includes(order.status) && (
                     <button
                       className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium border border-green-200 text-white bg-green-600 hover:bg-green-700 focus:ring-2 focus:ring-green-500"
                       onClick={() => onConfirmReception(order.id)}
@@ -257,7 +277,8 @@ export default function CurrentOrdersModule({
               {/* Orden de pago - solo en estado pendiente_de_pago */}
               {showPaymentOrder(order)}
             </div>
-          ))}
+            );
+          })}
           
           {orders.length > maxOrders && (
             <div className="text-center">

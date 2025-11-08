@@ -1,7 +1,7 @@
 # 🧭 MAPA MADRE ADAPTATIVO - GASTRONOMY SAAS
 
-**Fecha de última actualización:** 2025-11-05  
-**Versión:** 2.0  
+**Fecha de última actualización:** 2025-11-07  
+**Versión:** 2.1  
 **Estado:** 🟩 Estable y Documentado  
 **Metodología:** Revisión completa y documentación matemáticamente precisa
 
@@ -169,6 +169,8 @@ G = gastronomy-saas/
 | `DataProvider` | `userEmail`, `userId`, `children` | 🟩 | Contexto global de datos |
 | `Navigation` | - | 🟩 | Navegación principal |
 | `InvoiceManagementSystem` | - | 🟩 | Sistema de facturas |
+| `PaymentReceiptsList` | `userId`, `orders`, `hideHeader` | 🟩 | Gestión masiva de comprobantes con envío automatizado |
+| `OrdersModule` | `orders`, `providers`, callbacks | 🟩 | Listado resumido con acceso directo a comprobantes |
 
 **Flujo de Datos UI:**
 ```
@@ -185,6 +187,7 @@ User Action → Component → DataProvider → API → Database
 |----------|---------------|--------|--------------|
 | `ServerOrderFlowService` | `createOrderAndNotify`, `createOrder`, `sendOrderNotification` | 🟩 | Supabase, Meta WhatsApp |
 | `ExtensibleOrderFlowService` | `processProviderMessage`, `executeTransition` | 🟩 | Supabase, Kapso |
+| `PaymentReceiptService` | `processPaymentReceipt`, `sendReceiptToProvider` | 🟩 | Supabase, Kapso |
 | `WhatsAppTemplateSetupService` | `setupTemplatesForUser`, `createTemplate`, `getExistingTemplates` | 🟩 | Kapso API, Supabase |
 | `DocumentService` | `createDocument`, `processDocument`, `assignToProvider` | 🟩 | Supabase, OCR Service |
 | `InvoiceProcessingService` | `processInvoice`, `extractInvoiceData` | 🟩 | PDF-Parse, OCR, Supabase |
@@ -206,6 +209,22 @@ flowchart TD
     H --> L[Kapso WhatsApp API]
     J --> L
 ```
+
+---
+
+#### **Máquina de Estados de Órdenes**
+
+| Estado | Activa `ExtensibleOrderFlowService` | Trigger | Acción asociada | Estado siguiente |
+|--------|-------------------------------------|---------|-----------------|------------------|
+| `standby` | Sí | Cualquier mensaje del proveedor | `send_order_details` (en Kapso) | `enviado` |
+| `enviado` | Sí | `documento_recibido` (webhook/documento) | `process_invoice` | `pendiente_de_pago` |
+| `pendiente_de_pago` | Sí (manual) | Carga de comprobante (usuario) | `complete_order` | `pagado` |
+| `pagado` | Sí | Envío de comprobante al proveedor | Notificación final | `comprobante_enviado` |
+| `comprobante_enviado` | No | — | Estado terminal | — |
+
+- El servicio normaliza estados legacy antes de transicionar (`normalizeOrderStatus`).  
+- Transiciones se ejecutan vía `executeTransition`, que actualiza Supabase y emite broadcast `orders-updates`.  
+- `PaymentReceiptService.sendReceiptToProvider` fuerza la transición `pagado → comprobante_enviado` tras confirmar entrega del comprobante y también emite broadcast.
 
 ---
 
@@ -257,6 +276,32 @@ users (1) ──< (N) documents
 orders (1) ──< (N) payment_receipts
 providers (1) ──< (N) orders
 providers (1) ──< (N) documents
+```
+
+---
+
+### **Flujo 4: Envío de Comprobante al Proveedor**
+
+```mermaid
+sequenceDiagram
+    participant U as Usuario
+    participant UI as PaymentReceiptsList
+    participant API as /api/payment-receipts/send
+    participant PR as PaymentReceiptService
+    participant DB as Supabase
+    participant W as Kapso WhatsApp API
+    participant P as Proveedor
+    participant RT as RealtimeService
+
+    U->>UI: Selecciona comprobante
+    UI->>API: POST receiptId, providerId
+    API->>PR: sendReceiptToProvider()
+    PR->>W: sendStandaloneDocument()
+    W->>P: Documento PDF
+    PR->>DB: UPDATE payment_receipts.sent_to_provider = true
+    PR->>DB: UPDATE orders.status = comprobante_enviado
+    DB->>RT: Broadcast order_updated
+    RT->>UI: Orden actualiza estado en tiempo real
 ```
 
 ---
@@ -483,6 +528,13 @@ Los siguientes bloques comentados se mantienen como documentación histórica pe
 ---
 
 ## 🔄 HISTORIAL DE CAMBIOS DEL MAPA
+
+### **Versión 2.1 (2025-11-07)**
+- ✅ Documentado el flujo de estados completo del servicio de órdenes
+- ✅ Actualizada la lógica de comprobantes: envío masivo sin botones individuales
+- ✅ Detallado el auto-ascenso a `comprobante_enviado` tras enviar comprobantes
+- ✅ Ajustada creación automática de órdenes desde Kapso (sin sobrescribir ítems)
+- ✅ Añadido flujo dedicado al envío de comprobantes y vínculo con Realtime
 
 ### **Versión 2.0 (2025-11-05)**
 - ✅ Revisión completa del código

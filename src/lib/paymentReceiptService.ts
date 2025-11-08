@@ -195,28 +195,93 @@ export class PaymentReceiptService {
       })));
       
       // 5. Actualizar comprobante con asignaciones
-      const bestProviderMatch = providerMatches[0];
+      const orderedProviderMatches = [...providerMatches];
       const bestOrderMatch = orderMatches[0];
+      const orderProviderId = bestOrderMatch?.match_details?.provider_id;
+      const candidateProviderMatch = orderProviderId
+        ? orderedProviderMatches.find(pm => pm.provider_id === orderProviderId)
+        : orderedProviderMatches[0];
+      const alternativeProviderMatch = candidateProviderMatch
+        ? orderedProviderMatches.find(pm => pm.provider_id !== candidateProviderMatch.provider_id)
+        : undefined;
+
+      const providerIsReliable = Boolean(
+        candidateProviderMatch &&
+        (
+          (candidateProviderMatch.match_method === 'cuit_match' && candidateProviderMatch.confidence >= 0.95) ||
+          (
+            candidateProviderMatch.confidence >= 0.92 &&
+            (!alternativeProviderMatch || (candidateProviderMatch.confidence - alternativeProviderMatch.confidence) >= 0.2)
+          )
+        ) &&
+        (!orderProviderId || candidateProviderMatch.provider_id === orderProviderId)
+      );
+
+      const canAssignOrderAndProvider = Boolean(bestOrderMatch && candidateProviderMatch && providerIsReliable);
       
       const updateData: Partial<PaymentReceiptData> = {
         processed_at: new Date().toISOString()
       };
       
-      // Solo marcar como 'assigned' si realmente se encontraron coincidencias
-      if (bestProviderMatch || bestOrderMatch) {
+      // 🔧 CORRECCIÓN: Solo marcar como 'assigned' si hay ORDEN Y PROVEEDOR asignados
+      // El badge "Asignado" solo debe aparecer cuando está linkeado a una orden Y proveedor
+      if (canAssignOrderAndProvider && bestOrderMatch && candidateProviderMatch) {
+        // Caso ideal: hay orden Y proveedor con alta confianza
         updateData.status = 'assigned';
+        updateData.auto_assigned_provider_id = candidateProviderMatch.provider_id;
+        updateData.provider_id = candidateProviderMatch.provider_id;
+        updateData.auto_assigned_order_id = bestOrderMatch.order_id;
+        updateData.order_id = bestOrderMatch.order_id;
+        updateData.assignment_confidence = Math.min(candidateProviderMatch.confidence, bestOrderMatch.confidence);
+        updateData.assignment_method = candidateProviderMatch.match_method;
+        console.log('✅ [PaymentReceiptService] Comprobante asignado a orden Y proveedor:', {
+          order: bestOrderMatch.order_number,
+          provider: candidateProviderMatch.provider_name
+        });
+      } else if (bestOrderMatch) {
+        // Si solo hay orden, obtener el proveedor de la orden
+        console.log('⚠️ [PaymentReceiptService] Solo se encontró orden, buscando proveedor de la orden...');
+        const { data: orderData } = await supabase
+          .from('orders')
+          .select('provider_id')
+          .eq('id', bestOrderMatch.order_id)
+          .single();
         
-        if (bestProviderMatch) {
-          updateData.auto_assigned_provider_id = bestProviderMatch.provider_id;
-          updateData.assignment_confidence = bestProviderMatch.confidence;
-          updateData.assignment_method = bestProviderMatch.match_method;
-          console.log('✅ [PaymentReceiptService] Proveedor asignado:', bestProviderMatch.provider_name);
-        }
-        
-        if (bestOrderMatch) {
+        if (orderData?.provider_id) {
+          // Si la orden tiene proveedor, marcar como 'assigned'
+          updateData.status = 'assigned';
+          updateData.auto_assigned_provider_id = orderData.provider_id;
+          updateData.provider_id = orderData.provider_id;
           updateData.auto_assigned_order_id = bestOrderMatch.order_id;
-          console.log('✅ [PaymentReceiptService] Orden asignada:', bestOrderMatch.order_number);
+          updateData.order_id = bestOrderMatch.order_id;
+          updateData.assignment_confidence = bestOrderMatch.confidence;
+          updateData.assignment_method = 'amount_match';
+          console.log('✅ [PaymentReceiptService] Comprobante asignado a orden Y proveedor (obtenido de orden):', orderData.provider_id);
+        } else {
+          // Si no hay proveedor en la orden, marcar como 'processed' pero no 'assigned'
+          updateData.status = 'processed';
+          updateData.auto_assigned_order_id = bestOrderMatch.order_id;
+          updateData.order_id = bestOrderMatch.order_id;
+          console.log('⚠️ [PaymentReceiptService] Orden asignada pero sin proveedor, marcado como procesado');
         }
+        if (candidateProviderMatch) {
+          updateData.auto_assigned_provider_id = candidateProviderMatch.provider_id;
+          updateData.assignment_confidence = Math.min(candidateProviderMatch.confidence, bestOrderMatch.confidence);
+          updateData.assignment_method = candidateProviderMatch.match_method;
+        } else {
+          updateData.assignment_confidence = bestOrderMatch.confidence;
+          updateData.assignment_method = bestOrderMatch.match_method;
+        }
+      } else if (candidateProviderMatch) {
+        // Si solo hay proveedor
+        updateData.status = 'processed';
+        updateData.auto_assigned_provider_id = candidateProviderMatch.provider_id;
+        updateData.assignment_confidence = candidateProviderMatch.confidence;
+        updateData.assignment_method = candidateProviderMatch.match_method;
+        if (providerIsReliable) {
+          updateData.provider_id = candidateProviderMatch.provider_id;
+        }
+        console.log('⚠️ [PaymentReceiptService] Proveedor sugerido pero sin orden, marcado como procesado');
       } else {
         // Si no se encontraron coincidencias, marcar como 'processed' pero no 'assigned'
         updateData.status = 'processed';
@@ -232,8 +297,8 @@ export class PaymentReceiptService {
       await this.recordAssignmentAttempts(receiptId, providerMatches, orderMatches);
       
       // 7. Crear registro en tabla documents para que aparezca en carpeta de proveedores
-      if (bestProviderMatch) {
-        await this.createDocumentRecord(receipt, bestProviderMatch.provider_id, bestOrderMatch?.order_id);
+      if (canAssignOrderAndProvider && candidateProviderMatch && bestOrderMatch) {
+        await this.createDocumentRecord(receipt, candidateProviderMatch.provider_id, bestOrderMatch.order_id);
       }
       
       console.log('✅ [PaymentReceiptService] Procesamiento completado. Logs de debugging:');
@@ -242,7 +307,7 @@ export class PaymentReceiptService {
       console.log('- Mejor match orden:', bestOrderMatch?.order_id);
       
       // 🔧 SOLUCIÓN: Conectar correctamente el comprobante con la orden asignada
-      if (bestOrderMatch && bestOrderMatch.confidence > 0.7) {
+      if (canAssignOrderAndProvider && bestOrderMatch && bestOrderMatch.confidence > 0.7 && candidateProviderMatch) {
         console.log('🎯 [PaymentReceiptService] ===== ASIGNANDO A ORDEN =====');
         console.log('🔄 [PaymentReceiptService] Mejor orden match:', {
           id: bestOrderMatch.order_id,
@@ -268,18 +333,18 @@ export class PaymentReceiptService {
           console.log('✅ [PaymentReceiptService] Comprobante asignado a orden exitosamente');
         }
         
-        // Actualizar estado de la orden a 'pagado'
-        console.log('🎯 [PaymentReceiptService] Actualizando orden a "pagado":', {
+        // Actualizar estado de la orden a 'comprobante_enviado'
+        console.log('🎯 [PaymentReceiptService] Actualizando orden a "comprobante_enviado":', {
           orderId: bestOrderMatch.order_id,
           orderNumber: bestOrderMatch.order_number,
-          newStatus: 'pagado',
+          newStatus: 'comprobante_enviado',
           receiptUrl: receipt.file_url
         });
         const { data: updatedOrder, error: orderUpdateError } = await supabase
           .from('orders')
           .update({ 
-            status: 'pagado',
-            receipt_url: receipt.file_url,
+            status: 'comprobante_enviado',
+            payment_receipt_url: receipt.file_url,
             updated_at: new Date().toISOString()
           })
           .eq('id', bestOrderMatch.order_id)
@@ -287,15 +352,14 @@ export class PaymentReceiptService {
           .single();
         
         if (orderUpdateError) {
-          console.error('❌ [PaymentReceiptService] Error actualizando orden a pagado:', orderUpdateError);
+          console.error('❌ [PaymentReceiptService] Error actualizando orden a comprobante_enviado:', orderUpdateError);
         } else {
-          console.log('✅ [PaymentReceiptService] Orden actualizada a "pagado" exitosamente:', {
+          console.log('✅ [PaymentReceiptService] Orden actualizada a "comprobante_enviado" exitosamente:', {
             orderId: updatedOrder?.id,
             orderNumber: updatedOrder?.order_number,
             status: updatedOrder?.status,
             receiptUrl: updatedOrder?.receipt_url,
-            updatedAt: updatedOrder?.updated_at,
-            userId: updatedOrder?.user_id
+            updatedAt: updatedOrder?.updated_at
           });
           console.log('🔔 [PaymentReceiptService] Esta actualización debería disparar un evento Realtime para los suscriptores');
           
@@ -324,11 +388,11 @@ export class PaymentReceiptService {
             console.error('⚠️ [PaymentReceiptService] Error en broadcast:', broadcastErr);
           }
           
-          // 📱 ENVIAR COMPROBANTE AUTOMÁTICAMENTE cuando se asigna
-          if (bestProviderMatch) {
+          const autoSendEnabled = process.env.AUTO_SEND_PAYMENT_RECEIPTS === 'true';
+          if (autoSendEnabled) {
             console.log('📱 [PaymentReceiptService] Enviando comprobante automáticamente...');
             try {
-              const sendResult = await this.sendReceiptToProvider(receiptId, bestProviderMatch.provider_id);
+              const sendResult = await this.sendReceiptToProvider(receiptId, candidateProviderMatch.provider_id);
               if (sendResult.success) {
                 console.log('✅ [PaymentReceiptService] Comprobante enviado automáticamente con éxito');
               } else {
@@ -337,6 +401,8 @@ export class PaymentReceiptService {
             } catch (sendError) {
               console.error('❌ [PaymentReceiptService] Error en envío automático:', sendError);
             }
+          } else {
+            console.log('ℹ️ [PaymentReceiptService] Envío automático de comprobantes deshabilitado. Requiere acción manual.');
           }
         }
       } else {
@@ -390,18 +456,71 @@ export class PaymentReceiptService {
       console.log('🔍 [PaymentReceiptService] Datos del comprobante:', {
         receipt_number: receipt.receipt_number,
         payment_amount: receipt.payment_amount,
-        user_id: receipt.user_id
+        user_id: receipt.user_id,
+        ocr_data: (receipt as any).ocr_data ? 'presente' : 'ausente'
       });
+      console.log('🔍 [PaymentReceiptService] Primeros 3 proveedores:', providers.slice(0, 3).map(p => ({
+        id: p.id,
+        name: p.name,
+        cuit: p.cuit_cuil
+      })));
       
-      // Buscar coincidencias por nombre del proveedor en el comprobante
+      // 🔧 CORRECCIÓN: Buscar coincidencias por CUIT del proveedor (coincidencia exacta)
+      // Primero intentar extraer CUIT del comprobante desde receipt_number o texto extraído
+      let extractedCuit: string | null = null;
+      
+      // Buscar CUIT en receipt_number
       if (receipt.receipt_number) {
+        const cuitMatch = receipt.receipt_number.match(/([0-9]{2}[\/\-]?[0-9]{8}[\/\-]?[0-9])/);
+        if (cuitMatch) {
+          extractedCuit = cuitMatch[1].replace(/[\/\-]/g, ''); // Normalizar CUIT (sin guiones)
+        }
+      }
+      
+      // Si no se encontró en receipt_number, buscar en ocr_data si existe
+      if (!extractedCuit && (receipt as any).ocr_data) {
+        const ocrData = typeof (receipt as any).ocr_data === 'string' 
+          ? JSON.parse((receipt as any).ocr_data) 
+          : (receipt as any).ocr_data;
+        if (ocrData.cuit || ocrData.CUIT) {
+          extractedCuit = (ocrData.cuit || ocrData.CUIT).replace(/[\/\-]/g, '');
+        }
+      }
+      
+      console.log('🔍 [PaymentReceiptService] CUIT extraído del comprobante:', extractedCuit);
+      
+      // Buscar proveedores por CUIT (coincidencia exacta - mayor prioridad)
+      if (extractedCuit) {
+        for (const provider of providers) {
+          if (provider.cuit_cuil) {
+            const providerCuit = provider.cuit_cuil.replace(/[\/\-]/g, ''); // Normalizar CUIT del proveedor
+            if (providerCuit === extractedCuit) {
+              matches.push({
+                provider_id: provider.id,
+                provider_name: provider.name,
+                confidence: 1.0, // Máxima confianza para coincidencia exacta de CUIT
+                match_method: 'cuit_match',
+                match_details: { 
+                  provider_cuit: provider.cuit_cuil, 
+                  receipt_cuit: extractedCuit,
+                  receipt_number: receipt.receipt_number 
+                }
+              });
+              console.log(`✅ [PaymentReceiptService] Coincidencia exacta de CUIT: ${provider.name} (${provider.cuit_cuil})`);
+            }
+          }
+        }
+      }
+      
+      // Si no se encontró por CUIT, buscar por nombre del proveedor en el comprobante (menor prioridad)
+      if (matches.length === 0 && receipt.receipt_number) {
         for (const provider of providers) {
           // Buscar nombre del proveedor en el número de comprobante o en datos del proveedor
           if (provider.name && receipt.receipt_number.toLowerCase().includes(provider.name.toLowerCase())) {
             matches.push({
               provider_id: provider.id,
               provider_name: provider.name,
-              confidence: 0.8,
+              confidence: 0.6, // Menor confianza para coincidencia por nombre
               match_method: 'provider_match',
               match_details: { provider_name: provider.name, receipt_number: receipt.receipt_number }
             });
@@ -566,58 +685,108 @@ export class PaymentReceiptService {
       
       if (error || !orders) {
         console.error('❌ [PaymentReceiptService] Error obteniendo órdenes:', error);
-        return matches;
+      const methodPriority: Record<ProviderMatchResult['match_method'], number> = {
+        cuit_match: 3,
+        amount_match: 2,
+        provider_match: 1
+      };
+
+      return matches
+        .sort((a, b) => {
+          const methodDiff = methodPriority[b.match_method] - methodPriority[a.match_method];
+          if (methodDiff !== 0) {
+            return methodDiff;
+          }
+          return (b.confidence || 0) - (a.confidence || 0);
+        });
       }
       
       console.log(`✅ [PaymentReceiptService] Órdenes encontradas para proveedores: ${orders.length}`);
+      console.log('🔍 [PaymentReceiptService] Detalles de órdenes encontradas:', orders.slice(0, 5).map(o => ({
+        id: o.id,
+        order_number: o.order_number,
+        provider_id: o.provider_id,
+        total_amount: o.total_amount,
+        status: o.status
+      })));
+      console.log('🔍 [PaymentReceiptService] Monto del comprobante:', receipt.payment_amount);
+      console.log('🔍 [PaymentReceiptService] Provider matches disponibles:', providerMatches.map(pm => ({
+        provider_id: pm.provider_id,
+        method: pm.match_method,
+        confidence: pm.confidence
+      })));
       
-      // 🔧 SOLUCIÓN: Buscar coincidencias por monto Y proveedor asignado (solo si hay proveedores)
+      // 🔧 CORRECCIÓN MEJORADA: Buscar coincidencias por proveedor Y monto exacto
+      // Priorizar matches con CUIT, pero también permitir matches por monto si el proveedor coincide
       if (receipt.payment_amount) {
+        // Extraer CUIT del comprobante (misma lógica que en findMatchingProviders)
+        let extractedCuit: string | null = null;
+        if (receipt.receipt_number) {
+          const cuitMatch = receipt.receipt_number.match(/([0-9]{2}[\/\-]?[0-9]{8}[\/\-]?[0-9])/);
+          if (cuitMatch) {
+            extractedCuit = cuitMatch[1].replace(/[\/\-]/g, '');
+          }
+        }
+        if (!extractedCuit && (receipt as any).ocr_data) {
+          const ocrData = typeof (receipt as any).ocr_data === 'string' 
+            ? JSON.parse((receipt as any).ocr_data) 
+            : (receipt as any).ocr_data;
+          if (ocrData.cuit || ocrData.CUIT) {
+            extractedCuit = (ocrData.cuit || ocrData.CUIT).replace(/[\/\-]/g, '');
+          }
+        }
+        
         for (const order of orders) {
           const orderAmount = Number(order.total_amount) || 0;
           const receiptAmount = Number(receipt.payment_amount) || 0;
+          
+          // Buscar si el proveedor de la orden está en los providerMatches
+          const providerMatch = providerMatches.find(pm => pm.provider_id === order.provider_id);
+          
+          if (!providerMatch) {
+            continue; // Saltar esta orden si el proveedor no está en los matches
+          }
+          
+          // 🔧 CORRECCIÓN: Coincidencia de monto con tolerancia de ±2 pesos
+          // El matcheo del monto es el que menos preciso debe ser
+          const tolerance = 2; // Tolerancia de 2 pesos
           const difference = Math.abs(orderAmount - receiptAmount);
           
-          // 🔧 CRÍTICO: Solo hacer match si el proveedor de la orden coincide con los proveedores encontrados
-          const hasValidProviderMatch = providerMatches.some(pm => 
-            pm.provider_id === order.provider_id && pm.confidence > 0.1 // Reducir a 10% mínimo para permitir matches
-          );
-          
-          if (!hasValidProviderMatch) {
-            continue; // Saltar esta orden si no coincide el proveedor
-          }
-          
-          // Coincidencia exacta (mayor prioridad) - CON proveedor validado
-          if (orderAmount === receiptAmount) {
+          if (difference <= tolerance) {
+            // Priorizar matches con CUIT (confianza 1.0), pero también aceptar otros matches
+            // Reducir confianza según la diferencia de monto
+            let baseConfidence = providerMatch.match_method === 'cuit_match' && providerMatch.confidence >= 1.0
+              ? 1.0
+              : 0.9;
+            
+            // Reducir confianza si hay diferencia (aunque sea dentro de la tolerancia)
+            const confidence = difference === 0 
+              ? baseConfidence 
+              : Math.max(0.7, baseConfidence - (difference / receiptAmount) * 0.1);
+            
             matches.push({
               order_id: order.id,
               order_number: order.order_number,
-              confidence: 0.95, // Alta confianza para coincidencias exactas
-              match_method: 'exact_amount_and_provider_match',
-              match_details: { 
-                amount: receipt.payment_amount,
-                provider_id: order.provider_id,
-                order_created: order.created_at,
-                is_provider_match: true
-              }
-            });
-          }
-          // Coincidencia con tolerancia mínima de ±1 peso - CON proveedor validado
-          else if (difference <= 1) {
-            matches.push({
-              order_id: order.id,
-              order_number: order.order_number,
-              confidence: 0.9, // Alta confianza para diferencias de 1 peso
-              match_method: 'tolerance_amount_and_provider_match',
+              confidence: confidence,
+              match_method: providerMatch.match_method === 'cuit_match' && providerMatch.confidence >= 1.0 && difference === 0
+                ? 'exact_amount_and_provider_match'
+                : difference === 0
+                ? 'exact_amount_and_provider_match'
+                : 'tolerance_amount_and_provider_match',
               match_details: { 
                 amount: receipt.payment_amount,
                 order_amount: orderAmount,
-                provider_id: order.provider_id,
                 difference: difference,
+                tolerance: tolerance,
+                provider_id: order.provider_id,
+                provider_cuit: extractedCuit,
+                provider_match_method: providerMatch.match_method,
+                provider_confidence: providerMatch.confidence,
                 order_created: order.created_at,
-                is_provider_match: true
+                is_cuit_match: providerMatch.match_method === 'cuit_match'
               }
             });
+            console.log(`✅ [PaymentReceiptService] Coincidencia monto (tolerancia ±${tolerance}): Orden ${order.order_number} (${orderAmount} vs ${receiptAmount}, diff: ${difference}), método: ${providerMatch.match_method}`);
           }
         }
       }
@@ -692,6 +861,11 @@ export class PaymentReceiptService {
     try {
       console.log('📱 [PaymentReceiptService] Enviando comprobante a proveedor:', providerId);
       
+      // Instanciar servicios necesarios
+      const { KapsoService } = await import('./kapsoService');
+      const kapsoService = new KapsoService();
+      const { normalizePhoneNumber, comparePhoneNumbers } = await import('./phoneNormalization');
+      
       // 1. Obtener datos del comprobante y proveedor
       const { data: receipt, error: receiptError } = await supabase
         .from('payment_receipts')
@@ -713,7 +887,20 @@ export class PaymentReceiptService {
         return { success: false, error: 'Proveedor no encontrado' };
       }
       
-      // 2. Enviar mensaje via WhatsApp usando Kapso
+      const normalizedInfo = normalizePhoneNumber(provider.phone || '');
+      const normalizedPhone = normalizedInfo.normalized;
+      const phoneForKapso = normalizedPhone ? normalizedPhone.replace('+', '') : provider.phone;
+      
+      console.log('📞 [PaymentReceiptService] Datos de teléfono para envío:', {
+        providerPhone: provider.phone,
+        normalized: normalizedPhone,
+        phoneForKapso,
+        receiptOwnerId: receipt.user_id
+      });
+      
+      // 2. 🔧 CORRECCIÓN: Verificar si hay mensajes recientes del proveedor (últimas 24 horas)
+      // Si hay mensajes recientes, la conversación está activa y podemos enviar directamente
+      // Si no hay mensajes recientes, primero abrir con template
       const message = `¡Hola ${provider.name}! 👋\n\n` +
         `Te confirmo que hemos realizado el pago correspondiente. ` +
         `Adjunto encontrarás el comprobante de pago.\n\n` +
@@ -722,35 +909,203 @@ export class PaymentReceiptService {
         `📅 Fecha: ${receipt.payment_date || 'N/A'}\n\n` +
         `¡Gracias por tu confianza! 🙏`;
       
-      // 🔧 CORRECCIÓN: Usar Kapso directamente en lugar de /api/whatsapp/send
-      const { KapsoService } = await import('./kapsoService');
-      const kapsoService = new KapsoService();
+      // Verificar si hay mensajes recientes del proveedor (últimas 24 horas)
+      const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const contactIdentifiers = [provider.id, provider.phone, provider.phone?.replace(/\D/g, '')].filter(Boolean);
+
+      const { data: recentMessages, error: messagesError } = await supabase
+        .from('whatsapp_messages')
+        .select('id, timestamp, direction, contact_id')
+        .in('contact_id', contactIdentifiers as string[])
+        .gte('timestamp', last24Hours.toISOString())
+        .order('timestamp', { ascending: false })
+        .limit(1);
+
+      if (messagesError) {
+        console.warn('⚠️ [PaymentReceiptService] Error verificando mensajes recientes:', messagesError);
+      }
+
+      let hasRecentMessages = recentMessages && recentMessages.length > 0;
+
+      console.log('🔍 [PaymentReceiptService] Verificando mensajes recientes:', {
+        providerId: provider.id,
+        providerPhone: provider.phone,
+        identifiers: contactIdentifiers,
+        hasRecentMessages,
+        lastMessageTime: recentMessages?.[0]?.timestamp,
+        lastMessageDirection: recentMessages?.[0]?.direction,
+        lastMessageContactId: recentMessages?.[0]?.contact_id
+      });
+
+      // 2.b Verificar estado de conversación en Kapso
+      let kapsoConversationActive = false;
+      let kapsoConversationData: any = null;
+
+      if (provider.phone) {
+        try {
+          const activeConversations = await kapsoService.getAllActiveConversations();
+
+          kapsoConversationData = activeConversations.find(conv => comparePhoneNumbers(provider.phone, conv.phone_number) || comparePhoneNumbers(normalizedPhone, conv.phone_number));
+
+          if (kapsoConversationData) {
+            kapsoConversationActive = true;
+          } else {
+            // Consultar cualquier conversación (incluyendo ended) para obtener metadata de última actividad
+            const allConversationsResponse = await kapsoService.getConversations({ per_page: 5, phone_number: normalizedPhone ? normalizedPhone.replace('+', '') : provider.phone });
+            const matchedConversation = allConversationsResponse.data.find(conv => comparePhoneNumbers(provider.phone, conv.phone_number) || comparePhoneNumbers(normalizedPhone, conv.phone_number));
+            if (matchedConversation) {
+              kapsoConversationData = matchedConversation;
+              const lastActiveAt = matchedConversation.last_active_at ? new Date(matchedConversation.last_active_at) : null;
+              if (lastActiveAt && lastActiveAt >= last24Hours) {
+                kapsoConversationActive = true;
+              }
+            }
+          }
+
+          console.log('📡 [PaymentReceiptService] Estado de conversación Kapso:', {
+            phone: provider.phone,
+            normalizedPhone,
+            kapsoConversationActive,
+            conversationId: kapsoConversationData?.id,
+            status: kapsoConversationData?.status,
+            lastActiveAt: kapsoConversationData?.last_active_at
+          });
+        } catch (kapsoError) {
+          console.warn('⚠️ [PaymentReceiptService] No se pudo verificar conversación en Kapso:', kapsoError);
+        }
+      }
+
+      const conversationActive = hasRecentMessages || kapsoConversationActive;
+
+      // Solo abrir conversación con template si NO hay mensajes recientes ni conversación activa en Kapso
+      if (!conversationActive) {
+        try {
+          console.log('📱 [PaymentReceiptService] Conversación inactiva, abriendo con template...');
+          const triggerResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001'}/api/whatsapp/trigger-conversation`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: normalizedPhone || provider.phone,
+              template_name: 'inicializador_de_conv'
+            })
+          });
+          
+          if (!triggerResponse.ok) {
+            console.warn('⚠️ [PaymentReceiptService] No se pudo abrir conversación con template, continuando con envío directo');
+          } else {
+            console.log('✅ [PaymentReceiptService] Conversación abierta con template');
+            // Esperar un momento para que el template se procese
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        } catch (triggerError) {
+          console.warn('⚠️ [PaymentReceiptService] Error abriendo conversación, continuando con envío directo:', triggerError);
+        }
+      } else {
+        console.log('✅ [PaymentReceiptService] Conversación activa detectada (mensajes recientes o Kapso). Enviando directamente sin template.');
+      }
       
+      // Paso 2: Enviar documento usando Kapso
       const filename = receipt.file_url.split('/').pop() || 'comprobante.pdf';
-      const result = await kapsoService.sendStandaloneDocument(
-        provider.phone,
+
+      const sendDocument = async () => {
+        const receiptOwnerId = receipt.user_id;
+        return kapsoService.sendStandaloneDocument(
+          phoneForKapso,
         receipt.file_url,
         filename,
-        message
+          message,
+          receiptOwnerId
       );
+      };
+
+      let result;
+      try {
+        result = await sendDocument();
+      } catch (sendError: any) {
+        const errorMessage = sendError?.message || sendError?.response?.data || sendError?.toString?.() || '';
+        console.error('❌ [PaymentReceiptService] Error enviando documento:', errorMessage);
+
+        const isConversationInactive =
+          typeof errorMessage === 'string' && (
+            errorMessage.toLowerCase().includes('non-template') ||
+            errorMessage.toLowerCase().includes('24-hour') ||
+            errorMessage.toLowerCase().includes('470')
+          );
+
+        if (isConversationInactive) {
+          return {
+            success: false,
+            error: 'WhatsApp rechazó el envío porque la conversación está fuera de la ventana de 24 horas. Envía primero el template "inicializador_de_conv" desde la sección de conversación y reintenta.'
+          };
+        }
+
+        throw sendError;
+      }
       
-      if (result?.data?.id) {
-        // 3. Actualizar comprobante como enviado
-        await supabase
-          .from('payment_receipts')
-          .update({
-            sent_to_provider: true,
-            sent_at: new Date().toISOString(),
-            whatsapp_message_id: result.data.id,
-            status: 'sent'
-          })
-          .eq('id', receiptId);
-        
-        console.log('✅ [PaymentReceiptService] Comprobante enviado exitosamente');
-        return { success: true, messageId: result.data.id };
-      } else {
+      if (!result?.data?.id) {
         return { success: false, error: 'Error enviando mensaje' };
       }
+      
+      // 3. Actualizar comprobante como enviado
+      await supabase
+        .from('payment_receipts')
+        .update({
+          sent_to_provider: true,
+          sent_at: new Date().toISOString(),
+          whatsapp_message_id: result.data.id,
+          status: 'sent'
+        })
+        .eq('id', receiptId);
+        
+      const orderIdToUpdate = receipt.order_id || receipt.auto_assigned_order_id;
+
+      if (orderIdToUpdate) {
+        console.log('🎯 [PaymentReceiptService] Actualizando orden vinculada tras envío de comprobante:', {
+          orderId: orderIdToUpdate,
+          receiptId,
+          receiptUrl: receipt.file_url
+        });
+
+        const { error: orderUpdateError } = await supabase
+          .from('orders')
+          .update({
+            status: 'comprobante_enviado',
+            payment_receipt_url: receipt.file_url,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', orderIdToUpdate);
+
+        if (orderUpdateError) {
+          console.error('⚠️ [PaymentReceiptService] Error actualizando orden al estado comprobante_enviado:', orderUpdateError);
+        } else {
+          try {
+            const broadcastResult = await supabase
+              .channel('orders-updates')
+              .send({
+                type: 'broadcast' as const,
+                event: 'order_updated',
+                payload: {
+                  orderId: orderIdToUpdate,
+                  status: 'comprobante_enviado',
+                  receiptUrl: receipt.file_url,
+                  timestamp: new Date().toISOString(),
+                  source: 'payment_receipt_send'
+                }
+              });
+
+            if (broadcastResult === 'error') {
+              console.error('⚠️ [PaymentReceiptService] Error enviando broadcast tras envío de comprobante');
+            }
+          } catch (broadcastErr) {
+            console.error('⚠️ [PaymentReceiptService] Error emitiendo broadcast tras enviar comprobante:', broadcastErr);
+          }
+        }
+      } else {
+        console.log('ℹ️ [PaymentReceiptService] Comprobante enviado sin orden asociada. No se actualiza estado de orden.');
+      }
+
+        console.log('✅ [PaymentReceiptService] Comprobante enviado exitosamente');
+        return { success: true, messageId: result.data.id };
       
     } catch (error) {
       console.error('❌ [PaymentReceiptService] Error enviando comprobante:', error);

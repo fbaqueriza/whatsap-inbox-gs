@@ -197,6 +197,7 @@ function OrdersPage({ user }: OrdersPageProps) {
       esperando_factura: 'bg-orange-100 text-orange-800',
       pendiente_de_pago: 'bg-purple-100 text-purple-800',
       pagado: 'bg-green-100 text-green-800',
+      comprobante_enviado: 'bg-green-100 text-green-800'
     };
     return statusClasses[status as keyof typeof statusClasses] || 'bg-yellow-100 text-yellow-800';
   };
@@ -208,6 +209,7 @@ function OrdersPage({ user }: OrdersPageProps) {
       esperando_factura: 'Esperando Factura',
       pendiente_de_pago: 'Pendiente de Pago',
       pagado: 'Pagado',
+      comprobante_enviado: 'Comprobante enviado'
     };
     return statusTexts[status as keyof typeof statusTexts] || status;
   };

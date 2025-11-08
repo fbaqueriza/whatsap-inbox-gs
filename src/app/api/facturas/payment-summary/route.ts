@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Obtener órdenes seleccionadas con información de proveedores
+    // Obtener órdenes seleccionadas con información de proveedores (incluyendo CUIT, CBU, razón social)
     const { data: selectedOrders, error: ordersError } = await supabase
       .from('orders')
       .select(`
@@ -36,7 +36,10 @@ export async function POST(request: NextRequest) {
           id,
           name,
           phone,
-          email
+          email,
+          cuit_cuil,
+          cbu,
+          razon_social
         )
       `)
       .in('id', orderIds);
@@ -69,6 +72,9 @@ export async function POST(request: NextRequest) {
           provider_name: provider.name,
           provider_phone: provider.phone,
           provider_email: provider.email,
+          cuit: provider.cuit_cuil || '',
+          cbu: provider.cbu || '',
+          razon_social: provider.razon_social || provider.name,
           orders: [],
           total_amount: 0,
           currency: order.currency,

@@ -82,7 +82,8 @@ export async function POST(request: NextRequest) {
         console.log('🔧 Usando sendTemplateMessage para template sin variables');
         const metaService = new MetaWhatsAppService();
         await metaService.initialize();
-        result = await metaService.sendTemplateMessage(to, message, 'es_AR', 0, templateVariables);
+        const params = templateVariables ? Object.values(templateVariables) : [];
+        result = await metaService.sendTemplateMessage(to, message, 'es_AR', params, userId);
       }
     } else {
       // 🔧 MEJORA: Procesar variables en mensajes de texto

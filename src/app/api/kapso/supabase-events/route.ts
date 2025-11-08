@@ -860,29 +860,29 @@ async function processKapsoDocumentWithOCR(
     const [exactResult, variantsResult, partialResult] = await Promise.allSettled([
       // Búsqueda exacta
       supabase
-        .from('providers')
-        .select('id, name, phone, auto_order_flow_enabled')
-        .eq('phone', normalizedFromNumber)
-        .eq('user_id', userId)
+      .from('providers')
+      .select('id, name, phone, auto_order_flow_enabled')
+      .eq('phone', normalizedFromNumber)
+      .eq('user_id', userId)
         .single(),
       
       // Búsqueda por variantes (solo si hay variantes)
       searchVariants.length > 0
         ? supabase
-            .from('providers')
-            .select('id, name, phone, auto_order_flow_enabled')
+          .from('providers')
+          .select('id, name, phone, auto_order_flow_enabled')
             .in('phone', searchVariants)
-            .eq('user_id', userId)
+          .eq('user_id', userId)
             .limit(1)
         : Promise.resolve({ data: null, error: null }),
       
       // Búsqueda parcial (solo si hay suficientes dígitos)
       lastDigits.length >= 8
         ? supabase
-            .from('providers')
-            .select('id, name, phone, auto_order_flow_enabled')
-            .eq('user_id', userId)
-            .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`)
+          .from('providers')
+          .select('id, name, phone, auto_order_flow_enabled')
+          .eq('user_id', userId)
+          .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`)
             .limit(5)
         : Promise.resolve({ data: null, error: null })
     ]);
@@ -909,14 +909,14 @@ async function processKapsoDocumentWithOCR(
       const bestMatch = partialResult.value.data.find((p: any) => 
         p.phone.replace(/\D/g, '').slice(-8) === lastDigits
       );
-      if (bestMatch) {
-        provider = bestMatch;
+          if (bestMatch) {
+            provider = bestMatch;
         await logger.info(requestId, 'Proveedor encontrado (parcial - optimizado)', {
-          providerId: provider.id,
-          providerName: provider.name,
-          matchedPhone: provider.phone,
-          lastDigits: lastDigits
-        });
+              providerId: provider.id,
+              providerName: provider.name,
+              matchedPhone: provider.phone,
+              lastDigits: lastDigits
+            });
         console.log(`✅ [${requestId}] Proveedor encontrado (parcial): ${provider.name} (${provider.phone})`);
       }
     }
@@ -1256,8 +1256,8 @@ async function createOrderFromInvoice(
       } catch (extractionError) {
         console.error(`❌ [${requestId}] Error usando simpleInvoiceExtraction:`, extractionError);
         // Fallback al patrón simple anterior
-        const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
-        if (amountMatch) {
+      const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
+      if (amountMatch) {
           // Intentar parsear mejor el formato argentino
           const amountStr = amountMatch[1].replace(/\./g, '').replace(',', '.');
           invoiceTotal = parseFloat(amountStr) || null;
@@ -1278,7 +1278,7 @@ async function createOrderFromInvoice(
         invoiceTotal = 0; // Usar 0 como valor por defecto
       } else {
         console.error(`❌ [${requestId}] No se encontró monto válido y el documento no está identificado como factura`);
-        return { success: false, error: 'No se encontró monto válido en la factura' };
+      return { success: false, error: 'No se encontró monto válido en la factura' };
       }
     }
     
@@ -1497,18 +1497,6 @@ async function createOrderFromInvoice(
     console.log(`📦 [${requestId}] Items extraídos de la factura:`, items.length);
     console.log(`📋 [${requestId}] Detalle de items extraídos de factura:`, JSON.stringify(items, null, 2));
     
-    // 🔧 CORRECCIÓN: Los items extraídos de la factura NO deben guardarse en el campo items de la orden
-    // Los items de la factura solo se usan en la página de stock
-    // El campo items de la orden debe mantener los items originales que el usuario ingresó al crear la orden
-    // Si la orden se crea desde una factura, usar un item genérico o dejar items vacío
-    const orderItems = [{
-      productName: 'Factura recibida',
-      quantity: 1,
-      unit: 'un',
-      price: invoiceTotal || 0,
-      total: invoiceTotal || 0
-    }];
-    
     // Guardar los items de la factura en invoice_data para uso en stock
     if (!extractedData.invoice_items) {
       extractedData.invoice_items = items;
@@ -1525,7 +1513,6 @@ async function createOrderFromInvoice(
       user_id: userId,
       provider_id: document.provider_id,
       order_number: orderNumber,
-      items: orderItems, // 🔧 CORRECCIÓN: Usar items genéricos, NO los items extraídos de la factura
       status: 'pendiente_de_pago', // Estado inicial: pendiente de pago
       total_amount: invoiceTotal,
       currency: invoiceData.currency || 'ARS',
@@ -1682,37 +1669,37 @@ async function updateOrderWithExtractedData(
     }
     
     // Extraer el número de factura del documento actual
-    const currentInvoiceNumber = invoiceData.invoice_number || invoiceData.invoiceNumber;
+      const currentInvoiceNumber = invoiceData.invoice_number || invoiceData.invoiceNumber;
     console.log(`📄 [${requestId}] Número de factura: ${currentInvoiceNumber || 'No disponible'}`);
-    
-    // 🔧 NUEVO: Crear orden automáticamente desde la factura
-    const createResult = await createOrderFromInvoice(
-      document,
-      requestId,
-      userId,
-      supabase
-    );
-    
-    if (!createResult.success || !createResult.order) {
-      await logger.error(requestId, 'Error creando orden desde factura', {
-        error: createResult.error,
-        documentId: documentId
-      });
-      console.error(`❌ [${requestId}] Error creando orden desde factura:`, createResult.error);
-      return;
-    }
-    
+        
+        // 🔧 NUEVO: Crear orden automáticamente desde la factura
+        const createResult = await createOrderFromInvoice(
+          document,
+          requestId,
+          userId,
+          supabase
+        );
+        
+        if (!createResult.success || !createResult.order) {
+          await logger.error(requestId, 'Error creando orden desde factura', {
+            error: createResult.error,
+            documentId: documentId
+          });
+          console.error(`❌ [${requestId}] Error creando orden desde factura:`, createResult.error);
+          return;
+        }
+        
     const order = createResult.order;
-    await logger.success(requestId, 'Orden creada exitosamente desde factura de Kapso', {
-      orderId: order.id,
-      orderNumber: order.order_number,
-      documentId: documentId
-    });
-    console.log(`✅ [${requestId}] Orden creada exitosamente desde factura:`, {
-      orderId: order.id,
-      orderNumber: order.order_number,
+        await logger.success(requestId, 'Orden creada exitosamente desde factura de Kapso', {
+          orderId: order.id,
+          orderNumber: order.order_number,
+          documentId: documentId
+        });
+        console.log(`✅ [${requestId}] Orden creada exitosamente desde factura:`, {
+          orderId: order.id,
+            orderNumber: order.order_number,
       invoiceNumber: currentInvoiceNumber
-    });
+          });
     
     let invoiceTotal = null;
     
@@ -1746,8 +1733,8 @@ async function updateOrderWithExtractedData(
       } catch (extractionError) {
         console.error(`❌ [${requestId}] Error usando simpleInvoiceExtraction (updateOrder):`, extractionError);
         // Fallback al patrón simple anterior
-        const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
-        if (amountMatch) {
+      const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
+      if (amountMatch) {
           // Intentar parsear mejor el formato argentino
           const amountStr = amountMatch[1].replace(/\./g, '').replace(',', '.');
           invoiceTotal = parseFloat(amountStr) || null;

@@ -170,9 +170,10 @@ export class MetaWhatsAppService {
 
   // Enviar mensaje con template
   async sendTemplateMessage(
-    to: string, 
-    templateName: string, 
-    templateParams: string[] = [], 
+    to: string,
+    templateName: string,
+    languageCode: string = 'es',
+    templateParams: string[] = [],
     userId?: string
   ): Promise<any> {
     await this.initialize();
@@ -205,7 +206,7 @@ export class MetaWhatsAppService {
         template: {
           name: templateName,
           language: {
-            code: 'es'
+            code: languageCode
           },
           components: templateParams.length > 0 ? [{
             type: 'body',
@@ -369,4 +370,28 @@ export class MetaWhatsAppService {
       businessAccountId: this.config.businessAccountId
     };
   }
+
+  isServiceEnabled(): boolean {
+    return this.isEnabled;
+  }
+
+  isSimulationModeEnabled(): boolean {
+    return this.isSimulationMode;
+  }
+
+  async sendTemplateWithVariables(
+    to: string,
+    templateName: string,
+    languageCode: string,
+    variables: Record<string, string> | string[],
+    userId?: string
+  ): Promise<any> {
+    const params = Array.isArray(variables)
+      ? variables
+      : Object.values(variables);
+
+    return this.sendTemplateMessage(to, templateName, languageCode, params, userId);
+  }
 }
+
+export const metaWhatsAppService = new MetaWhatsAppService();

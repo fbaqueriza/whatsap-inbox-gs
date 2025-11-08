@@ -51,7 +51,7 @@ const REQUIRED_TEMPLATES: TemplateDefinition[] = [
   {
     name: 'inicializador_de_conv', // ✅ Mantener nombre original
     category: 'UTILITY',
-    language: 'es_ES', // ✅ CAMBIO: Español de España para evitar conflicto con es_AR en eliminación
+    language: 'es_AR', // ✅ CAMBIO: Español de España para evitar conflicto con es_AR en eliminación
     components: [
       {
         type: 'BODY',
@@ -63,7 +63,7 @@ const REQUIRED_TEMPLATES: TemplateDefinition[] = [
   {
     name: 'evio_orden',
     category: 'MARKETING', // ✅ CORRECCIÓN: Cambiado a MARKETING según detección de Meta
-    language: 'es_ES', // ✅ CAMBIO: Español de España para evitar conflicto con es_AR en eliminación
+    language: 'es_AR', // ✅ CAMBIO: Español de España para evitar conflicto con es_AR en eliminación
     components: [
       {
         type: 'HEADER',
@@ -78,7 +78,7 @@ const REQUIRED_TEMPLATES: TemplateDefinition[] = [
       },
       {
         type: 'BODY',
-        text: 'Buen día {{contact_name}}! Espero que andes bien!\nA continuación, paso el pedido de esta semana.',
+        text: 'Buen día {{contact_name}}! En cuanto me confirmes, paso el pedido.',
         // ✅ CORRECCIÓN: Ejemplos requeridos para templates NAMED según documentación de Meta
         example: {
           body_text_named_params: [

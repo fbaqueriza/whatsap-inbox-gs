@@ -155,46 +155,72 @@ export default function PaymentReceiptUploadModal({
           });
         }, 200);
 
-        // Subir archivo usando API endpoint
-        const formData = new FormData();
-        formData.append('file', uploadedFile.file);
+        let uploadSuccess = false;
         
-        // Si hay selectedOrderIds, usar el endpoint que actualiza órdenes
+        // 🔧 CORRECCIÓN: Si hay selectedOrderIds, intentar primero con el endpoint que actualiza órdenes
+        // pero si falla, usar el genérico que siempre permite subir
         if (selectedOrderIds && selectedOrderIds.length > 0) {
-          formData.append('orderIds', selectedOrderIds.join(','));
-          // Calcular el monto total de las órdenes seleccionadas
-          let totalAmount = 0;
-          if (orders) {
-            totalAmount = selectedOrderIds.reduce((sum, orderId) => {
-              const order = orders.find(o => o.id === orderId);
-              return sum + parseFloat(order?.total_amount?.toString() || '0');
-            }, 0);
+          try {
+            const orderFormData = new FormData();
+            orderFormData.append('file', uploadedFile.file);
+            orderFormData.append('orderIds', selectedOrderIds.join(','));
+            
+            // Calcular el monto total de las órdenes seleccionadas
+            let totalAmount = 0;
+            if (orders) {
+              totalAmount = selectedOrderIds.reduce((sum, orderId) => {
+                const order = orders.find(o => o.id === orderId);
+                return sum + parseFloat(order?.total_amount?.toString() || '0');
+              }, 0);
+            }
+            orderFormData.append('paymentAmount', totalAmount.toString());
+            orderFormData.append('paymentDate', new Date().toISOString().split('T')[0]);
+            orderFormData.append('paymentMethod', 'transferencia');
+            
+            const orderResponse = await fetch('/api/facturas/upload-payment-receipt', {
+              method: 'POST',
+              body: orderFormData
+            });
+            
+            if (orderResponse.ok) {
+              const orderResult = await orderResponse.json();
+              if (orderResult.success) {
+                clearInterval(progressInterval);
+                setUploadProgress(prev => ({ ...prev, [uploadedFile.id]: 100 }));
+                results[uploadedFile.id] = {
+                  success: true,
+                  error: undefined
+                };
+                uploadSuccess = true;
+              }
+            }
+          } catch (orderError) {
+            // Si hay error, continuar con el endpoint genérico
+            console.log(`⚠️ Error verificando órdenes para ${uploadedFile.file.name}, subiendo sin asociar órdenes`);
           }
-          formData.append('paymentAmount', totalAmount.toString());
-          formData.append('paymentDate', new Date().toISOString().split('T')[0]);
-          formData.append('paymentMethod', 'transferencia');
-        } else {
-          formData.append('userId', userId);
         }
-
-        const endpoint = selectedOrderIds && selectedOrderIds.length > 0 
-          ? '/api/facturas/upload-payment-receipt' 
-          : '/api/payment-receipts/upload';
         
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          body: formData
-        });
+        // Si no se pudo subir con el endpoint de órdenes, usar el genérico que siempre permite subir
+        if (!uploadSuccess) {
+          const formData = new FormData();
+          formData.append('file', uploadedFile.file);
+          formData.append('userId', userId);
+          
+          const response = await fetch('/api/payment-receipts/upload', {
+            method: 'POST',
+            body: formData
+          });
 
-        const result = await response.json();
+          const result = await response.json();
 
-        clearInterval(progressInterval);
-        setUploadProgress(prev => ({ ...prev, [uploadedFile.id]: 100 }));
+          clearInterval(progressInterval);
+          setUploadProgress(prev => ({ ...prev, [uploadedFile.id]: 100 }));
 
-        results[uploadedFile.id] = {
-          success: result.success,
-          error: result.error
-        };
+          results[uploadedFile.id] = {
+            success: result.success,
+            error: result.error
+          };
+        }
 
       } catch (error) {
         results[uploadedFile.id] = {

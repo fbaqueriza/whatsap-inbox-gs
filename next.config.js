@@ -15,7 +15,6 @@ const nextConfig = {
   
   // Configuración experimental simplificada
   experimental: {
-    optimizeCss: true,
   },
   
   // Configuración de webpack para evitar errores de módulos

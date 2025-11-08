@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PaymentReceiptService } from '../../../../lib/paymentReceiptService';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const runtime = 'nodejs';
+
 export async function GET(request: NextRequest) {
   try {
     console.log('📄 [API] Obteniendo comprobantes de pago');

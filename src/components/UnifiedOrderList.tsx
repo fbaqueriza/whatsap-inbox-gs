@@ -66,12 +66,12 @@ export default function UnifiedOrderList({
   const filteredOrders = useMemo(() => {
     // Incluir órdenes activas (no finalizadas ni canceladas)
     const activeOrders = orders.filter(order => 
-      !['finalizado', 'cancelled', 'pagado'].includes(order.status)
+      !['finalizado', 'cancelled', 'pagado', 'comprobante_enviado'].includes(order.status)
     );
     
-    // Ordenar por fecha de creación (más recientes primero)
+    // Ordenar por fecha de actualización (más recientes primero)
     const sortedOrders = activeOrders.sort((a, b) => 
-      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime()
     );
     
     if (maxItems) {
@@ -93,6 +93,8 @@ export default function UnifiedOrderList({
         return <FileText className="h-4 w-4 text-purple-500" />;
       case 'pagado':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case 'comprobante_enviado':
+        return <CheckCircle className="h-4 w-4 text-green-600" />;
       default:
         return <Clock className="h-4 w-4 text-gray-500" />;
     }
@@ -110,6 +112,8 @@ export default function UnifiedOrderList({
         return 'Pendiente de Pago';
       case 'pagado':
         return 'Pagado';
+      case 'comprobante_enviado':
+        return 'Comprobante enviado';
       default:
         return status;
     }
@@ -147,6 +151,8 @@ export default function UnifiedOrderList({
         return 'bg-purple-100 text-purple-800 border-purple-200';
       case 'pagado':
         return 'bg-green-100 text-green-800 border-green-200';
+      case 'comprobante_enviado':
+        return 'bg-green-100 text-green-800 border-green-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
     }
@@ -161,7 +167,7 @@ export default function UnifiedOrderList({
   };
 
   const canConfirmReception = (order: Order) => {
-    return order.status === 'pagado';
+    return order.status === 'pagado' || order.status === 'comprobante_enviado';
   };
 
   const toggleItems = (orderId: string) => {
@@ -224,7 +230,19 @@ export default function UnifiedOrderList({
 
       {/* Lista de órdenes */}
       <div className="space-y-3">
-        {filteredOrders.map((order) => (
+        {filteredOrders.map((order) => {
+          const invoiceLink =
+            order.invoiceFileUrl ||
+            order.receiptUrl ||
+            (order as any).receipt_url ||
+            undefined;
+          const paymentLink =
+            order.paymentReceiptUrl ||
+            (order as any).payment_receipt_url ||
+            (order as any).comprobante_url ||
+            undefined;
+
+          return (
           <div
             key={order.id}
             className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
@@ -387,20 +405,30 @@ export default function UnifiedOrderList({
                   </button>
                 )}
                 
-                                     {order.receiptUrl && onOpenReceipt && (
+                  {invoiceLink && (
                   <button
-                       onClick={() => onOpenReceipt(order.receiptUrl)}
+                      onClick={() => window.open(invoiceLink as string, '_blank')}
                       className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                   >
-                      <Download className="h-4 w-4 mr-1" />
-                      Ver comprobante
+                      <FileText className="h-4 w-4 mr-1" />
+                      Ver factura
                   </button>
                 )}
+                  {paymentLink && onOpenReceipt && (
+                    <button
+                      onClick={() => onOpenReceipt(paymentLink as string)}
+                      className="inline-flex items-center px-3 py-1.5 border border-green-300 text-sm font-medium rounded-md text-green-700 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                    >
+                      <Upload className="h-4 w-4 mr-1" />
+                      Ver comprobante
+                    </button>
+                  )}
               </div>
               </div>
             )}
           </div>
-        ))}
+        );
+        })}
       </div>
 
       {/* Botón "Ver todos" */}

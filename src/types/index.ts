@@ -20,6 +20,8 @@ export interface Provider {
   defaultDeliveryDays?: string[]; // ['monday', 'wednesday', 'friday']
   defaultDeliveryTime?: string[]; // '15:00'
   defaultPaymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
+  // Flujo automático de órdenes
+  autoOrderFlowEnabled?: boolean; // Activar/desactivar flujo automático de órdenes
   catalogs: Catalog[];
   createdAt: Date;
   updatedAt: Date;
@@ -62,7 +64,7 @@ export interface Order {
   providerId: string;
   provider?: Provider; // 🔧 NUEVO: Información del proveedor incluida
   items: OrderItem[];
-  status: 'standby' | 'enviado' | 'esperando_factura' | 'pendiente_de_pago' | 'pagado';
+  status: 'standby' | 'enviado' | 'esperando_factura' | 'pendiente_de_pago' | 'pagado' | 'comprobante_enviado' | 'finalizado' | 'cancelled';
   totalAmount: number;
   currency: string;
   orderDate: Date;
@@ -72,6 +74,7 @@ export interface Order {
   desiredDeliveryTime?: string[]; // ['14:00-16:00', '09:00-11:00']
   paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
   invoiceNumber?: string;
+  invoiceDate?: Date;
   bankInfo?: {
     iban?: string;
     swift?: string;
@@ -79,6 +82,8 @@ export interface Order {
     bankName?: string;
   };
   receiptUrl?: string;
+  invoiceFileUrl?: string;
+  paymentReceiptUrl?: string;
   notes?: string;
   // Nuevo campo para archivos adicionales
   additionalFiles?: OrderFile[];

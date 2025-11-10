@@ -35,6 +35,7 @@ function mapStockItemFromDb(item: any): StockItem {
     category: item.category || 'Other',
     quantity: item.quantity || 0,
     unit: item.unit || '',
+    lastPriceNet: item.last_price_net || 0,
     restockFrequency: item.restock_frequency || 'weekly',
     associatedProviders: Array.isArray(item.associated_providers) ? item.associated_providers : [],
     preferredProvider: item.preferred_provider || '',
@@ -65,8 +66,10 @@ function mapOrderFromDb(order: any): Order {
     invoiceNumber: order.invoice_number,
     bankInfo: order.bank_info,
     receiptUrl: order.receipt_url,
+    invoiceFileUrl: order.invoice_file_url || order.receipt_url || undefined,
+    paymentReceiptUrl: order.payment_receipt_url || undefined,
     // 🔧 CORRECCIÓN: Usar estado directo de la BD (ya está normalizado)
-    status: order.status,
+    status: (order.status || 'standby') as Order['status'],
     // 🔧 NUEVAS COLUMNAS NATIVAS: Mapear directamente desde la BD
     desiredDeliveryDate: order.desired_delivery_date ? new Date(order.desired_delivery_date) : undefined,
     desiredDeliveryTime: order.desired_delivery_time || undefined,
@@ -89,6 +92,7 @@ function mapProviderFromDb(provider: any): Provider {
     defaultDeliveryDays: provider.default_delivery_days || [],
     defaultDeliveryTime: provider.default_delivery_time || [],
     defaultPaymentMethod: provider.default_payment_method || 'efectivo',
+    autoOrderFlowEnabled: provider.auto_order_flow_enabled !== undefined ? provider.auto_order_flow_enabled : true, // Por defecto true
     catalogs: provider.catalogs || [],
     createdAt: provider.created_at,
     updatedAt: provider.updated_at,
@@ -180,11 +184,74 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
 
       // Procesar órdenes
       const { data: ordersData, error: ordersError } = ordersResponse;
+      let paymentReceiptsMap: Record<string, string> = {};
+      let invoiceDocsMap: Record<string, string> = {};
+
+      try {
+        const { data: receiptsData, error: receiptsError } = await supabase
+          .from('payment_receipts')
+          .select('order_id, file_url')
+          .eq('user_id', currentUserId);
+
+        if (receiptsError) {
+          console.warn('⚠️ [DataProvider] Error obteniendo payment_receipts:', receiptsError);
+        } else if (receiptsData) {
+          paymentReceiptsMap = receiptsData.reduce((acc, receipt) => {
+            if (receipt.order_id && receipt.file_url && !acc[receipt.order_id]) {
+              acc[receipt.order_id] = receipt.file_url;
+            }
+            return acc;
+          }, {} as Record<string, string>);
+        }
+      } catch (receiptsCatch) {
+        console.warn('⚠️ [DataProvider] Error inesperado obteniendo payment_receipts:', receiptsCatch);
+      }
+
+      try {
+        const orderIds = (ordersData || []).map(order => order.id).filter(Boolean);
+        if (orderIds.length > 0) {
+          const { data: invoiceDocs, error: invoiceDocsError } = await supabase
+            .from('documents')
+            .select('order_id, file_url, file_type')
+            .eq('user_id', currentUserId)
+            .in('order_id', orderIds);
+
+          if (invoiceDocsError) {
+            console.warn('⚠️ [DataProvider] Error obteniendo documents para facturas:', invoiceDocsError);
+          } else if (invoiceDocs) {
+            invoiceDocsMap = invoiceDocs.reduce((acc, doc) => {
+              if (!doc.order_id || !doc.file_url) return acc;
+              const fileType = typeof (doc as any).file_type === 'string' ? (doc as any).file_type.toLowerCase() : '';
+              const isInvoice = fileType.includes('factura') || fileType.includes('invoice');
+
+              if (isInvoice && !acc[doc.order_id]) {
+                acc[doc.order_id] = doc.file_url;
+              }
+              return acc;
+            }, {} as Record<string, string>);
+          }
+        }
+      } catch (invoiceDocsCatch) {
+        console.warn('⚠️ [DataProvider] Error inesperado obteniendo documentos de factura:', invoiceDocsCatch);
+      }
+
       if (ordersError) {
         console.error('❌ Error fetching orders:', ordersError);
         setOrders([]);
       } else {
-        const validatedOrders = (ordersData || []).map(mapOrderFromDb);
+        const validatedOrders = (ordersData || []).map(order => {
+          const mapped = mapOrderFromDb(order);
+          if (!mapped.paymentReceiptUrl && paymentReceiptsMap[order.id]) {
+            mapped.paymentReceiptUrl = paymentReceiptsMap[order.id];
+          }
+          if (invoiceDocsMap[order.id]) {
+            mapped.invoiceFileUrl = invoiceDocsMap[order.id];
+          }
+          if (!mapped.invoiceFileUrl) {
+            mapped.invoiceFileUrl = mapped.receiptUrl;
+          }
+          return mapped;
+        });
         setOrders(validatedOrders);
       }
       
@@ -204,25 +271,53 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
   // 🔧 NUEVO: Escuchar actualizaciones de órdenes en tiempo real
   useEffect(() => {
     if (!currentUserId) {
+      console.warn('⚠️ [DataProvider] No hay currentUserId, no se puede suscribir a actualizaciones');
       return;
     }
 
-           const unsubscribeOrderUpdates = realtimeService.addOrderListener((updatedOrder) => {
-             // 🔧 OPTIMIZADO: Actualizar solo la orden específica en lugar de recargar todas
-             setOrders(prevOrders => {
-               const existingOrderIndex = prevOrders.findIndex(order => order.id === updatedOrder.id);
-               
-               if (existingOrderIndex >= 0) {
-                 // Actualizar orden existente
-                 const updatedOrders = [...prevOrders];
-                 updatedOrders[existingOrderIndex] = { ...updatedOrders[existingOrderIndex], ...updatedOrder };
-                 return updatedOrders;
-               } else {
-                 // Agregar nueva orden
-                 return [...prevOrders, updatedOrder];
-               }
-             });
-           });
+    const unsubscribeOrderUpdates = realtimeService.addOrderListener((updatedOrder) => {
+      // Actualizar solo la orden específica en lugar de recargar todas
+      setOrders(prevOrders => {
+        const existingOrderIndex = prevOrders.findIndex(order => order.id === updatedOrder.id);
+        
+        if (existingOrderIndex >= 0) {
+          // Actualizar orden existente
+          const updatedOrders = [...prevOrders];
+          const mergedOrder = {
+            ...updatedOrders[existingOrderIndex],
+            ...updatedOrder,
+          } as Order;
+          if (updatedOrder.updatedAt && !(updatedOrder.updatedAt instanceof Date)) {
+            mergedOrder.updatedAt = new Date(updatedOrder.updatedAt);
+          }
+          if (updatedOrder.status) {
+            mergedOrder.status = updatedOrder.status as Order['status'];
+          }
+          if (!mergedOrder.invoiceFileUrl && updatedOrder.invoiceFileUrl) {
+            mergedOrder.invoiceFileUrl = updatedOrder.invoiceFileUrl;
+          }
+          if (!mergedOrder.paymentReceiptUrl && updatedOrder.paymentReceiptUrl) {
+            mergedOrder.paymentReceiptUrl = updatedOrder.paymentReceiptUrl;
+          }
+          updatedOrders[existingOrderIndex] = mergedOrder;
+          return updatedOrders;
+        } else {
+          // Verificar que no sea duplicado antes de agregar
+          const exists = prevOrders.some(o => o.id === updatedOrder.id);
+          if (exists) {
+            return prevOrders;
+          }
+          const newOrder = {
+            ...updatedOrder,
+            status: (updatedOrder.status || 'standby') as Order['status'],
+          } as Order;
+          if (updatedOrder.updatedAt && !(updatedOrder.updatedAt instanceof Date)) {
+            newOrder.updatedAt = new Date(updatedOrder.updatedAt);
+          }
+          return [newOrder, ...prevOrders];
+        }
+      });
+    });
 
     return () => {
       unsubscribeOrderUpdates();
@@ -238,6 +333,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       const orderNumber = `ORD-${timestamp}-${randomSuffix}`;
       
       // Preparar datos de la orden para el servicio unificado
+      // 🔧 FIX: Convertir fechas a ISO string si son objetos Date
       const orderData = {
         ...order,
         id: crypto.randomUUID(), // Generar ID único para la orden
@@ -247,6 +343,10 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         currency: order.currency || 'ARS',
         orderDate: order.orderDate || new Date(),
         dueDate: order.dueDate || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 días
+        desiredDeliveryDate: order.desiredDeliveryDate instanceof Date 
+          ? order.desiredDeliveryDate.toISOString() 
+          : order.desiredDeliveryDate || null,
+        desiredDeliveryTime: order.desiredDeliveryTime || null,
         paymentMethod: order.paymentMethod || 'efectivo',
         additionalFiles: order.additionalFiles || [],
         notes: order.notes || ''
@@ -280,9 +380,32 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         }
         
         const mappedOrder = mapOrderFromDb(createdOrder);
+
+        // Marcar pendiente de aprobación si aplica (para banner en chat/config)
+        try {
+          if (result?.pendingApproval) {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('wa_display_name_pending', '1');
+              localStorage.removeItem('wa_display_name_pending_dismissed');
+            }
+          } else if (result?.message?.includes('notificación enviada') || (result?.pendingApproval === false && result?.success)) {
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('wa_display_name_pending');
+            }
+          }
+        } catch {}
         
-        // Actualizar el estado local inmediatamente
-        setOrders(prevOrders => [mappedOrder, ...prevOrders]);
+        // 🔧 FIX: Verificar si la orden ya existe antes de agregar para evitar duplicados
+        setOrders(prevOrders => {
+          const exists = prevOrders.some(o => o.id === mappedOrder.id);
+          if (exists) {
+            console.log('⚠️ [DataProvider] Orden ya existe en estado local, actualizando en lugar de duplicar:', mappedOrder.id);
+            // Actualizar la orden existente en lugar de agregar duplicado
+            return prevOrders.map(o => o.id === mappedOrder.id ? mappedOrder : o);
+          }
+          // Agregar al inicio (orden más reciente primero)
+          return [mappedOrder, ...prevOrders];
+        });
         return mappedOrder;
       } else {
         throw new Error(result.errors?.join(', ') || 'Error creando orden');
@@ -307,6 +430,8 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         invoice_number: (order as any).invoiceNumber,
         bank_info: (order as any).bankInfo,
         receipt_url: (order as any).receiptUrl,
+        invoice_file_url: order.invoiceFileUrl || order.receiptUrl || null,
+        payment_receipt_url: order.paymentReceiptUrl || null,
         notes: order.notes,
         // 🔧 NUEVAS COLUMNAS NATIVAS para campos del modal
         desired_delivery_date: order.desiredDeliveryDate ? order.desiredDeliveryDate.toISOString() : null,
@@ -323,7 +448,17 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       }
       // 🔧 OPTIMIZACIÓN: Actualizar localmente sin fetchAll completo
       setOrders(prevOrders => 
-        prevOrders.map(o => o.id === order.id ? { ...o, ...order, updatedAt: new Date() } : o)
+        prevOrders.map(o => 
+          o.id === order.id 
+            ? { 
+                ...o, 
+                ...order, 
+                invoiceFileUrl: order.invoiceFileUrl || o.invoiceFileUrl || order.receiptUrl || o.receiptUrl,
+                paymentReceiptUrl: order.paymentReceiptUrl || o.paymentReceiptUrl, 
+                updatedAt: new Date() 
+              } 
+            : o
+        )
       );
     } catch (error) {
       console.error('Error in updateOrder:', error);
@@ -369,6 +504,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
                        (typeof provider.categories === 'string' ? [provider.categories] : []);
       const tags = Array.isArray(provider.tags) ? provider.tags : 
                   (typeof provider.tags === 'string' ? [provider.tags] : []);
+      const cuitDigits = String(provider.cuitCuil || '').replace(/[^0-9]/g, '');
       const snakeCaseProvider = {
         name: provider.name,
         email: provider.email,
@@ -381,10 +517,11 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         cbu: provider.cbu || '',
         alias: provider.alias || '',
         razon_social: provider.razonSocial || '',
-        cuit_cuil: provider.cuitCuil || '',
+        cuit_cuil: cuitDigits || '',
         default_delivery_days: provider.defaultDeliveryDays || [],
         default_delivery_time: provider.defaultDeliveryTime || [],
         default_payment_method: provider.defaultPaymentMethod || 'efectivo',
+        auto_order_flow_enabled: provider.autoOrderFlowEnabled !== undefined ? provider.autoOrderFlowEnabled : true,
         catalogs: provider.catalogs || [],
         created_at: provider.createdAt,
         updated_at: provider.updatedAt,
@@ -395,7 +532,176 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       const result = await supabase.from('providers').insert([snakeCaseProvider]);
       console.log('Supabase result:', result);
       if (result.error) {
-        console.error('Error adding provider:', result.error);
+        // Manejo de conflicto (409) por CUIT duplicado: buscar existente del usuario
+        const statusCode = result.status || result.error.code || '';
+        const errorMessage = String(result.error.message || '').toLowerCase();
+        const errorDetails = String(result.error.details || '').toLowerCase();
+        const maybeConflict = statusCode === 409 || 
+                              String(statusCode).includes('409') || 
+                              errorMessage.includes('duplicate') || 
+                              errorMessage.includes('unique') ||
+                              errorDetails.includes('duplicate') ||
+                              errorDetails.includes('unique');
+        
+        if (maybeConflict) {
+          console.log('⚠️ [addProvider] Conflicto detectado (CUIT duplicado), buscando proveedor existente...');
+          try {
+            const digits = String(provider.cuitCuil || '').replace(/[^0-9]/g, '');
+            if (!digits || digits.length < 8) {
+              console.warn('⚠️ [addProvider] CUIT inválido o vacío, no se puede buscar existente');
+              throw result.error;
+            }
+            
+            console.log(`🔍 [addProvider] Buscando proveedor con CUIT: ${digits} para usuario: ${user_id}`);
+            
+            // NOTA: Diferentes usuarios pueden tener proveedores con el mismo CUIT
+            // Por ejemplo, "Coca Cola" puede ser proveedor de múltiples restaurantes
+            // Solo buscamos en los proveedores del usuario actual
+            
+            // 1. Búsqueda en proveedores del usuario actual por CUIT
+            let { data: existingList, error: fetchErr } = await supabase
+              .from('providers')
+              .select('*')
+              .eq('user_id', user_id)
+              .eq('cuit_cuil', digits)
+              .order('created_at', { ascending: false })
+              .limit(1);
+            
+            // Si encontramos uno del usuario actual, usarlo
+            if (existingList && existingList.length > 0) {
+              console.log(`✅ [addProvider] Proveedor encontrado del usuario actual: ${existingList[0].name}`);
+            }
+            
+            // 2. Si no encontramos, buscar con formato con guiones
+            if ((!existingList || existingList.length === 0) && digits.length === 11) {
+              const formattedCuit = `${digits.slice(0,2)}-${digits.slice(2,10)}-${digits.slice(10)}`;
+              console.log(`🔍 [addProvider] Intentando búsqueda con formato: ${formattedCuit}`);
+              const { data: formattedList } = await supabase
+                .from('providers')
+                .select('*')
+                .eq('user_id', user_id)
+                .eq('cuit_cuil', formattedCuit)
+                .order('created_at', { ascending: false })
+                .limit(1);
+              
+              if (formattedList && formattedList.length > 0) {
+                existingList = formattedList;
+              }
+            }
+            
+            // 3. Si aún no encontramos, buscar con ilike (búsqueda flexible)
+            if (!existingList || existingList.length === 0) {
+              console.log(`🔍 [addProvider] Intentando búsqueda flexible con ilike`);
+              const { data: flexibleList } = await supabase
+                .from('providers')
+                .select('*')
+                .eq('user_id', user_id)
+                .ilike('cuit_cuil', `%${digits}%`)
+                .order('created_at', { ascending: false })
+                .limit(1);
+              
+              if (flexibleList && flexibleList.length > 0) {
+                existingList = flexibleList;
+              }
+            }
+            
+            // 4. Último intento: usar el endpoint de API del servidor (tiene permisos de service role)
+            if (!existingList || existingList.length === 0) {
+              console.log(`🔍 [addProvider] Intentando búsqueda a través de API del servidor (último intento)`);
+              try {
+                const apiResponse = await fetch(`/api/data/providers?user_id=${user_id}`);
+                if (apiResponse.ok) {
+                  const apiData = await apiResponse.json();
+                  if (apiData.success && apiData.providers) {
+                    // Buscar en la lista de proveedores del usuario
+                    const found = apiData.providers.find((p: any) => {
+                      const pCuit = String(p.cuit_cuil || p.cuitCuil || '').replace(/[^0-9]/g, '');
+                      return pCuit === digits;
+                    });
+                    
+                    if (found) {
+                      console.log(`✅ [addProvider] Proveedor encontrado a través de API:`, found.name);
+                      // Convertir al formato de Supabase raw
+                      const rawProvider = {
+                        id: found.id,
+                        user_id: found.user_id,
+                        name: found.name,
+                        email: found.email || '',
+                        contact_name: found.contact_name || found.contactName || '',
+                        phone: found.phone || '',
+                        address: found.address || '',
+                        categories: found.categories || [],
+                        tags: found.tags || [],
+                        notes: found.notes || '',
+                        cbu: found.cbu || '',
+                        alias: found.alias || '',
+                        razon_social: found.razon_social || found.razonSocial || '',
+                        cuit_cuil: found.cuit_cuil || found.cuitCuil || '',
+                        default_delivery_days: found.default_delivery_days || found.defaultDeliveryDays || [],
+                        default_delivery_time: found.default_delivery_time || found.defaultDeliveryTime || [],
+                        default_payment_method: found.default_payment_method || found.defaultPaymentMethod || 'efectivo',
+                        auto_order_flow_enabled: found.auto_order_flow_enabled !== undefined ? found.auto_order_flow_enabled : found.autoOrderFlowEnabled !== undefined ? found.autoOrderFlowEnabled : true,
+                        catalogs: found.catalogs || [],
+                        created_at: found.created_at || found.createdAt,
+                        updated_at: found.updated_at || found.updatedAt
+                      };
+                      existingList = [rawProvider];
+                    }
+                  }
+                }
+              } catch (apiError) {
+                console.warn('⚠️ [addProvider] Error en búsqueda por API:', apiError);
+              }
+            }
+            
+            // Si encontramos un proveedor del usuario actual, usarlo
+            if (existingList && existingList.length > 0) {
+              const existingProvider = mapProviderFromDb(existingList[0]);
+              console.log('✅ [addProvider] Proveedor existente encontrado:', existingProvider.name, 'ID:', existingProvider.id);
+              setProviders(prev => {
+                const filtered = prev.filter(p => p.id !== existingProvider.id);
+                return [existingProvider, ...filtered];
+              });
+              // Retornar el proveedor existente en formato compatible con el flujo
+              return { 
+                data: [existingList[0]], 
+                error: null,
+                status: 200,
+                statusText: 'OK'
+              } as any;
+            }
+            
+            // Si no encontramos un proveedor del usuario actual pero hay conflicto,
+            // puede ser que:
+            // 1. El constraint único global todavía existe (necesita migración)
+            // 2. Hay un problema de RLS que impide leer el proveedor
+            // 3. El proveedor existe pero con formato diferente de CUIT
+            
+            // En cualquier caso, si no encontramos uno del usuario actual,
+            // intentamos usar el endpoint de API que tiene permisos de service role
+            // para verificar si realmente existe o no
+            
+            console.warn('⚠️ [addProvider] Conflicto de CUIT pero no se encontró proveedor del usuario actual');
+            console.warn('⚠️ [addProvider] Esto puede indicar que el constraint único global todavía existe');
+            console.warn('⚠️ [addProvider] Se requiere ejecutar la migración SQL: docs/fix-providers-cuit-constraint.sql');
+            
+            // Mostrar mensaje informativo
+            const customError = {
+              ...result.error,
+              message: `Error: Conflicto al crear proveedor con CUIT ${digits}. Si el CUIT ya está registrado para tu usuario, debería haberse encontrado. Si necesitas crear un proveedor con este CUIT y no existe en tu cuenta, puede ser necesario ejecutar la migración SQL para cambiar el constraint de único global a único por usuario.`,
+              userMessage: 'Error al crear el proveedor. El CUIT puede estar duplicado o puede haber un problema con la base de datos. Si el proveedor no existe en tu cuenta, contacta al administrador para ejecutar la migración SQL necesaria.'
+            };
+            throw customError;
+          } catch (e) {
+            console.error('❌ [addProvider] Error en manejo de conflicto:', e);
+            // Si el error es diferente al original, lanzar el original
+            if (e !== result.error) {
+              throw result.error;
+            }
+            throw e;
+          }
+        }
+        console.error('❌ [addProvider] Error agregando proveedor:', result.error);
         throw result.error;
       }
       // Agregar la nueva fila al principio de la lista en lugar de recargar todo
@@ -422,6 +728,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
                        (typeof provider.categories === 'string' ? [provider.categories] : []);
       const tags = Array.isArray(provider.tags) ? provider.tags : 
                   (typeof provider.tags === 'string' ? [provider.tags] : []);
+      const cuitDigitsUpd = String(provider.cuitCuil || '').replace(/[^0-9]/g, '');
       const snakeCaseProvider = {
         name: provider.name,
         email: provider.email,
@@ -434,10 +741,11 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         cbu: provider.cbu || '',
         alias: provider.alias || '',
         razon_social: provider.razonSocial || '',
-        cuit_cuil: provider.cuitCuil || '',
+        cuit_cuil: cuitDigitsUpd || '',
         default_delivery_days: provider.defaultDeliveryDays || [],
         default_delivery_time: provider.defaultDeliveryTime || [],
         default_payment_method: provider.defaultPaymentMethod || 'efectivo',
+        auto_order_flow_enabled: provider.autoOrderFlowEnabled !== undefined ? provider.autoOrderFlowEnabled : true,
         catalogs: provider.catalogs || [],
         updated_at: new Date(),
       };

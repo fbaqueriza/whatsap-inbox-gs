@@ -57,13 +57,14 @@ export function usePaymentReceipts() {
 
       // Obtener datos relacionados por separado para evitar errores de relación ambigua
       const enrichedReceipts = await Promise.all(receipts.map(async (receipt) => {
-        // Buscar proveedor si hay assignment
+        // Buscar proveedor si hay assignment (usar provider_id o auto_assigned_provider_id)
         let providerData = null;
-        if (receipt.auto_assigned_provider_id) {
+        const providerId = receipt.provider_id || receipt.auto_assigned_provider_id;
+        if (providerId) {
           const { data: provider } = await supabase
             .from('providers')
             .select('name, phone')
-            .eq('id', receipt.auto_assigned_provider_id)
+            .eq('id', providerId)
             .single();
           providerData = provider;
         }
@@ -102,15 +103,11 @@ export function usePaymentReceipts() {
   const subscriptionInitializedRef = useRef<Set<string>>(new Set());
   
   const setupRealtimeSubscription = useCallback((userId: string) => {
-    console.log(`🔍 [Realtime] Setup solicitado para usuario: ${userId}`);
-    
     // 🚫 PREVENIR: Múltiples suscripciones simultaneas por usuario
     if (subscriptionInitializedRef.current.has(userId)) {
-      console.log(`🔐 [Realtime] Ya hay suscripción activa para usuario ${userId}, ignorando llamada`);
       return;
     }
     
-    console.log(`📝 [Realtime] Marcando usuario como inicializado: ${userId}`);
     subscriptionInitializedRef.current.add(userId);
     
     // Limpiar suscripción anterior
@@ -118,8 +115,6 @@ export function usePaymentReceipts() {
       subscriptionRef.current.unsubscribe();
       subscriptionRef.current = null;
     }
-
-    console.log(`🔗 [Realtime] Configurando suscripción comprobantes para usuario ${userId}`);
     
     subscriptionRef.current = supabase
       .channel(`payment_receipts_stable_${userId}`) // Nombre único y estable
@@ -131,50 +126,87 @@ export function usePaymentReceipts() {
           table: 'payment_receipts',
           filter: `user_id=eq.${userId}`
         },
-        (payload) => {
-          console.log('🔄 [Realtime] Evento comprobantes recibido:', payload.eventType, payload.new?.id);
-          
+        async (payload) => {
           if (payload.eventType === 'INSERT') {
             const newReceipt = payload.new as PaymentReceiptData;
-            console.log('✅ [Realtime] Nuevo comprobante agregado:', newReceipt.id);
-            console.log('📱 [Realtime] Datos del comprobante:', { 
-              id: newReceipt.id, 
-              filename: newReceipt.filename,
-              amount: newReceipt.payment_amount,
-              status: newReceipt.status 
-            });
+            // Enriquecer con datos del proveedor y orden (usar provider_id o auto_assigned_provider_id)
+            let providerData = null;
+            const providerId = newReceipt.provider_id || newReceipt.auto_assigned_provider_id;
+            if (providerId) {
+              const { data: provider } = await supabase
+                .from('providers')
+                .select('name, phone')
+                .eq('id', providerId)
+                .single();
+              providerData = provider;
+            }
+            let orderData = null;
+            if (newReceipt.auto_assigned_order_id) {
+              const { data: order } = await supabase
+                .from('orders')
+                .select('order_number, total_amount, status')
+                .eq('id', newReceipt.auto_assigned_order_id)
+                .single();
+              orderData = order;
+            }
             setReceipts(prev => {
               // Verificar que no existe ya
               const exists = prev.find(r => r.id === newReceipt.id);
               if (exists) {
-                console.log('⚠️ [Realtime] Comprobante ya existe en el estado local');
                 return prev;
               }
-              console.log('✅ [Realtime] Agregando comprobante al estado local');
-              return [newReceipt, ...prev];
+              return [{ ...newReceipt, auto_assigned_provider: providerData, auto_assigned_order: orderData }, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const updatedReceipt = payload.new as PaymentReceiptData;
-            console.log('🔄 [Realtime] Comprobante actualizado:', updatedReceipt.id);
-            setReceipts(prev => prev.map(receipt => 
-              receipt.id === updatedReceipt.id 
-                ? { ...receipt, ...updatedReceipt }
-                : receipt
-            ));
+            // 🔧 CORRECCIÓN: Siempre buscar el proveedor desde la BD usando el provider_id actualizado
+            // No confiar en auto_assigned_provider del payload, siempre buscar desde cero
+            let providerData = null;
+            const providerId = updatedReceipt.provider_id || updatedReceipt.auto_assigned_provider_id;
+            if (providerId) {
+              const { data: provider } = await supabase
+                .from('providers')
+                .select('name, phone')
+                .eq('id', providerId)
+                .single();
+              providerData = provider;
+              console.log('🔍 [usePaymentReceipts] Proveedor encontrado para comprobante:', {
+                receiptId: updatedReceipt.id,
+                providerId,
+                providerName: provider?.name || 'No encontrado'
+              });
+            }
+            let orderData = null;
+            if (updatedReceipt.auto_assigned_order_id) {
+              const { data: order } = await supabase
+                .from('orders')
+                .select('order_number, total_amount, status')
+                .eq('id', updatedReceipt.auto_assigned_order_id)
+                .single();
+              orderData = order;
+            }
+            // 🔧 CORRECCIÓN: No usar spread de updatedReceipt.auto_assigned_provider, siempre usar providerData de la BD
+            setReceipts(prev => prev.map(receipt => {
+              if (receipt.id === updatedReceipt.id) {
+                // Construir nuevo objeto sin auto_assigned_provider del payload
+                const { auto_assigned_provider: _, auto_assigned_order: __, ...updatedReceiptClean } = updatedReceipt;
+                return {
+                  ...updatedReceiptClean,
+                  auto_assigned_provider: providerData, // Siempre usar el proveedor buscado desde la BD
+                  auto_assigned_order: orderData
+                };
+              }
+              return receipt;
+            }));
           } else if (payload.eventType === 'DELETE') {
             const deletedReceipt = payload.old as PaymentReceiptData;
-            console.log('❌ [Realtime] Comprobante eliminado:', deletedReceipt.id);
             setReceipts(prev => prev.filter(receipt => receipt.id !== deletedReceipt.id));
           }
         }
       )
         .subscribe((status) => {
-          console.log(`🔗 [Realtime] Estado suscripción comprobantes: ${status}`);
-          if (status === 'SUBSCRIBED') {
-            console.log('✅ [Realtime] Suscripción activa establecida');
-          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-            console.log(`⚠️ [Realtime] Suscripción perdida: ${status}`);
-            subscriptionInitializedRef.current.clear(); // Solo clear en error grave NO delete específico
+          if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            subscriptionInitializedRef.current.clear();
           }
         });
   }, []);
@@ -183,7 +215,6 @@ export function usePaymentReceipts() {
   useEffect(() => {
     return () => {
       if (subscriptionRef.current) {
-        console.log('🔌 [Realtime] Desmontando suscripción comprobantes');
         subscriptionRef.current.unsubscribe();
         subscriptionRef.current = null;
       }

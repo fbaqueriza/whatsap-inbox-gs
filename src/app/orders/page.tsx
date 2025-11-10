@@ -5,9 +5,6 @@ import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import { useRouter } from 'next/navigation';
 import { Order, Provider, StockItem } from '../../types';
 import { DataProvider, useData } from '../../components/DataProvider';
-import { ChatProvider } from '../../contexts/ChatContext';
-import { GlobalChatProvider } from '../../contexts/GlobalChatContext';
-import GlobalChatWrapper from '../../components/GlobalChatWrapper';
 import { useRealtimeService } from '../../services/realtimeService';
 
 // Lazy load components to reduce bundle size
@@ -76,13 +73,51 @@ export default function OrdersPageWrapper() {
   const { user, loading: authLoading } = useSupabaseAuth();
   const router = useRouter();
 
-  // Handle authentication
-  if (!authLoading && !user) {
-    if (typeof window !== 'undefined') {
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = sessionStorage.getItem('orders_debug');
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored);
+      console.log('📦 [OrdersPageWrapper] Debug previo:', parsed);
+    } catch (error) {
+      console.warn('⚠️ [OrdersPageWrapper] No se pudo parsear orders_debug previo:', error);
+    }
+    sessionStorage.removeItem('orders_debug');
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    console.log('🧪 [OrdersPageWrapper] Estado auth:', {
+      authLoading,
+      hasUser: !!user,
+      userId: user?.id,
+      email: user?.email,
+    });
+  }, [authLoading, user]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!authLoading && !user) {
+      sessionStorage.setItem('orders_debug', JSON.stringify({
+        at: new Date().toISOString(),
+        reason: 'no_user',
+        authLoading,
+      }));
+      console.warn('⚠️ [OrdersPageWrapper] Usuario no autenticado, redirigiendo a login.');
       router.push('/auth/login');
     }
-    return null;
-  }
+  }, [authLoading, user, router]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !user) return;
+    sessionStorage.setItem('orders_debug', JSON.stringify({
+      at: new Date().toISOString(),
+      reason: 'render_orders',
+      userId: user.id,
+      email: user.email,
+    }));
+  }, [user]);
 
   if (authLoading) {
     return (
@@ -95,16 +130,15 @@ export default function OrdersPageWrapper() {
     );
   }
 
+  if (!user) {
+    return null;
+  }
+
   return (
     <ErrorBoundary>
-      <ChatProvider>
-        <GlobalChatProvider>
-          <DataProvider userEmail={user?.email ?? undefined} userId={user?.id}>
-            {user && <OrdersPage user={user} />}
-          </DataProvider>
-          <GlobalChatWrapper />
-        </GlobalChatProvider>
-      </ChatProvider>
+      <DataProvider userEmail={user.email ?? undefined} userId={user.id}>
+        <OrdersPage user={user} />
+      </DataProvider>
     </ErrorBoundary>
   );
 }
@@ -205,6 +239,7 @@ function OrdersPage({ user }: OrdersPageProps) {
       esperando_factura: 'bg-orange-100 text-orange-800',
       pendiente_de_pago: 'bg-purple-100 text-purple-800',
       pagado: 'bg-green-100 text-green-800',
+      comprobante_enviado: 'bg-green-100 text-green-800'
     };
     return statusClasses[status as keyof typeof statusClasses] || 'bg-yellow-100 text-yellow-800';
   };
@@ -216,6 +251,7 @@ function OrdersPage({ user }: OrdersPageProps) {
       esperando_factura: 'Esperando Factura',
       pendiente_de_pago: 'Pendiente de Pago',
       pagado: 'Pagado',
+      comprobante_enviado: 'Comprobante enviado'
     };
     return statusTexts[status as keyof typeof statusTexts] || status;
   };
@@ -239,10 +275,10 @@ function OrdersPage({ user }: OrdersPageProps) {
     });
   };
 
-  // Filter and sort orders
+  // Filter and sort orders by update date (most recent first)
   const sortedOrders = [...localOrders].sort((a, b) => {
-    const dateA = new Date(a.createdAt || a.orderDate || 0);
-    const dateB = new Date(b.createdAt || b.orderDate || 0);
+    const dateA = new Date(a.updatedAt || a.createdAt || a.orderDate || 0);
+    const dateB = new Date(b.updatedAt || b.createdAt || b.orderDate || 0);
     return dateB.getTime() - dateA.getTime();
   });
 
@@ -269,29 +305,8 @@ function OrdersPage({ user }: OrdersPageProps) {
         // console.log('🔧 DEBUG - Orden a notificar:', newOrder);
         // console.log('🔧 DEBUG - Usuario ID:', user.id);
         
-        try {
-          // console.log('🔧 DEBUG - Llamando a /api/orders/send-notification...');
-          const response = await fetch('/api/orders/send-notification', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ order: newOrder, userId: user.id }),
-          });
-          
-          // console.log('🔧 DEBUG - Respuesta recibida:', {
-          //   status: response.status,
-          //   statusText: response.statusText,
-          //   ok: response.ok
-          // });
-          
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error('❌ Error enviando notificación:', errorText);
-          } else {
-            console.log('✅ Notificación enviada exitosamente');
-          }
-        } catch (error) {
-          console.error('❌ Error enviando notificación:', error);
-        }
+        // 🔧 FIX: La notificación se envía desde DataProvider, no desde aquí
+        console.log('✅ Orden creada exitosamente');
       }
     } catch (error) {
       console.error('Error creando pedido:', error);
@@ -335,28 +350,9 @@ function OrdersPage({ user }: OrdersPageProps) {
 
   // 🔧 NUEVO: Manejador para abrir chat con proveedor
   const handleOrderClick = (order: Order) => {
-    // console.log('🔧 DEBUG - Abriendo chat para orden:', order.id);
-    
-    // Buscar el proveedor de la orden
-    const provider = providers.find(p => p.id === order.providerId);
-    if (provider) {
-      // console.log('🔧 DEBUG - Proveedor encontrado:', provider.name, provider.phone);
-      
-      // Abrir el chat global con el proveedor específico
-      // Esto debería abrir el GlobalChatWrapper con el proveedor seleccionado
-      window.dispatchEvent(new CustomEvent('openChatWithProvider', {
-        detail: {
-          providerId: provider.id,
-          providerName: provider.name,
-          providerPhone: provider.phone,
-          orderId: order.id,
-          orderNumber: order.orderNumber
-        }
-      }));
-    } else {
-      console.error('❌ Proveedor no encontrado para orden:', order.id);
-    }
+    window.location.href = '/chat';
   };
+
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -458,6 +454,7 @@ function OrdersPage({ user }: OrdersPageProps) {
           suggestedOrder={suggestedOrder}
           providers={providers}
           stockItems={stockItems}
+          orders={orders} // ✅ NUEVO: Pasar orders al modal
           isLoading={isLoading}
         />
 

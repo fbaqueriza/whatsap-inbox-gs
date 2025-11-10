@@ -6,8 +6,9 @@
 // Importar cliente de Supabase del servidor para usar en el webhook
 import { metaWhatsAppService } from './metaWhatsAppService';
 import { PhoneNumberService } from './phoneNumberService';
-import { ORDER_FLOW_CONFIG, getNextTransition, isValidTransition, getActionMessage } from './orderFlowConfig';
-import { ORDER_STATUS } from './orderConstants';
+import { getNextTransition, getActionMessage } from './orderFlowConfig';
+import { ORDER_STATUS, isValidOrderStatus, normalizeOrderStatus, OrderStatus } from './orderConstants';
+// Importación dinámica de KapsoService para evitar problemas de compilación
 
 export interface FlowResult {
   success: boolean;
@@ -19,12 +20,27 @@ export interface FlowResult {
 
 export class ExtensibleOrderFlowService {
   private static instance: ExtensibleOrderFlowService;
+  private processingActions: Set<string> = new Set(); // Trackear acciones en progreso
 
   static getInstance(): ExtensibleOrderFlowService {
     if (!ExtensibleOrderFlowService.instance) {
       ExtensibleOrderFlowService.instance = new ExtensibleOrderFlowService();
     }
     return ExtensibleOrderFlowService.instance;
+  }
+
+  /**
+   * 📤 Enviar mensaje por Kapso (método público)
+   */
+  async sendMessage(phone: string, message: string, userId?: string): Promise<any> {
+    try {
+      console.log('📤 [ExtensibleOrderFlow] Enviando mensaje por Kapso:', { phone, message, userId });
+      await this.sendMessageToKapso(phone, message, userId);
+      return { success: true };
+    } catch (error) {
+      console.error('❌ [ExtensibleOrderFlow] Error enviando mensaje:', error);
+      return { success: false, error };
+    }
   }
 
   /**
@@ -131,59 +147,46 @@ export class ExtensibleOrderFlowService {
       }
 
 
+      const normalizedStatus = this.normalizeStatus(foundOrder.status);
+
+      if (normalizedStatus !== foundOrder.status) {
+        console.log('🔁 [ExtensibleOrderFlow] Normalizando estado legacy → estándar:', {
+          original: foundOrder.status,
+          normalized: normalizedStatus
+        });
+      }
+
       // 🔧 CORRECCIÓN: Validar si el mensaje actual debe activar una transición
       console.log('🔍 [ExtensibleOrderFlow] Validando si el mensaje debe activar transición:', {
-        currentStatus: foundOrder.status,
+        currentStatus: normalizedStatus,
         messageType: 'text',
         messageContent: message
       });
 
-      // 🔧 NUEVA LÓGICA: Solo procesar transiciones específicas según el estado
-      if (foundOrder.status === 'enviado') {
-        // En estado 'enviado', solo los documentos (facturas) deben activar la transición
-        if (message === 'documento_recibido') {
-          console.log('✅ [ExtensibleOrderFlow] Documento recibido, procesando transición de enviado → pendiente_de_pago');
-        } else {
-          console.log('⚠️ [ExtensibleOrderFlow] Estado "enviado" requiere documento (factura) para continuar');
-          return { success: false, message: 'Se requiere una factura válida para continuar el flujo' };
-        }
-      } else if (foundOrder.status === 'pendiente_de_pago') {
-        // 🔧 CORRECCIÓN: En estado 'pendiente_de_pago', NO permitir transiciones por mensaje de texto
-        // Solo debe cambiar a 'pagado' cuando se suba un comprobante de pago válido
-        console.log('⚠️ [ExtensibleOrderFlow] Estado "pendiente_de_pago" - no se permiten transiciones por mensaje de texto');
-        return { success: false, message: 'No hay transición disponible' };
-      }
+      const transition = getNextTransition(normalizedStatus);
 
-      // Para otros estados (standby), permitir mensajes de texto
-      console.log('✅ [ExtensibleOrderFlow] Procesando respuesta del proveedor en estado:', foundOrder.status);
-
-      // Obtener la siguiente transición basada en el estado actual
-      console.log('🔄 [ExtensibleOrderFlow] Obteniendo transición para estado:', foundOrder.status);
-      const transition = getNextTransition(foundOrder.status);
-      console.log('🔄 [ExtensibleOrderFlow] Transición obtenida:', transition);
-      
       if (!transition) {
-        console.log('❌ [ExtensibleOrderFlow] No hay transición disponible para este estado');
-        return { success: false, message: 'No hay transición disponible para este estado' };
+        console.log('⚠️ [ExtensibleOrderFlow] No hay transición configurada para este estado:', normalizedStatus);
+        return { success: false, message: 'No hay transición configurada para este estado' };
       }
 
-      // Validar que la transición es válida
-      const isValid = isValidTransition(foundOrder.status, transition.next);
-      console.log('✅ [ExtensibleOrderFlow] Transición válida:', isValid);
-      
-      if (!isValid) {
-        console.log('❌ [ExtensibleOrderFlow] Transición inválida');
-        return { success: false, errors: ['Transición inválida'] };
+      const triggerEvaluation = this.shouldTriggerTransition(normalizedStatus, message);
+
+      if (!triggerEvaluation.triggered) {
+        console.log('ℹ️ [ExtensibleOrderFlow] Mensaje no activa transición automática:', {
+          reason: triggerEvaluation.reason,
+          currentStatus: normalizedStatus,
+          message
+        });
+        return { success: false, message: triggerEvaluation.reason || 'El mensaje no activa una transición automática para este estado' };
       }
 
-      // 🔧 CORRECCIÓN: Solo ejecutar UNA transición por vez
-      console.log(`🔄 [ExtensibleFlow] Ejecutando transición: ${foundOrder.status} → ${transition.next}`);
-      const result = await this.executeTransition(foundOrder, transition, normalizedPhone, message);
-      
-      // 🔧 IMPORTANTE: No ejecutar transiciones adicionales automáticamente
-      // El proveedor debe responder de nuevo para la siguiente transición
-      console.log('✅ [ExtensibleOrderFlow] Transición completada - esperando nueva respuesta del proveedor');
-      return result;
+      const orderForTransition = normalizedStatus === foundOrder.status
+        ? foundOrder
+        : { ...foundOrder, status: normalizedStatus };
+
+      // Ejecutar la transición automática
+      return await this.executeTransition(orderForTransition, transition, normalizedPhone, message);
 
     } catch (error) {
       return {
@@ -222,7 +225,31 @@ export class ExtensibleOrderFlowService {
       }
 
       console.log(`✅ [ExtensibleFlow] Orden ${order.id} actualizada exitosamente a '${transition.next}'`);
+      console.log('🔔 [ExtensibleFlow] Esta actualización debería disparar un evento Realtime para los suscriptores');
+      
+      // 🔧 WORKAROUND: Emitir broadcast manual para notificar a los clientes Realtime
+      try {
+        const broadcastResult = await supabase
+          .channel('orders-updates')
+          .send({
+            type: 'broadcast' as const,
+            event: 'order_updated',
+            payload: {
+              orderId: order.id,
+              status: transition.next,
+              timestamp: new Date().toISOString(),
+              source: 'order_flow_transition'
+            }
+          });
 
+        if (broadcastResult === 'error') {
+          console.error('⚠️ [ExtensibleFlow] Error enviando broadcast');
+        } else {
+          console.log('✅ [ExtensibleFlow] Broadcast de actualización enviado');
+        }
+      } catch (broadcastErr) {
+        console.error('⚠️ [ExtensibleFlow] Error en broadcast:', broadcastErr);
+      }
 
       // 2. Ejecutar acción asociada
       if (transition.action) {
@@ -248,25 +275,152 @@ export class ExtensibleOrderFlowService {
    * 🎯 Ejecutar acción específica
    */
   private async executeAction(action: string, order: any, phone: string): Promise<void> {
+    // ✅ PROTECCIÓN CONTRA DUPLICACIÓN: Crear clave única para esta acción
+    const actionKey = `${action}_${order.id}_${phone}`;
+    
+    if (this.processingActions.has(actionKey)) {
+      console.log(`🔄 [ExtensibleOrderFlow] Acción ${action} ya en progreso para orden ${order.id}, ignorando...`);
+      return;
+    }
+    
+    this.processingActions.add(actionKey);
+    
     try {
+      console.log('🎯 [ExtensibleOrderFlow] Ejecutando acción:', {
+        action: action,
+        orderId: order.id,
+        orderNumber: order.order_number,
+        phone: phone
+      });
 
       switch (action) {
         case 'send_order_details':
+          console.log('📋 [ExtensibleOrderFlow] Ejecutando send_order_details...');
           await this.sendOrderDetails(order, phone);
           break;
         case 'send_invoice_request':
+          console.log('📄 [ExtensibleOrderFlow] Ejecutando send_invoice_request...');
           await this.sendInvoiceRequest(order, phone);
           break;
         case 'process_invoice':
+          console.log('🧾 [ExtensibleOrderFlow] Ejecutando process_invoice...');
           await this.processInvoice(order, phone);
           break;
         case 'complete_order':
+          console.log('✅ [ExtensibleOrderFlow] Ejecutando complete_order...');
           await this.completeOrder(order, phone);
           break;
         default:
+          console.log('⚠️ [ExtensibleOrderFlow] Acción no reconocida:', action);
       }
 
+      console.log('✅ [ExtensibleOrderFlow] Acción ejecutada exitosamente:', action);
     } catch (error) {
+      console.error('❌ [ExtensibleOrderFlow] Error ejecutando acción:', action, error);
+    } finally {
+      // Limpiar la clave después de un delay para permitir futuras ejecuciones
+      setTimeout(() => {
+        this.processingActions.delete(actionKey);
+      }, 10000); // 10 segundos
+    }
+  }
+
+  /**
+   * 🔧 Ejecutar acción manualmente (expuesta para otros servicios)
+   */
+  public async runManualAction(action: string, order: any, phone: string): Promise<void> {
+    await this.executeAction(action, order, phone);
+  }
+
+  /**
+   * 🔧 Enviar mensaje por ambos canales (Meta + Kapso)
+   */
+  private async sendMessageToKapso(phone: string, message: string, userId?: string): Promise<void> {
+    try {
+      // Verificar que estamos en el servidor y que la API key está disponible
+      if (typeof window !== 'undefined' || !process.env.KAPSO_API_KEY) {
+        console.log('⚠️ [ExtensibleOrderFlow] Saltando envío a Kapso (lado cliente o API key faltante)');
+        return;
+      }
+      
+      console.log('📤 [ExtensibleOrderFlow] Enviando mensaje solo por Kapso:', { phone, message });
+      
+      // ✅ MEJORA: Usar la API de Kapso directamente para mejor confiabilidad
+      const kapsoTimeout = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout Kapso')), 5000); // 5 segundos máximo
+      });
+      
+      const kapsoOperation = (async () => {
+        // Importar dinámicamente para evitar problemas de compilación
+        const { KapsoService: KapsoServiceClass } = await import('./kapsoService');
+        const kapsoService = new KapsoServiceClass();
+        
+        // Buscar conversación existente o enviar mensaje standalone
+        const conversations = await kapsoService.getAllActiveConversations();
+        const existingConversation = conversations.find(conv => 
+          PhoneNumberService.normalizePhoneNumber(conv.phone_number) === PhoneNumberService.normalizePhoneNumber(phone)
+        );
+
+        let result;
+        if (existingConversation) {
+          result = await kapsoService.sendMessage(existingConversation.id, {
+            type: 'text',
+            content: message
+          }, userId);
+          console.log('📤 [ExtensibleOrderFlow] Mensaje enviado a Kapso (conversación existente):', result?.data?.id);
+        } else {
+          result = await kapsoService.sendStandaloneMessage(phone, {
+            type: 'text',
+            content: message
+          }, userId);
+          console.log('📤 [ExtensibleOrderFlow] Mensaje enviado a Kapso (standalone):', result?.data?.id);
+        }
+        
+        // ✅ CORRECCIÓN: Notificar al frontend que se envió un mensaje
+        if (result?.data?.id) {
+          try {
+            const { createClient } = await import('@supabase/supabase-js');
+            const supabase = createClient(
+              process.env.NEXT_PUBLIC_SUPABASE_URL!,
+              process.env.SUPABASE_SERVICE_ROLE_KEY!
+            );
+            
+            console.log('📡 [ExtensibleOrderFlow] Enviando broadcast al frontend...');
+            const broadcastResponse = await supabase
+              .channel('kapso_messages')
+              .send({
+                type: 'broadcast',
+                event: 'new_message',
+                payload: {
+                  messageId: result.data.id,
+                  fromNumber: '5491141780300', // Número de la empresa
+                  content: message,
+                  messageType: 'text',
+                  timestamp: new Date().toISOString(),
+                  userId: userId || 'b5a237e6-c9f9-4561-af07-a1408825ab50'
+                }
+              });
+            
+            console.log('📡 [ExtensibleOrderFlow] Resultado del broadcast:', broadcastResponse);
+            
+            if (broadcastResponse === 'error') {
+              console.error('❌ [ExtensibleOrderFlow] Error notificando mensaje al frontend');
+            } else {
+              console.log('✅ [ExtensibleOrderFlow] Mensaje notificado al frontend:', result.data.id);
+            }
+          } catch (notificationError) {
+            console.error('❌ [ExtensibleOrderFlow] Error enviando notificación:', notificationError);
+          }
+        }
+        
+        return result;
+      })();
+      
+      // Ejecutar con timeout
+      await Promise.race([kapsoOperation, kapsoTimeout]);
+    } catch (kapsoError) {
+      console.error('❌ [ExtensibleOrderFlow] Error enviando a Kapso:', kapsoError);
+      throw kapsoError; // Lanzar error para que se maneje apropiadamente
     }
   }
 
@@ -275,6 +429,13 @@ export class ExtensibleOrderFlowService {
    */
   private async sendOrderDetails(order: any, phone: string): Promise<void> {
     try {
+      console.log('📋 [ExtensibleOrderFlow] Enviando detalles de la orden:', {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        phone: phone,
+        userId: order.user_id
+      });
+
       // Crear cliente de Supabase del servidor
       const { createClient } = await import('@supabase/supabase-js');
       const supabase = createClient(
@@ -284,13 +445,20 @@ export class ExtensibleOrderFlowService {
 
       const { data: provider } = await supabase
         .from('providers')
-        .select('name')
+        .select('name, contact_name')
         .eq('phone', phone)
+        .eq('user_id', order.user_id)  // ✅ FILTRAR POR USUARIO
         .single();
 
+      console.log('👤 [ExtensibleOrderFlow] Proveedor para detalles:', provider);
+
       const message = getActionMessage('send_order_details', order, provider);
-      await metaWhatsAppService.sendMessage(phone, message, order.user_id);
+      console.log('📝 [ExtensibleOrderFlow] Mensaje a enviar:', message);
+
+      // ✅ CORRECCIÓN: Enviar solo por Kapso para escalabilidad
+      await this.sendMessageToKapso(phone, message, order.user_id);
     } catch (error) {
+      console.error('❌ [ExtensibleOrderFlow] Error enviando detalles de la orden:', error);
     }
   }
 
@@ -299,8 +467,8 @@ export class ExtensibleOrderFlowService {
    */
   private async sendInvoiceRequest(order: any, phone: string): Promise<void> {
     try {
-      const message = getActionMessage('send_invoice_request', order);
-      await metaWhatsAppService.sendMessage(phone, message, order.user_id);
+        const message = getActionMessage('send_invoice_request', order);
+        await this.sendMessageToKapso(phone, message, order.user_id);
     } catch (error) {
     }
   }
@@ -310,8 +478,8 @@ export class ExtensibleOrderFlowService {
    */
   private async processInvoice(order: any, phone: string): Promise<void> {
     try {
-      const message = getActionMessage('process_invoice', order);
-      await metaWhatsAppService.sendMessage(phone, message, order.user_id);
+        const message = getActionMessage('process_invoice', order);
+        await this.sendMessageToKapso(phone, message, order.user_id);
     } catch (error) {
     }
   }
@@ -321,9 +489,61 @@ export class ExtensibleOrderFlowService {
    */
   private async completeOrder(order: any, phone: string): Promise<void> {
     try {
-      const message = getActionMessage('complete_order', order);
-      await metaWhatsAppService.sendMessage(phone, message, order.user_id);
+        const message = getActionMessage('complete_order', order);
+        await this.sendMessageToKapso(phone, message, order.user_id);
     } catch (error) {
+    }
+  }
+
+  private normalizeStatus(status: string): OrderStatus {
+    if (isValidOrderStatus(status)) {
+      return status as OrderStatus;
+    }
+    return normalizeOrderStatus(status);
+  }
+
+  private shouldTriggerTransition(currentStatus: OrderStatus, message: string | undefined): { triggered: boolean; reason?: string } {
+    const trimmedMessage = message?.trim() || '';
+
+    switch (currentStatus) {
+      case ORDER_STATUS.STANDBY:
+        if (!trimmedMessage) {
+          return {
+            triggered: false,
+            reason: 'Se requiere una respuesta del proveedor para avanzar la orden'
+          };
+        }
+        return { triggered: true };
+      case ORDER_STATUS.ENVIADO: {
+        const normalizedMessage = trimmedMessage.toLowerCase();
+        if (normalizedMessage === 'documento_recibido') {
+          return { triggered: true };
+        }
+        return {
+          triggered: false,
+          reason: 'Se requiere una factura válida para continuar el flujo'
+        };
+      }
+      case ORDER_STATUS.PENDIENTE_DE_PAGO:
+        return {
+          triggered: false,
+          reason: 'La orden está pendiente de pago. Solo se completará cuando se suba un comprobante real.'
+        };
+      case ORDER_STATUS.PAGADO:
+        return {
+          triggered: false,
+          reason: 'La orden ya fue marcada como pagada. No hay transiciones automáticas disponibles.'
+        };
+      case ORDER_STATUS.COMPROBANTE_ENVIADO:
+        return {
+          triggered: false,
+          reason: 'La orden ya fue completada. No hay transiciones automáticas disponibles.'
+        };
+      default:
+        return {
+          triggered: false,
+          reason: 'No hay transición automática configurada para este estado'
+        };
     }
   }
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { metaWhatsAppService } from '../../../../lib/metaWhatsAppService';
+import { MetaWhatsAppService } from '../../../../lib/metaWhatsAppService';
 import { createClient } from '@supabase/supabase-js';
 
 // Cliente Supabase singleton
@@ -52,7 +52,11 @@ export async function POST(request: NextRequest) {
         message: messageContent
       });
       
-      result = await metaWhatsAppService.sendMessageWithDocument(to, messageContent, mediaUrl, mediaType, userId);
+      const metaService = new MetaWhatsAppService();
+      await metaService.initialize();
+      // Extraer filename de mediaUrl
+      const filename = mediaUrl.split('/').pop() || 'documento.pdf';
+      result = await metaService.sendDocument(to, mediaUrl, filename, messageContent, userId);
     } else if (isTemplate) {
       // 🔧 CORRECCIÓN: Generar contenido para guardar en BD
       messageContent = generateTemplateContent(message, templateVariables);
@@ -76,7 +80,10 @@ export async function POST(request: NextRequest) {
       } else {
         // Enviar template sin componentes dinámicos por defecto
         console.log('🔧 Usando sendTemplateMessage para template sin variables');
-        result = await metaWhatsAppService.sendTemplateMessage(to, message, 'es_AR', 0, templateVariables);
+        const metaService = new MetaWhatsAppService();
+        await metaService.initialize();
+        const params = templateVariables ? Object.values(templateVariables) : [];
+        result = await metaService.sendTemplateMessage(to, message, 'es_AR', params, userId);
       }
     } else {
       // 🔧 MEJORA: Procesar variables en mensajes de texto
@@ -88,7 +95,9 @@ export async function POST(request: NextRequest) {
         processedMessage: messageContent
       });
       
-      result = await metaWhatsAppService.sendMessage(to, messageContent);
+      const metaService = new MetaWhatsAppService();
+      await metaService.initialize();
+      result = await metaService.sendMessage(to, messageContent);
     }
     
     if (!result) {
@@ -101,6 +110,12 @@ export async function POST(request: NextRequest) {
     // 🔧 MEJORA: Guardar mensaje en la base de datos
     if (supabase) {
       console.log('💾 [POST /api/whatsapp/send] Llamando a saveMessageToDatabase...');
+      console.log('💾 [POST /api/whatsapp/send] Contenido a guardar:', {
+        messageContent: messageContent.substring(0, 100),
+        isTemplate: isTemplate,
+        templateName: isTemplate ? message : 'N/A',
+        hasVariables: templateVariables ? Object.keys(templateVariables).length : 0
+      });
       await saveMessageToDatabase(to, messageContent, result, userId);
       console.log('✅ [POST /api/whatsapp/send] saveMessageToDatabase completado');
     }

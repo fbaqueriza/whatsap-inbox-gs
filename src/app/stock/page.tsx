@@ -58,7 +58,7 @@ function StockPage({ user }: StockPageProps) {
 
   const [editingModal, setEditingModal] = useState<{
     isOpen: boolean;
-    type: 'frequency' | 'preferred' | 'associated';
+    type: 'frequency' | 'preferred';
     rowData: any;
     currentValue: any;
   } | null>(null);
@@ -67,10 +67,25 @@ function StockPage({ user }: StockPageProps) {
     isOpen: boolean;
     selectedItems: any[];
     preferredProvider: string;
-    associatedProviders: string[];
     restockFrequency: string;
     category: string;
   } | null>(null);
+  // Subida manual de facturas
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  const [invoiceUploading, setInvoiceUploading] = useState(false);
+  const [invoiceMessage, setInvoiceMessage] = useState<string | null>(null);
+  const [showInvoiceToast, setShowInvoiceToast] = useState(false);
+
+  useEffect(() => {
+    if (!invoiceMessage) return;
+    // Scroll al banner embebido
+    const el = document.getElementById('invoice-upload-status');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Mostrar toast fijo
+    setShowInvoiceToast(true);
+    const t = setTimeout(() => setShowInvoiceToast(false), 6000);
+    return () => clearTimeout(t);
+  }, [invoiceMessage]);
   
   // Chat state
   // Chat hooks disabled - using placeholders
@@ -91,6 +106,12 @@ function StockPage({ user }: StockPageProps) {
     { key: 'category', name: 'Categoría', width: 150, editable: true },
     { key: 'quantity', name: 'Cantidad', width: 100, editable: true },
     { key: 'unit', name: 'Unidad', width: 100, editable: true },
+    { key: 'lastPriceNet', name: 'Precio Unit.', width: 130, editable: false,
+      render: (value: any) => {
+        if (!value && value !== 0) return '';
+        return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(Number(value) || 0);
+      }
+    },
     {
       key: 'restockFrequency',
       name: 'Frecuencia de reposición',
@@ -127,20 +148,20 @@ function StockPage({ user }: StockPageProps) {
     },
     {
       key: 'preferredProvider',
-      name: 'Proveedor preferido',
-      width: 200,
+      name: 'Proveedor',
+      width: 220,
       editable: false,
       render: (value: any, rowData: any) => {
         const availableProviders = providers || [];
         if (!availableProviders || availableProviders.length === 0) {
           return <span className="text-gray-400">Sin proveedores disponibles</span>;
         }
-        
+
         const getProviderById = (id: string) => availableProviders.find((p: any) => p.id === id);
         const prov = getProviderById(value);
-        
+
         return (
-          <div 
+          <div
             className="px-2 py-1 cursor-pointer hover:bg-gray-100"
             onClick={() => {
               setEditingModal({
@@ -156,83 +177,11 @@ function StockPage({ user }: StockPageProps) {
                 {prov.name}
               </span>
             ) : (
-              <span className="text-gray-400">Sin preferido</span>
+              <span className="text-gray-400">Seleccionar proveedor</span>
             )}
           </div>
         );
       },
-    },
-    {
-      key: 'associatedProviders',
-      name: 'Proveedores asociados',
-      width: 200,
-      editable: false,
-      render: (value: any, rowData: any) => {
-        const availableProviders = providers || [];
-        const associatedProviders = Array.isArray(value) ? value : [];
-        
-        const selectedProviders = associatedProviders
-          .map(providerId => availableProviders.find((p: any) => p.id === providerId))
-          .filter(Boolean);
-        
-        return (
-          <div 
-            className="px-2 py-1 cursor-pointer hover:bg-gray-100"
-            onClick={() => {
-              setEditingModal({
-                isOpen: true,
-                type: 'associated',
-                rowData,
-                currentValue: associatedProviders
-              });
-            }}
-          >
-            {selectedProviders.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {selectedProviders.map((provider: any) => (
-                  <span key={provider.id} className="bg-blue-100 text-blue-800 rounded px-2 py-0.5 text-xs font-medium">
-                    {provider.name}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <span className="text-gray-400">Sin proveedores</span>
-            )}
-          </div>
-        );
-      },
-    },
-    { 
-      key: 'lastOrdered', 
-      name: 'Última orden', 
-      width: 150, 
-      editable: false,
-      render: (value: any) => {
-        if (!value) return '';
-        const date = new Date(value);
-        if (isNaN(date.getTime())) return '';
-        return date.toLocaleDateString('es-ES', { 
-          year: 'numeric', 
-          month: '2-digit', 
-          day: '2-digit' 
-        });
-      }
-    },
-    { 
-      key: 'nextOrder', 
-      name: 'Próxima orden', 
-      width: 150, 
-      editable: false,
-      render: (value: any) => {
-        if (!value) return '';
-        const date = new Date(value);
-        if (isNaN(date.getTime())) return '';
-        return date.toLocaleDateString('es-ES', { 
-          year: 'numeric', 
-          month: '2-digit', 
-          day: '2-digit' 
-        });
-      }
     },
   ];
 
@@ -361,7 +310,6 @@ function StockPage({ user }: StockPageProps) {
     async (
       selectedItems: any[], 
       preferredProvider: string, 
-      associatedProviders: string[],
       restockFrequency: string,
       category: string
     ) => {
@@ -376,7 +324,6 @@ function StockPage({ user }: StockPageProps) {
             ...item,
             ...(preferredProvider === 'none' && { preferredProvider: '' }),
             ...(preferredProvider !== '' && preferredProvider !== 'none' && { preferredProvider }),
-            ...(associatedProviders.length > 0 && { associatedProviders }),
             ...(restockFrequency !== '' && { restockFrequency }),
             ...(category !== '' && { category }),
             updatedAt: new Date(),
@@ -387,7 +334,6 @@ function StockPage({ user }: StockPageProps) {
         const changes = [];
         if (preferredProvider === 'none') changes.push('proveedor preferido (sin preferido)');
         else if (preferredProvider !== '') changes.push('proveedor preferido');
-        if (associatedProviders.length > 0) changes.push('proveedores asociados');
         if (restockFrequency !== '') changes.push('frecuencia de reposición');
         if (category !== '') changes.push('categoría');
         
@@ -414,10 +360,7 @@ function StockPage({ user }: StockPageProps) {
       'Cantidad',
       'Unidad',
       'Frecuencia de Reposición',
-      'Proveedores Asociados',
-      'Proveedor Preferido',
-      'Última Orden',
-      'Próxima Orden',
+      'Proveedor'
     ];
     
     // Función para convertir frecuencia al español
@@ -447,13 +390,7 @@ function StockPage({ user }: StockPageProps) {
           item.quantity ?? '',
           item.unit ?? '',
           frequencyToSpanish(item.restockFrequency ?? ''),
-          (item.associatedProviders ?? [])
-            .map(getProviderName)
-            .filter(Boolean)
-            .join(';'),
-          getProviderName(item.preferredProvider ?? ''),
-          item.lastOrdered ? new Date(item.lastOrdered).toISOString().split('T')[0] : '',
-          item.nextOrder ? new Date(item.nextOrder).toISOString().split('T')[0] : '',
+          getProviderName(item.preferredProvider ?? '')
         ].map(v => {
           const stringValue = String(v ?? '');
           // Si contiene comas, comillas, saltos de línea o espacios, encerrar en comillas
@@ -480,10 +417,7 @@ function StockPage({ user }: StockPageProps) {
       'Cantidad',
       'Unidad',
       'Frecuencia de Reposición',
-      'Proveedores Asociados',
-      'Proveedor Preferido',
-      'Última Orden',
-      'Próxima Orden'
+      'Proveedor'
     ];
     
     const exampleRow = [
@@ -492,10 +426,7 @@ function StockPage({ user }: StockPageProps) {
       '50',
       'kg',
       'Semanal',
-      'Proveedor A;Proveedor B',
-      'Proveedor A',
-      '2025-01-20',
-      '2025-01-27'
+      'Proveedor A'
     ];
     
     // Función para escapar valores CSV
@@ -518,10 +449,7 @@ function StockPage({ user }: StockPageProps) {
       '"Cantidad: Cantidad en stock (OBLIGATORIO, número)"',
       '"Unidad: Unidad de medida (ej: kg, lt, unidades)"',
       '"Frecuencia de Reposición: Diario, Semanal, Mensual, Personalizado"',
-      '"Proveedores Asociados: Nombres de proveedores separados por ;"',
-      '"Proveedor Preferido: Nombre del proveedor preferido"',
-      '"Última Orden: Fecha de última orden (YYYY-MM-DD)"',
-      '"Próxima Orden: Fecha de próxima orden (YYYY-MM-DD)"',
+      '"Proveedor: Nombre del proveedor único del producto"',
       '',
       '"EJEMPLO DE USO:"',
       '"Agrega tus productos debajo de la fila de ejemplo, una fila por producto."',
@@ -591,25 +519,11 @@ function StockPage({ user }: StockPageProps) {
         'frecuencia': 'restockFrequency',
         'frecuenciaderepocicion': 'restockFrequency',
         'frecuenciareposicion': 'restockFrequency',
-        // Proveedores Asociados
-        'proveedoresasociados': 'associatedProviders',
-        'associatedproviders': 'associatedProviders',
-        'associated_providers': 'associatedProviders',
-        // Proveedor Preferido
+        // Proveedor (único)
+        'proveedor': 'preferredProvider',
         'proveedorpreferido': 'preferredProvider',
-        'proveedorpreferído': 'preferredProvider',
         'preferredprovider': 'preferredProvider',
         'preferred_provider': 'preferredProvider',
-        // Última Orden
-        'ultimaorden': 'lastOrdered',
-        'últimaorden': 'lastOrdered',
-        'lastordered': 'lastOrdered',
-        'last_order': 'lastOrdered',
-        // Próxima Orden
-        'proximaorden': 'nextOrder',
-        'próximaorden': 'nextOrder',
-        'nextorder': 'nextOrder',
-        'next_order': 'nextOrder',
         // Otros
         'createdat': 'createdAt',
         'created_at': 'createdAt',
@@ -630,10 +544,6 @@ function StockPage({ user }: StockPageProps) {
         const row: any = {};
         headers.forEach((h, i) => { row[h] = values[i] ?? ''; });
         console.log('ROW:', row);
-        let associatedProviders: string[] = [];
-        if (row.associatedProviders && typeof row.associatedProviders === 'string') {
-          associatedProviders = row.associatedProviders.split(';').map((p: string) => p.trim()).filter(Boolean);
-        }
         const providerNameToId = (name: string) => {
           if (!name) return '';
           // Buscar por nombre exacto primero
@@ -647,11 +557,8 @@ function StockPage({ user }: StockPageProps) {
           }
           return prov ? prov.id : name;
         };
-        associatedProviders = associatedProviders.map(providerNameToId);
         let preferredProvider = row.preferredProvider ? row.preferredProvider.trim() : '';
-        preferredProvider = providerNameToId(preferredProvider);
-        const lastOrdered = row.lastOrdered && !isNaN(Date.parse(row.lastOrdered)) ? new Date(row.lastOrdered) : undefined;
-        const nextOrder = row.nextOrder && !isNaN(Date.parse(row.nextOrder)) ? new Date(row.nextOrder) : undefined;
+        preferredProvider = providerNameToId(preferredProvider || row.proveedor);
         const quantity = row.quantity && !isNaN(Number(row.quantity)) ? Number(row.quantity) : 0;
         const freqMap: Record<string, string> = {
           'diario': 'daily',
@@ -677,10 +584,7 @@ function StockPage({ user }: StockPageProps) {
           quantity,
           unit: row.unit || '',
           restockFrequency: finalRestockFrequency,
-          associatedProviders,
           preferredProvider,
-          lastOrdered,
-          nextOrder,
           createdAt: new Date(),
           updatedAt: new Date(),
         };
@@ -758,28 +662,7 @@ function StockPage({ user }: StockPageProps) {
 
   // Remove lowStockItems and quick stats that depend on removed columns
 
-  // Dynamically calculate lastOrdered and nextOrder for each stock item
-  const stockWithDates = stockItems.map((item) => {
-    // Find all completed orders for this item
-    const completedOrders = orders.filter((order) =>
-      (order.status === 'confirmed' || order.status === 'delivered') &&
-      order.items.some((orderItem) => orderItem.productName === item.productName)
-    );
-    let lastOrdered: Date | undefined = undefined;
-    if (completedOrders.length > 0) {
-      lastOrdered = new Date(Math.max(...completedOrders.map((o) => new Date(o.orderDate).getTime())));
-    }
-    // Calculate nextOrder
-    let nextOrder: Date | undefined = undefined;
-    if (lastOrdered) {
-      nextOrder = addDays(lastOrdered, getRestockDays(item.restockFrequency));
-    }
-    return {
-      ...item,
-      lastOrdered,
-      nextOrder,
-    };
-  });
+  // Eliminado cálculo de última/próxima orden (no se muestran en UI)
 
   // Add a migration useEffect to convert provider names to IDs in stockItems
   useEffect(() => {
@@ -874,6 +757,213 @@ function StockPage({ user }: StockPageProps) {
           </div>
 
           <div className="p-6">
+            {/* Toast fijo de estado de carga/proceso */}
+            {showInvoiceToast && invoiceMessage && (
+              <div className={`fixed right-4 top-20 z-50 px-4 py-3 rounded shadow border ${
+                invoiceMessage.startsWith('✅')
+                  ? 'bg-green-50 text-green-800 border-green-200'
+                  : invoiceMessage.startsWith('⚠️')
+                  ? 'bg-yellow-50 text-yellow-800 border-yellow-200'
+                  : invoiceMessage.startsWith('Procesando')
+                  ? 'bg-blue-50 text-blue-800 border-blue-200'
+                  : 'bg-red-50 text-red-800 border-red-200'
+              }`}>
+                <div className="flex items-start gap-3">
+                  <span>{invoiceMessage}</span>
+                  <button type="button" onClick={() => setShowInvoiceToast(false)} className="text-sm opacity-70 hover:opacity-100">✕</button>
+                </div>
+              </div>
+            )}
+            {/* Subida manual de facturas */}
+            <form onSubmit={(e) => e.preventDefault()} className="mb-6 p-4 border border-gray-200 rounded-md bg-gray-50">
+              <div className="flex flex-col md:flex-row md:items-end gap-3">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Archivo de factura (PDF/imagen)</label>
+                  <p className="text-xs text-gray-500 mb-2">
+                    El proveedor se detectará automáticamente desde la factura
+                  </p>
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    onChange={(e) => setInvoiceFile(e.target.files?.[0] || null)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  />
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    disabled={!invoiceFile || invoiceUploading}
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!invoiceFile) return;
+                      console.log('📤 Subiendo factura manual (Stock)');
+                      setInvoiceUploading(true);
+                      setInvoiceMessage('Procesando factura...');
+                      setShowInvoiceToast(true);
+                      setTimeout(() => {
+                        const el = document.getElementById('invoice-upload-status');
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }, 0);
+                      try {
+                        const form = new FormData();
+                        form.append('file', invoiceFile);
+                        form.append('userId', user.id);
+                        // Timeout seguro para subida
+                        setInvoiceMessage('Subiendo archivo...');
+                        const uploadController = new AbortController();
+                        const uploadTimer = setTimeout(() => uploadController.abort(), 60000);
+                        const upRes = await fetch('/api/facturas/upload-invoice', { method: 'POST', body: form, signal: uploadController.signal }).catch((e) => {
+                          if (e?.name === 'AbortError') throw new Error('Tiempo de espera agotado al subir la factura');
+                          throw e;
+                        }).finally(() => clearTimeout(uploadTimer));
+                        const up = await upRes.json();
+                        if (!up.success) {
+                          setInvoiceMessage(`❌ ${up.error || 'Error subiendo archivo'}`);
+                          alert(up.error || 'Error subiendo archivo');
+                          throw new Error(up.error || 'Error subiendo archivo');
+                        }
+                        setInvoiceMessage('Archivo subido. Procesando OCR...');
+                        // Timeout seguro para procesamiento
+                        const processController = new AbortController();
+                        const processTimer = setTimeout(() => processController.abort(), 120000);
+                        const procRes = await fetch('/api/facturas/process-invoice', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            fileUrl: up.fileUrl,
+                            userId: user.id,
+                            async: true
+                          }),
+                          signal: processController.signal
+                        }).catch((e) => {
+                          if (e?.name === 'AbortError') throw new Error('Tiempo de espera agotado al procesar la factura');
+                          throw e;
+                        }).finally(() => clearTimeout(processTimer));
+                        const proc = await procRes.json();
+                        if (!proc.success && procRes.status !== 202) {
+                          setInvoiceMessage(`❌ ${proc.error || 'Error procesando factura'}`);
+                          alert(proc.error || 'Error procesando factura');
+                          throw new Error(proc.error || 'Error procesando factura');
+                        }
+                        // Procesamiento en segundo plano aceptado
+                        setInvoiceMessage('🟦 Procesando en segundo plano. Te avisaremos al completar.');
+                        const processingId = proc.processingId;
+                        if (processingId) {
+                          // Poll estado de procesamiento para abrir proveedor
+                          const maxTries = 10;
+                          for (let k = 0; k < maxTries; k++) {
+                            try {
+                              await new Promise(r => setTimeout(r, 2000));
+                              const st = await fetch(`/api/facturas/processing-status?id=${processingId}`);
+                              if (!st.ok) continue;
+                              const js = await st.json();
+                              const header = js?.data?.header_json;
+                              const supplierId = js?.data?.supplier_id;
+                              const created = header?.supplier_created;
+                              const cuit = header?.supplier_cuit || '';
+                              const items = js?.data?.items || [];
+                              console.log('📦 [Stock] Items recibidos:', items.length, items);
+                              console.log('📦 [Stock] Header completo:', JSON.stringify(header, null, 2));
+                              // Si ya existe proveedor o al menos tenemos CUIT detectado, abrir modal
+                              if (supplierId || cuit) {
+                                const razon = header?.supplier_razon_social || header?.supplier_name || '';
+                                const address = header?.supplier_address || '';
+                                console.log('📦 [Stock] Datos del proveedor:', { cuit, razon, address });
+                                // Guardar items en sessionStorage para mostrarlos en el modal
+                                if (items.length > 0) {
+                                  console.log('📦 [Stock] Guardando items en sessionStorage:', items.length);
+                                  sessionStorage.setItem('invoiceItems', JSON.stringify(items));
+                                } else {
+                                  console.log('⚠️ [Stock] No hay items para guardar');
+                                }
+                                // Guardar datos adicionales en sessionStorage
+                                if (address) {
+                                  sessionStorage.setItem('invoiceSupplierAddress', address);
+                                }
+                                // Usar router.push en lugar de window.location.href para evitar recarga completa
+                                setTimeout(() => {
+                                  window.location.href = `/providers?prefill=1&cuit=${encodeURIComponent(cuit)}&razon=${encodeURIComponent(razon)}`;
+                                }, 100);
+                                break;
+                              }
+                            } catch {}
+                          }
+                        } else if (up?.fileUrl) {
+                          // Fallback: resolver por fileUrl
+                          const maxTries = 10;
+                          for (let k = 0; k < maxTries; k++) {
+                            try {
+                              await new Promise(r => setTimeout(r, 2000));
+                              const st = await fetch(`/api/facturas/processing-status?fileUrl=${encodeURIComponent(up.fileUrl)}`);
+                              if (!st.ok) continue;
+                              const js = await st.json();
+                              const header = js?.data?.header_json;
+                              const supplierId = js?.data?.supplier_id;
+                              const cuit = header?.supplier_cuit || '';
+                              const items = js?.data?.items || [];
+                              console.log('📦 [Stock-Fallback] Items recibidos:', items.length, items);
+                              console.log('📦 [Stock-Fallback] Header completo:', JSON.stringify(header, null, 2));
+                              if (supplierId || cuit) {
+                                const razon = header?.supplier_razon_social || header?.supplier_name || '';
+                                const address = header?.supplier_address || '';
+                                console.log('📦 [Stock-Fallback] Datos del proveedor:', { cuit, razon, address });
+                                // Guardar items en sessionStorage para mostrarlos en el modal
+                                if (items.length > 0) {
+                                  console.log('📦 [Stock-Fallback] Guardando items en sessionStorage:', items.length);
+                                  sessionStorage.setItem('invoiceItems', JSON.stringify(items));
+                                } else {
+                                  console.log('⚠️ [Stock-Fallback] No hay items para guardar');
+                                }
+                                // Guardar datos adicionales en sessionStorage
+                                if (address) {
+                                  sessionStorage.setItem('invoiceSupplierAddress', address);
+                                }
+                                // Usar router.push en lugar de window.location.href para evitar recarga completa
+                                setTimeout(() => {
+                                  window.location.href = `/providers?prefill=1&cuit=${encodeURIComponent(cuit)}&razon=${encodeURIComponent(razon)}`;
+                                }, 100);
+                                break;
+                              }
+                            } catch {}
+                          }
+                        }
+                        // Refrescar datos (stock actualizado) con reintentos para esperar al background
+                        setTimeout(() => { fetchAll(); }, 2000);
+                        setTimeout(() => { fetchAll(); }, 5000);
+                        setTimeout(() => { fetchAll(); }, 9000);
+                        // Limpiar selección
+                        setInvoiceFile(null);
+                      } catch (e: any) {
+                        setInvoiceMessage(`❌ ${e.message || 'Error procesando factura'}`);
+                      } finally {
+                        setInvoiceUploading(false);
+                      }
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md disabled:opacity-50"
+                  >
+                    {invoiceUploading ? 'Subiendo...' : 'Subir factura'}
+                  </button>
+                </div>
+              </div>
+              {invoiceMessage && (
+                <div
+                  id="invoice-upload-status"
+                  role="alert"
+                  className={`mt-3 text-sm px-3 py-2 rounded border ${
+                    invoiceMessage.startsWith('✅')
+                      ? 'bg-green-50 text-green-800 border-green-200'
+                      : invoiceMessage.startsWith('⚠️')
+                      ? 'bg-yellow-50 text-yellow-800 border-yellow-200'
+                      : invoiceMessage.startsWith('Procesando')
+                      ? 'bg-blue-50 text-blue-800 border-blue-200'
+                      : 'bg-red-50 text-red-800 border-red-200'
+                  }`}
+                >
+                  {invoiceMessage}
+                </div>
+              )}
+            </form>
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
               <p className="text-sm text-blue-800">
                 💡 <strong>¿Necesitas agregar muchos productos?</strong> Usa "Exportar" para descargar la planilla, 
@@ -906,7 +996,6 @@ function StockPage({ user }: StockPageProps) {
                   isOpen: true,
                   selectedItems,
                   preferredProvider: '',
-                  associatedProviders: [],
                   restockFrequency: '',
                   category: '',
                 });
@@ -952,10 +1041,10 @@ function StockPage({ user }: StockPageProps) {
               </div>
             )}
 
-            {editingModal.type === 'preferred' && (
+              {editingModal.type === 'preferred' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Proveedor preferido
+                  Proveedor
                 </label>
                 <select
                   value={editingModal.currentValue}
@@ -1109,33 +1198,7 @@ function StockPage({ user }: StockPageProps) {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Proveedores Asociados
-                </label>
-                <select
-                  multiple
-                  value={bulkUpdateModal.associatedProviders}
-                  onChange={(e) => {
-                    const selectedOptions = Array.from(e.target.selectedOptions, option => option.value);
-                    setBulkUpdateModal(prev => prev ? {
-                      ...prev,
-                      associatedProviders: selectedOptions
-                    } : null);
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  size={Math.min(providers.length, 6)}
-                >
-                  {providers.map((provider: any) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Mantén Ctrl (Cmd en Mac) para seleccionar múltiples. Vacío = mantener actual
-                </p>
-              </div>
+              
 
               <div className="bg-blue-50 p-3 rounded-md">
                 <p className="text-sm text-blue-800">
@@ -1165,7 +1228,6 @@ function StockPage({ user }: StockPageProps) {
                     handleBulkUpdate(
                       bulkUpdateModal.selectedItems,
                       bulkUpdateModal.preferredProvider,
-                      bulkUpdateModal.associatedProviders,
                       bulkUpdateModal.restockFrequency,
                       bulkUpdateModal.category
                     );

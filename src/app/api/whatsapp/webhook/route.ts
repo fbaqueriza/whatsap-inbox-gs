@@ -25,12 +25,54 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const requestId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
+  // Log inicial inmediato para verificar que el webhook se ejecuta
+  try {
+    const { InvoiceOrderLogger } = await import('../../../../lib/invoiceOrderLogger');
+    const logger = InvoiceOrderLogger.getInstance();
+    await logger.info(requestId, 'WEBHOOK RECIBIDO - Inicio de procesamiento', { timestamp: new Date().toISOString() });
+  } catch (loggerError) {
+    console.error('Error inicializando logger:', loggerError);
+  }
+  
   try {
     console.log(`📥 [${requestId}] ===== WEBHOOK RECIBIDO =====`);
     console.log(`📥 [${requestId}] Timestamp: ${new Date().toISOString()}`);
     
     const body = await request.json();
     console.log(`📥 [${requestId}] Body completo recibido:`, JSON.stringify(body, null, 2));
+    
+    // 🔧 LOG TEMPORAL: Verificar si hay mensajes
+    if (body.entry?.[0]?.changes?.[0]?.value?.messages) {
+      console.log(`📨 [${requestId}] MENSAJES ENCONTRADOS:`, body.entry[0].changes[0].value.messages.length);
+      body.entry[0].changes[0].value.messages.forEach((msg: any, index: number) => {
+        console.log(`📨 [${requestId}] Mensaje ${index + 1}:`, {
+          from: msg.from,
+          type: msg.type,
+          hasDocument: !!msg.document,
+          hasImage: !!msg.image,
+          hasText: !!msg.text,
+          id: msg.id
+        });
+        
+        // 🔍 LOG DETALLADO: Ver estructura completa del mensaje
+        if (msg.document) {
+          console.log(`📎 [${requestId}] DOCUMENTO DETECTADO:`, {
+            id: msg.document.id,
+            filename: msg.document.filename,
+            mime_type: msg.document.mime_type,
+            sha256: msg.document.sha256
+          });
+        }
+        
+        if (msg.image) {
+          console.log(`🖼️ [${requestId}] IMAGEN DETECTADA:`, {
+            id: msg.image.id,
+            mime_type: msg.image.mime_type,
+            sha256: msg.image.sha256
+          });
+        }
+      });
+    }
 
     // Verificar que es un mensaje de WhatsApp
     if (body.object === 'whatsapp_business_account') {
@@ -270,46 +312,211 @@ async function processWhatsAppMessage(message: any, requestId: string) {
 
     // 🔧 SISTEMA SIMPLIFICADO: Procesar archivos multimedia
     if (image || document) {
+      const { InvoiceOrderLogger } = await import('../../../../lib/invoiceOrderLogger');
+      const logger = InvoiceOrderLogger.getInstance();
+      
+      await logger.info(requestId, 'Documento/imagen detectado en webhook', {
+        hasImage: !!image,
+        hasDocument: !!document,
+        from: normalizedFrom
+      });
+      
       console.log(`📎 [${requestId}] ===== PROCESANDO DOCUMENTO =====`);
       console.log(`📎 [${requestId}] Image presente:`, !!image);
       console.log(`📎 [${requestId}] Document presente:`, !!document);
       
-      try {
-        // Obtener userId del proveedor
-        const { createClient } = await import('@supabase/supabase-js');
-        const supabase = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.SUPABASE_SERVICE_ROLE_KEY!
-        );
+              try {
+          // Obtener userId del proveedor y verificar auto_order_flow_enabled     
+          const { createClient } = await import('@supabase/supabase-js');
+          const supabase = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+          );
+
+          // 🔧 MEJORA: Búsqueda más flexible del proveedor
+          let provider = null;
+          
+          // 1. Intentar búsqueda exacta
+          const { data: exactProvider } = await supabase
+            .from('providers')
+            .select('user_id, id, name, auto_order_flow_enabled')
+            .eq('phone', normalizedFrom)
+            .single();
+
+          if (exactProvider) {
+            provider = exactProvider;
+            console.log(`✅ [${requestId}] Proveedor encontrado con búsqueda exacta: ${provider.name}`);
+          } else {
+            // 2. Intentar con diferentes variantes del número
+            const phoneVariants = [
+              normalizedFrom,
+              normalizedFrom.replace(/^\+54/, ''), // Sin código de país
+              normalizedFrom.replace(/^\+/, ''), // Sin +
+              `54${normalizedFrom.replace(/^\+54/, '')}`, // Con 54 al inicio
+              normalizedFrom.replace(/\D/g, ''), // Solo dígitos
+            ];
+
+            for (const variant of phoneVariants) {
+              if (!variant || variant.length < 8) continue;
+              
+              const { data: variantProvider } = await supabase
+                .from('providers')
+                .select('user_id, id, name, auto_order_flow_enabled')
+                .eq('phone', variant)
+                .single();
+
+              if (variantProvider) {
+                provider = variantProvider;
+                console.log(`✅ [${requestId}] Proveedor encontrado con variante ${variant}: ${provider.name}`);
+                break;
+              }
+            }
+
+            // 3. Si aún no se encuentra, intentar búsqueda por últimos dígitos
+            if (!provider) {
+              const lastDigits = normalizedFrom.replace(/\D/g, '').slice(-8);
+              if (lastDigits.length >= 8) {
+                console.log(`🔍 [${requestId}] Intentando búsqueda por últimos 8 dígitos: ${lastDigits}`);
+                
+                const { data: flexibleProviders } = await supabase
+                  .from('providers')
+                  .select('user_id, id, name, auto_order_flow_enabled, phone')
+                  .or(`phone.ilike.%${lastDigits},phone.ilike.${lastDigits}%`)
+                  .limit(5);
+
+                if (flexibleProviders && flexibleProviders.length > 0) {
+                  // Encontrar la mejor coincidencia
+                  const bestMatch = flexibleProviders.find(p => {
+                    const providerDigits = p.phone.replace(/\D/g, '').slice(-8);
+                    return providerDigits === lastDigits;
+                  });
+
+                  if (bestMatch) {
+                    provider = bestMatch;
+                    console.log(`✅ [${requestId}] Proveedor encontrado con búsqueda flexible: ${provider.name} (${provider.phone})`);
+                  }
+                }
+              }
+            }
+
+            // 4. Si aún no se encuentra, loggear pero NO fallar - procesar documento sin proveedor
+            if (!provider) {
+              await logger.warn(requestId, 'Proveedor no encontrado para documento - procesando sin proveedor', { 
+                phone: normalizedFrom,
+                variants: phoneVariants
+              });
+              console.log(`⚠️ [${requestId}] Proveedor no encontrado para teléfono: ${normalizedFrom}`);
+              console.log(`⚠️ [${requestId}] PROCESANDO DOCUMENTO SIN PROVEEDOR - Se intentará asociar después`);
+              
+              // 🔧 NUEVO: Procesar documento sin proveedor (lo asociaremos después)
+              const mediaData = image || document;
+              const result = await processWhatsAppDocumentWithoutProvider(
+                normalizedFrom,
+                mediaData,
+                requestId
+              );
+
+              if (result.success) {
+                await logger.info(requestId, 'Documento procesado sin proveedor inicial', { 
+                  documentId: result.document_id 
+                });
+                console.log(`✅ [${requestId}] Documento procesado sin proveedor: ${result.document_id}`);
+                const duration = Date.now() - messageStartTime;
+                return { success: true, duration: duration, type: 'document', document_id: result.document_id };
+              } else {
+                const duration = Date.now() - messageStartTime;
+                return { success: false, error: result.error || 'Error procesando documento sin proveedor', duration: duration, type: 'document_error' };
+              }
+            }
+          }
         
-        const { data: provider } = await supabase
-          .from('providers')
-          .select('user_id, id, name')
-          .eq('phone', normalizedFrom)
-          .single();
+        await logger.info(requestId, 'Proveedor encontrado', {
+          providerId: provider.id,
+          providerName: provider.name,
+          userId: provider.user_id,
+          autoOrderFlowEnabled: provider.auto_order_flow_enabled
+        });
         
-        if (!provider) {
-          console.log(`⚠️ [${requestId}] Proveedor no encontrado para teléfono: ${normalizedFrom}`);
-          const duration = Date.now() - messageStartTime;
-          return { success: false, error: 'Proveedor no encontrado', duration: duration, type: 'document_error' };
+        // Verificar si el flujo automático está habilitado para este proveedor
+        const autoOrderFlowEnabled = provider.auto_order_flow_enabled !== false; // Por defecto true si no está definido
+        
+        if (!autoOrderFlowEnabled) {
+          await logger.info(requestId, 'Flujo automático de órdenes DESHABILITADO para este proveedor', {
+            providerId: provider.id,
+            providerName: provider.name,
+            phone: normalizedFrom
+          });
+          console.log(`ℹ️ [${requestId}] Flujo automático deshabilitado para este proveedor: ${provider.name} (${normalizedFrom})`);
+          // Aún así procesar el documento para que aparezca en el chat, pero no crear orden automáticamente
+          const mediaData = image || document;
+          const result = await processWhatsAppDocument(
+            normalizedFrom,
+            mediaData,
+            requestId,
+            provider.user_id,
+            provider.id
+          );
+          
+          if (result.success) {
+            await logger.info(requestId, 'Documento procesado (sin flujo automático)', { documentId: result.document_id });
+            console.log(`✅ [${requestId}] Documento procesado (sin flujo automático):`, result.document_id);
+            const duration = Date.now() - messageStartTime;
+            return { success: true, duration: duration, type: 'document', document_id: result.document_id };
+          } else {
+            const duration = Date.now() - messageStartTime;
+            return { success: false, error: result.error, duration: duration, type: 'document_error' };
+          }
         }
         
         const mediaData = image || document;
-        console.log(`📎 [${requestId}] Procesando documento del proveedor: ${provider.name}`);
+        await logger.info(requestId, 'Procesando documento con flujo automático habilitado', {
+          providerName: provider.name,
+          providerId: provider.id
+        });
+        console.log(`📎 [${requestId}] Procesando documento del proveedor: ${provider.name} (flujo automático habilitado)`);
         
-        // Procesar documento con flujo simplificado
-        const result = await processWhatsAppDocument(normalizedFrom, mediaData, requestId, provider.user_id, provider.id);
+        // 🔧 NUEVO: Usar sistema simplificado que SIEMPRE crea el mensaje en el chat
+        console.log(`📎 [${requestId}] Usando processWhatsAppDocument para crear mensaje en chat...`);
+        const result = await processWhatsAppDocument(
+          normalizedFrom,
+          mediaData,
+          requestId,
+          provider.user_id,
+          provider.id
+        );
         
         if (result.success) {
-          console.log(`✅ [${requestId}] Documento procesado exitosamente:`, result.document_id);
+          await logger.success(requestId, 'Documento procesado exitosamente', {
+            documentId: result.document_id,
+            providerId: provider.id
+          });
+          console.log(`✅ [${requestId}] Documento procesado y mensaje creado:`, result.document_id);
+          
+          // 🔧 OPCIONAL: Intentar flujo de órdenes en background (sin bloquear)
+          processMediaAsInvoice(normalizedFrom, message, requestId, provider.user_id)
+            .then(orderResult => {
+              if (orderResult.success) {
+                console.log(`✅ [${requestId}] Documento también asociado con orden`);
+              }
+            })
+            .catch(err => {
+              console.log(`ℹ️ [${requestId}] Documento no asociado con orden (normal si no hay orden pendiente)`);
+            });
+          
           const duration = Date.now() - messageStartTime;
           return { success: true, duration: duration, type: 'document', document_id: result.document_id };
         } else {
+          await logger.error(requestId, 'Error procesando documento', { error: result.error });
           console.log(`❌ [${requestId}] Error procesando documento:`, result.error);
           const duration = Date.now() - messageStartTime;
           return { success: false, error: result.error, duration: duration, type: 'document_error' };
         }
       } catch (error) {
+        await logger.error(requestId, 'ERROR procesando documento', {
+          errorType: error instanceof Error ? error.constructor.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined
+        });
         console.error(`❌ [${requestId}] Error procesando documento:`, error);
         const duration = Date.now() - messageStartTime;
         return { success: false, error: 'Error procesando documento', duration: duration, type: 'document_error' };
@@ -348,36 +555,45 @@ async function processWhatsAppMessage(message: any, requestId: string) {
         
         const { data: provider } = await supabase
           .from('providers')
-          .select('id, user_id')
+          .select('id, user_id, auto_order_flow_enabled')
           .eq('phone', normalizedFrom)
           .single();
         
         if (provider) {
-          // Procesar flujo normal - permitir nuevas órdenes incluso si hay facturas pendientes
-          console.log(`🔄 [${requestId}] Procesando respuesta del proveedor con OrderFlowService:`, normalizedFrom);
-          console.log(`🔍 [${requestId}] Datos del proveedor:`, {
-            id: provider.id,
-            userId: provider.user_id
-          });
+          // Verificar si el flujo automático está habilitado para este proveedor
+          const autoOrderFlowEnabled = provider.auto_order_flow_enabled !== false; // Por defecto true si no está definido
           
-          const userId = provider.user_id;
-          const { ExtensibleOrderFlowService } = await import('../../../../lib/extensibleOrderFlowService');
-          const extensibleOrderFlowService = ExtensibleOrderFlowService.getInstance();
-          
-          console.log(`🚀 [${requestId}] Llamando a processProviderMessage con:`, {
-            phone: normalizedFrom,
-            message: text.body,
-            userId: userId
-          });
-          
-          const result = await extensibleOrderFlowService.processProviderMessage(normalizedFrom, text.body, userId);
-          
-          console.log(`📊 [${requestId}] Resultado del ExtensibleOrderFlowService:`, result);
-          
-          if (result.success) {
-            console.log(`✅ [${requestId}] Flujo procesado: ${result.newStatus}`);
+          if (!autoOrderFlowEnabled) {
+            console.log(`ℹ️ [${requestId}] Flujo automático deshabilitado para este proveedor:`, normalizedFrom);
+            // No procesar el flujo automático, pero el mensaje ya se guardó arriba
           } else {
-            console.log(`⚠️ [${requestId}] Flujo no procesado: ${result.message || result.errors?.join(', ')}`);
+            // Procesar flujo normal - permitir nuevas órdenes incluso si hay facturas pendientes
+            console.log(`🔄 [${requestId}] Procesando respuesta del proveedor con OrderFlowService:`, normalizedFrom);
+            console.log(`🔍 [${requestId}] Datos del proveedor:`, {
+              id: provider.id,
+              userId: provider.user_id,
+              autoOrderFlowEnabled: autoOrderFlowEnabled
+            });
+            
+            const userId = provider.user_id;
+            const { ExtensibleOrderFlowService } = await import('../../../../lib/extensibleOrderFlowService');
+            const extensibleOrderFlowService = ExtensibleOrderFlowService.getInstance();
+            
+            console.log(`🚀 [${requestId}] Llamando a processProviderMessage con:`, {
+              phone: normalizedFrom,
+              message: text.body,
+              userId: userId
+            });
+            
+            const result = await extensibleOrderFlowService.processProviderMessage(normalizedFrom, text.body, userId);
+            
+            console.log(`📊 [${requestId}] Resultado del ExtensibleOrderFlowService:`, result);
+            
+            if (result.success) {
+              console.log(`✅ [${requestId}] Flujo procesado: ${result.newStatus}`);
+            } else {
+              console.log(`⚠️ [${requestId}] Flujo no procesado: ${result.message || result.errors?.join(', ')}`);
+            }
           }
         }
       } catch (error) {
@@ -401,11 +617,9 @@ async function processWhatsAppMessage(message: any, requestId: string) {
 // 🔧 NUEVA FUNCIÓN: Procesar archivos multimedia como facturas
 // ❌ DESHABILITADA: Usar solo el nuevo sistema de documentos
 async function processMediaAsInvoice(providerPhone: string, media: any, requestId: string, userId?: string) {
-  // ❌ SISTEMA VIEJO DESHABILITADO - usar solo processDocumentWithNewSystem
-  console.log(`❌ [${requestId}] Sistema viejo deshabilitado - usar solo nuevo sistema de documentos`);
-  return { success: false, error: 'Sistema viejo deshabilitado' };
+  // 🔧 REACTIVADO: Sistema viejo para flujo de órdenes
+  console.log(`🔄 [${requestId}] Procesando archivo como factura para flujo de órdenes...`);
   
-  /* COMENTADO - SISTEMA VIEJO
   try {
     console.log(`📎 [${requestId}] Procesando archivo multimedia como factura...`);
     console.log(`📱 [${requestId}] Número de teléfono recibido:`, providerPhone);
@@ -535,60 +749,19 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
       return { success: false, error: 'Proveedor no encontrado' };
     }
     
-    // Buscar orden en estado esperando_factura más reciente del proveedor
-    const { data: latestOrder, error: orderError } = await supabase
-      .from('orders')
-      .select('id, order_number, total_amount, status, user_id')
-      .eq('provider_id', provider.id)
-      .eq('status', 'esperando_factura')
-      .order('created_at', { ascending: false })
-      .limit(1);
-    
-    if (orderError || !latestOrder || latestOrder.length === 0) {
-      console.log(`⚠️ [${requestId}] No se encontraron órdenes esperando factura para proveedor:`, provider.name);
-      return { success: false, error: 'No se encontraron órdenes esperando factura para este proveedor' };
-    }
-    
-    const orderToUpdate = latestOrder[0];
-    console.log(`📋 [${requestId}] Orden pendiente encontrada:`, orderToUpdate.order_number);
-    
-    // Descargar archivo desde WhatsApp y subirlo a Supabase Storage
+    // Descargar archivo desde WhatsApp y subirlo a Supabase Storage PRIMERO
+    // (necesitamos los datos de la factura para crear la orden si no existe)
     const { data: fileBuffer, error: downloadError } = await downloadMediaFromWhatsApp(mediaUrl, requestId);
     
     if (downloadError || !fileBuffer) {
       return { success: false, error: 'Error descargando archivo desde WhatsApp' };
     }
     
-    // Generar nombre único para el archivo
-    const fileName = `invoice_${Date.now()}_${provider.id}_${orderToUpdate.order_number}.${mediaType === 'image' ? 'jpg' : 'pdf'}`;
-    const filePath = `invoices/${provider.id}/${fileName}`;
-    
-    // 🔧 MEJORA: Usar servicio de storage robusto con verificación automática de bucket
-    const { SupabaseStorageService } = await import('../../../../lib/supabaseStorageService');
-    const storageService = new SupabaseStorageService(requestId);
-    
-    // Subir archivo usando el servicio robusto
-    const uploadResult = await storageService.uploadFileWithBucketCheck(
-      'files', // Usar bucket existente
-      filePath,
-      fileBuffer,
-      {
-        contentType: mediaType === 'image' ? 'image/jpeg' : 'application/pdf',
-        cacheControl: '3600'
-      }
-    );
-    
-    if (!uploadResult.success) {
-      console.error(`❌ [${requestId}] Error subiendo archivo a Supabase:`, uploadResult.error);
-      return { success: false, error: `Error subiendo archivo: ${uploadResult.error}` };
-    }
-    
-    const publicUrl = uploadResult.fileUrl;
-    console.log(`✅ [${requestId}] Archivo subido exitosamente a Supabase:`, publicUrl);
-    
-    // 🔧 NUEVO: Extraer datos de la factura si es PDF
+    // 🔧 NUEVO: Extraer datos de la factura PRIMERO (antes de buscar/crear orden)
     let extractedData = null;
-    if (mediaType === 'application/pdf' || fileName.endsWith('.pdf')) {
+    const isPdf = mediaType === 'application/pdf' || mediaType === 'document' || mediaUrl.includes('.pdf');
+    
+    if (isPdf) {
       try {
         console.log(`🔍 [${requestId}] Extrayendo datos del PDF...`);
         
@@ -601,7 +774,6 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
         try {
           console.log(`🔍 [${requestId}] Extrayendo texto del PDF...`);
           console.log(`🔍 [${requestId}] FileBuffer size:`, fileBuffer?.length || 'undefined');
-          console.log(`🔍 [${requestId}] FileName:`, fileName);
           console.log(`🔍 [${requestId}] MediaType:`, mediaType);
           
           // Verificar que el buffer no esté vacío
@@ -669,7 +841,7 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
             Fecha: ${new Date().toLocaleDateString('es-AR')}
             Proveedor: ${provider.name}
             CUIT: ${providerCuit}
-            Total: $${orderToUpdate.total_amount || 15000}
+            Total: $15000
             Moneda: ARS
           `;
           
@@ -678,7 +850,8 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
           console.log(`⚠️ [${requestId}] ⚠️ El archivo descargado no se puede procesar correctamente`);
         }
         
-        const extractionResult = await simpleInvoiceExtraction.extractFromText(extractedText, fileName);
+        const tempFileName = `invoice_${Date.now()}.pdf`;
+        const extractionResult = await simpleInvoiceExtraction.extractFromText(extractedText, tempFileName);
         
         if (extractionResult && extractionResult.success && extractionResult.data) {
           extractedData = extractionResult.data;
@@ -744,7 +917,102 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
         };
       }
     }
-
+    
+    // 🔧 NUEVO: Buscar orden en estado esperando_factura, o crear una nueva si no existe
+    const { data: latestOrder, error: orderError } = await supabase
+      .from('orders')
+      .select('id, order_number, total_amount, status, user_id')
+      .eq('provider_id', provider.id)
+      .eq('status', 'esperando_factura')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    let orderToUpdate: any = null;
+    let orderCreated = false;
+    
+    if (orderError || !latestOrder || latestOrder.length === 0) {
+      // No hay orden esperando factura, crear una nueva automáticamente
+      console.log(`🆕 [${requestId}] No se encontraron órdenes esperando factura. Creando nueva orden automáticamente...`);
+      
+      // Obtener user_id del proveedor
+      const { data: providerWithUser, error: providerUserError } = await supabase
+        .from('providers')
+        .select('user_id')
+        .eq('id', provider.id)
+        .single();
+      
+      if (providerUserError || !providerWithUser?.user_id) {
+        console.error(`❌ [${requestId}] No se pudo obtener user_id del proveedor:`, providerUserError);
+        return { success: false, error: 'No se pudo obtener información del usuario' };
+      }
+      
+      const orderUserId = providerWithUser.user_id || userId || '';
+      
+      // Generar número de orden único
+      const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+      const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+      const orderNumber = `ORD-${timestamp}-${randomSuffix}`;
+      
+      // Calcular monto total de la factura (o usar un valor por defecto)
+      const totalAmount = extractedData?.totalAmount || 0;
+      
+      // Crear la nueva orden
+      const { data: newOrder, error: createOrderError } = await supabase
+        .from('orders')
+        .insert({
+          order_number: orderNumber,
+          provider_id: provider.id,
+          user_id: orderUserId,
+          status: 'esperando_factura',
+          total_amount: totalAmount,
+          currency: extractedData?.currency || 'ARS',
+          items: [],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      
+      if (createOrderError || !newOrder) {
+        console.error(`❌ [${requestId}] Error creando nueva orden:`, createOrderError);
+        return { success: false, error: 'Error creando nueva orden automáticamente' };
+      }
+      
+      orderToUpdate = newOrder;
+      orderCreated = true;
+      console.log(`✅ [${requestId}] Nueva orden creada automáticamente: ${orderNumber}`);
+    } else {
+      orderToUpdate = latestOrder[0];
+      console.log(`📋 [${requestId}] Orden pendiente encontrada:`, orderToUpdate.order_number);
+    }
+    
+    // Subir archivo a Supabase Storage
+    const fileName = `invoice_${Date.now()}_${provider.id}_${orderToUpdate.order_number}.${mediaType === 'image' ? 'jpg' : 'pdf'}`;
+    const filePath = `invoices/${provider.id}/${fileName}`;
+    
+    // 🔧 MEJORA: Usar servicio de storage robusto con verificación automática de bucket
+    const { SupabaseStorageService } = await import('../../../../lib/supabaseStorageService');
+    const storageService = new SupabaseStorageService(requestId);
+    
+    // Subir archivo usando el servicio robusto
+    const uploadResult = await storageService.uploadFileWithBucketCheck(
+      'files', // Usar bucket existente
+      filePath,
+      fileBuffer,
+      {
+        contentType: mediaType === 'image' ? 'image/jpeg' : 'application/pdf',
+        cacheControl: '3600'
+      }
+    );
+    
+    if (!uploadResult.success) {
+      console.error(`❌ [${requestId}] Error subiendo archivo a Supabase:`, uploadResult.error);
+      return { success: false, error: `Error subiendo archivo: ${uploadResult.error}` };
+    }
+    
+    const publicUrl = uploadResult.fileUrl;
+    console.log(`✅ [${requestId}] Archivo subido exitosamente a Supabase:`, publicUrl);
+    
     // Asociar factura a la orden con datos extraídos
     const updateData: any = {
       receipt_url: publicUrl,
@@ -765,7 +1033,11 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
       // 🔧 NUEVO: Actualizar el monto total de la orden con el monto real de la factura
       if (extractedData.totalAmount && extractedData.totalAmount > 0) {
         updateData.total_amount = extractedData.totalAmount;
-        console.log(`✅ [${requestId}] Actualizando monto de orden: $${orderToUpdate.total_amount} → $${extractedData.totalAmount}`);
+        if (orderCreated) {
+          console.log(`✅ [${requestId}] Orden creada con monto: $${extractedData.totalAmount}`);
+        } else {
+          console.log(`✅ [${requestId}] Actualizando monto de orden: $${orderToUpdate.total_amount} → $${extractedData.totalAmount}`);
+        }
       }
     }
 
@@ -795,7 +1067,7 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
           process.env.SUPABASE_SERVICE_ROLE_KEY
         );
         
-        const paymentResult = await paymentDataService.generatePaymentData(orderToUpdate.id, userId, serviceSupabase);
+        const paymentResult = await paymentDataService.generatePaymentData(orderToUpdate.id, orderToUpdate.user_id, serviceSupabase);
         
         if (paymentResult.success) {
           console.log(`✅ [${requestId}] Datos de pago generados:`, {
@@ -871,7 +1143,6 @@ async function processMediaAsInvoice(providerPhone: string, media: any, requestI
     console.error(`❌ [${requestId}] Error en processMediaAsInvoice:`, error);
     return { success: false, error: error instanceof Error ? error.message : 'Error desconocido' };
   }
-  */ // FIN DEL SISTEMA VIEJO COMENTADO
 }
 
 // 🔧 FUNCIÓN AUXILIAR: Descargar archivo desde WhatsApp
@@ -1155,8 +1426,163 @@ async function saveMessageWithUserId(contactId: string, content: string, timesta
   }
 }
 
-// 🔧 FUNCIÓN SIMPLIFICADA: Procesar documento de WhatsApp
-async function processWhatsAppDocument(
+  // 🔧 NUEVA FUNCIÓN: Procesar documento sin proveedor (fallback)
+  async function processWhatsAppDocumentWithoutProvider(
+    senderPhone: string,
+    mediaData: any,
+    requestId: string
+  ): Promise<{ success: boolean; document_id?: string; error?: string }> {
+    try {
+      console.log(`📎 [${requestId}] Procesando documento sin proveedor inicial...`);
+
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+
+      // Determinar tipo de documento
+      const documentType = determineDocumentType(mediaData);
+      console.log(`📎 [${requestId}] Tipo de documento: ${documentType}`);
+
+      // Construir URL de descarga para WhatsApp
+      const mediaUrl = `https://graph.facebook.com/v18.0/${mediaData.id}`;
+      console.log(`📥 [${requestId}] URL construida para descarga: ${mediaUrl}`);
+
+      // Descargar archivo desde WhatsApp
+      const downloadResult = await downloadMediaFromWhatsApp(mediaUrl, requestId);
+      if (downloadResult.error || !downloadResult.data) {
+        return { success: false, error: 'Error descargando archivo desde WhatsApp' };
+      }
+      const fileBuffer = downloadResult.data;
+
+      // Subir archivo a ubicación temporal (sin carpeta de proveedor)
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0];
+      const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+      const fileExtension = (mediaData.filename || 'document').split('.').pop() || 'bin';
+      const tempFilename = `temp_${dateStr}_${timeStr}_${Math.random().toString(36).substring(2, 8)}.${fileExtension}`;
+      const storagePath = `temp/${tempFilename}`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('files')
+        .upload(storagePath, fileBuffer, {
+          contentType: 'application/octet-stream',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error(`❌ [${requestId}] Error subiendo archivo:`, uploadError);
+        return { success: false, error: uploadError.message };
+      }
+
+      // Obtener URL pública
+      const { data: urlData } = supabase.storage
+        .from('files')
+        .getPublicUrl(storagePath);
+
+      console.log(`✅ [${requestId}] Archivo subido exitosamente: ${storagePath}`);
+
+      // Intentar encontrar user_id buscando todos los proveedores que podrían tener este número
+      // (esto se hará en un proceso posterior, por ahora guardamos sin user_id)
+      
+      // Crear documento en la base de datos SIN provider_id ni user_id (se asociará después)
+      const { DocumentService } = await import('../../../../lib/documentService');
+      const documentService = new DocumentService();
+
+      // Primero intentar encontrar algún usuario que tenga un proveedor con este número
+      let userId = null;
+      const phoneVariants = [
+        senderPhone,
+        senderPhone.replace(/^\+54/, ''),
+        senderPhone.replace(/^\+/, ''),
+        `54${senderPhone.replace(/^\+54/, '')}`,
+        senderPhone.replace(/\D/g, ''),
+      ];
+
+      for (const variant of phoneVariants) {
+        if (!variant || variant.length < 8) continue;
+        
+        const { data: provider } = await supabase
+          .from('providers')
+          .select('user_id, id')
+          .eq('phone', variant)
+          .single();
+
+        if (provider) {
+          userId = provider.user_id;
+          console.log(`✅ [${requestId}] Encontrado user_id ${userId} para variante ${variant}`);
+          break;
+        }
+      }
+
+      const documentResult = await documentService.createDocument({
+        user_id: userId || undefined, // Puede ser null inicialmente
+        filename: mediaData.filename || tempFilename,
+        file_url: urlData.publicUrl,
+        file_size: fileBuffer.length,
+        file_type: documentType,
+        mime_type: mediaData.mime_type,
+        whatsapp_message_id: mediaData.id,
+        sender_phone: senderPhone,
+        sender_type: 'provider',
+        provider_id: undefined, // Se asociará después si se encuentra el proveedor
+      });
+
+      if (!documentResult.success) {
+        return { success: false, error: documentResult.error };
+      }
+
+      console.log(`✅ [${requestId}] Documento creado sin proveedor: ${documentResult.document_id}`);
+
+      // Procesar con OCR (esto puede ayudar a encontrar el proveedor después)
+      await processDocumentWithOCR(documentResult.document_id!, requestId, fileBuffer, mediaData.filename);
+
+      // Crear mensaje en el chat si tenemos user_id
+      if (userId) {
+        const { v4: uuidv4 } = await import('uuid');
+        const messageId = uuidv4();
+
+        const messageData = {
+          id: messageId,
+          content: `📎 ${mediaData.filename || tempFilename}`,
+          message_type: 'received',
+          status: 'delivered',
+          contact_id: senderPhone,
+          user_id: userId,
+          message_sid: mediaData.id,
+          timestamp: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          media_url: urlData.publicUrl,
+          media_type: mediaData.mime_type || documentType,
+        };
+
+        const { error: messageError } = await supabase
+          .from('whatsapp_messages')
+          .insert([messageData]);
+
+        if (messageError) {
+          console.error(`❌ [${requestId}] Error guardando mensaje:`, messageError);
+        } else {
+          console.log(`✅ [${requestId}] Mensaje guardado en chat: ${messageId}`);
+        }
+      } else {
+        console.log(`⚠️ [${requestId}] No se pudo crear mensaje en chat (sin user_id)`);
+      }
+
+      return { success: true, document_id: documentResult.document_id };
+
+    } catch (error) {
+      console.error(`❌ [${requestId}] Error procesando documento sin proveedor:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error inesperado'
+      };
+    }
+  }
+
+  // 🔧 FUNCIÓN SIMPLIFICADA: Procesar documento de WhatsApp
+  async function processWhatsAppDocument(
   senderPhone: string, 
   mediaData: any, 
   requestId: string, 
@@ -1174,10 +1600,22 @@ async function processWhatsAppDocument(
     const mediaUrl = `https://graph.facebook.com/v18.0/${mediaData.id}`;
     console.log(`📥 [${requestId}] URL construida para descarga:`, mediaUrl);
 
-    // Descargar archivo desde WhatsApp
-    const { data: fileBuffer, error: downloadError } = await downloadMediaFromWhatsApp(mediaUrl, requestId);
-    if (downloadError || !fileBuffer) {
-      return { success: false, error: 'Error descargando archivo desde WhatsApp' };
+    // 🔧 NUEVO: Detectar si es un documento simulado (para pruebas)
+    const isSimulatedDocument = mediaData.id.includes('test_') || mediaData.id.includes('mock_');
+    
+    let fileBuffer: Buffer | null = null;
+    
+    if (isSimulatedDocument) {
+      console.log(`🧪 [${requestId}] Documento simulado detectado, creando buffer simulado...`);
+      // Crear un buffer simulado para documentos de prueba
+      fileBuffer = Buffer.from('Documento simulado para pruebas - ' + mediaData.filename);
+    } else {
+      // Descargar archivo real desde WhatsApp
+      const downloadResult = await downloadMediaFromWhatsApp(mediaUrl, requestId);
+      if (downloadResult.error || !downloadResult.data) {
+        return { success: false, error: 'Error descargando archivo desde WhatsApp' };
+      }
+      fileBuffer = downloadResult.data;
     }
 
     // Subir archivo a carpeta del proveedor
@@ -1215,8 +1653,152 @@ async function processWhatsAppDocument(
       return { success: false, error: documentResult.error };
     }
 
-    // Procesar documento con OCR en background
-    processDocumentWithOCR(documentResult.document_id!, requestId, fileBuffer, uploadResult.filename);
+    // ✅ CORREGIDO: Procesar documento con OCR inmediatamente
+    console.log(`🤖 [${requestId}] ===== INICIANDO PROCESAMIENTO OCR =====`);
+    console.log(`🤖 [${requestId}] Document ID: ${documentResult.document_id}`);
+    console.log(`🤖 [${requestId}] File buffer size: ${fileBuffer?.length || 0} bytes`);
+    console.log(`🤖 [${requestId}] Filename: ${uploadResult.filename}`);
+    console.log(`🤖 [${requestId}] Provider ID: ${providerId}`);
+    console.log(`🤖 [${requestId}] User ID: ${userId}`);
+    
+    await processDocumentWithOCR(documentResult.document_id!, requestId, fileBuffer, uploadResult.filename);
+    
+    console.log(`🤖 [${requestId}] ===== PROCESAMIENTO OCR COMPLETADO =====`);
+
+    // 🔧 NUEVO: Guardar documento como mensaje en el chat
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    // 🔧 DEBUG: Verificar valores antes de crear el mensaje
+    console.log(`🔍 [${requestId}] DEBUG - Valores para crear mensaje:`, {
+      senderPhone: senderPhone,
+      senderPhoneType: typeof senderPhone,
+      senderPhoneLength: senderPhone?.length,
+      userId: userId,
+      userIdType: typeof userId,
+      mediaDataId: mediaData.id,
+      uploadResultFilename: uploadResult.filename,
+      uploadResultUrl: uploadResult.url,
+      documentType: documentType
+    });
+
+    // 🔧 SOLUCIÓN DEFINITIVA: Obtener senderPhone de manera robusta
+    let finalSenderPhone = senderPhone;
+    
+    if (!finalSenderPhone) {
+      console.log(`🔍 [${requestId}] senderPhone es undefined/null, buscando alternativas...`);
+      
+      // Opción 1: Buscar por providerId
+      if (providerId) {
+        console.log(`🔍 [${requestId}] Buscando por providerId: ${providerId}`);
+        const { data: provider, error: providerError } = await supabase
+          .from('providers')
+          .select('phone')
+          .eq('id', providerId)
+          .single();
+        
+        if (!providerError && provider && provider.phone) {
+          finalSenderPhone = provider.phone;
+          console.log(`✅ [${requestId}] Teléfono obtenido desde providerId: ${finalSenderPhone}`);
+        }
+      }
+      
+      // Opción 2: Buscar por userId si no se encontró
+      if (!finalSenderPhone) {
+        console.log(`🔍 [${requestId}] Buscando por userId: ${userId}`);
+        const { data: providers, error: providersError } = await supabase
+          .from('providers')
+          .select('phone')
+          .eq('user_id', userId)
+          .limit(1);
+        
+        if (!providersError && providers && providers.length > 0 && providers[0].phone) {
+          finalSenderPhone = providers[0].phone;
+          console.log(`✅ [${requestId}] Teléfono obtenido desde userId: ${finalSenderPhone}`);
+        }
+      }
+      
+      // Opción 3: Usar el número del documento si existe
+      if (!finalSenderPhone) {
+        console.log(`🔍 [${requestId}] Verificando documento creado para obtener sender_phone...`);
+        const { data: document, error: docError } = await supabase
+          .from('documents')
+          .select('sender_phone')
+          .eq('id', documentResult.document_id)
+          .single();
+        
+        if (!docError && document && document.sender_phone) {
+          finalSenderPhone = document.sender_phone;
+          console.log(`✅ [${requestId}] Teléfono obtenido desde documento: ${finalSenderPhone}`);
+        }
+      }
+      
+      if (!finalSenderPhone) {
+        console.error(`❌ [${requestId}] CRÍTICO: No se pudo obtener senderPhone por ningún método`);
+        console.error(`❌ [${requestId}] providerId: ${providerId}, userId: ${userId}`);
+        // Forzar sincronización automática como último recurso
+        try {
+          console.log(`🔄 [${requestId}] Ejecutando sincronización automática como último recurso...`);
+          const syncResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001'}/api/whatsapp/auto-sync-documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+          const syncResult = await syncResponse.json();
+          console.log(`📊 [${requestId}] Resultado sincronización:`, syncResult);
+        } catch (syncError) {
+          console.error(`❌ [${requestId}] Error en sincronización automática:`, syncError);
+        }
+        return { success: true, document_id: documentResult.document_id };
+      }
+    }
+    
+    console.log(`✅ [${requestId}] senderPhone final: ${finalSenderPhone}`);
+
+    // Generar UUID para el mensaje
+    const { v4: uuidv4 } = await import('uuid');
+    const messageId = uuidv4();
+    
+    const messageData = {
+      id: messageId, // Agregar UUID generado
+      content: `📎 ${uploadResult.filename}`,
+      message_type: 'received',
+      status: 'delivered',
+      contact_id: finalSenderPhone, // Usar finalSenderPhone en lugar de senderPhone
+      user_id: userId,
+      message_sid: mediaData.id,
+      timestamp: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      media_url: uploadResult.url,
+      media_type: documentType
+    };
+
+    console.log(`📱 [${requestId}] Insertando mensaje de documento con UUID: ${messageId}`);
+    console.log(`📱 [${requestId}] WhatsApp ID original: ${mediaData.id}`);
+    console.log(`📱 [${requestId}] Datos del mensaje a insertar:`, messageData);
+
+    const { error: messageError } = await supabase
+      .from('whatsapp_messages')
+      .insert([messageData]);
+
+    if (messageError) {
+      console.error(`❌ [${requestId}] Error guardando mensaje de documento:`, messageError);
+      console.error(`❌ [${requestId}] Datos que causaron el error:`, messageData);
+      // No fallar el proceso completo por esto
+    } else {
+      console.log(`✅ [${requestId}] Mensaje de documento guardado en chat con ID: ${messageId}`);
+        console.log(`📱 [${requestId}] Datos del mensaje guardado:`, {
+          id: messageId,
+          content: `📎 ${uploadResult.filename}`,
+          message_type: 'received',
+          contact_id: finalSenderPhone,
+          user_id: userId,
+          media_url: uploadResult.url,
+          whatsapp_message_id: mediaData.id
+        });
+    }
 
     console.log(`✅ [${requestId}] Documento creado exitosamente: ${documentResult.document_id}`);
     return { 
@@ -1268,138 +1850,702 @@ function determineSenderType(senderPhone: string, userId: string): 'provider' | 
   return 'provider';
 }
 
-// 🔧 FUNCIÓN AUXILIAR: Procesar documento con OCR en background
+// ✅ CORREGIDO: Procesar documento con OCR inmediatamente
 async function processDocumentWithOCR(documentId: string, requestId: string, fileBuffer?: Buffer, filename?: string): Promise<void> {
+  const { InvoiceOrderLogger } = await import('../../../../lib/invoiceOrderLogger');
+  const logger = InvoiceOrderLogger.getInstance();
+  
   try {
-    console.log(`🤖 [${requestId}] Iniciando procesamiento OCR en background para documento: ${documentId}`);
+    await logger.info(requestId, 'Iniciando procesamiento OCR inmediato', { documentId, filename });
+    console.log(`🤖 [${requestId}] Iniciando procesamiento OCR inmediato para documento: ${documentId}`);
     
-    // Usar setTimeout para no bloquear la respuesta del webhook
-    setTimeout(async () => {
+    const { DocumentService } = await import('../../../../lib/documentService');
+    const documentService = new DocumentService();
+    
+    // Usar el método del DocumentService que ya está implementado
+    const ocrResult = await documentService.processDocumentWithOCR(documentId);
+    
+    if (ocrResult.success) {
+      await logger.success(requestId, 'OCR completado exitosamente', { documentId, confidence: ocrResult.confidence_score });
+      console.log(`✅ [${requestId}] OCR completado exitosamente para documento: ${documentId}`);
+      
+      // 🔧 NUEVO: Esperar un momento para asegurar que los datos OCR estén guardados en la BD
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // 🔧 NUEVO: Usar el sistema existente para crear/actualizar orden desde factura
       try {
-        const { DocumentService } = await import('../../../../lib/documentService');
-        const documentService = new DocumentService();
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabase = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.SUPABASE_SERVICE_ROLE_KEY!
+        );
         
-        // Si tenemos el buffer del archivo, procesar directamente con OCR
-        if (fileBuffer && filename) {
-          console.log(`🔍 [${requestId}] Procesando archivo directamente con OCR: ${filename}`);
+        // Obtener el documento con retry para asegurar que tenga los datos OCR
+        let document: any = null;
+        let attempts = 0;
+        const maxAttempts = 5;
+        
+        while (attempts < maxAttempts && !document?.ocr_data) {
+          const { data: docData, error: docError } = await supabase
+            .from('documents')
+            .select('user_id, provider_id, ocr_data, extracted_text')
+            .eq('id', documentId)
+            .single();
           
-          // Procesar con nuestro servicio de OCR
-          const { ocrService } = require('../../../../lib/ocrService');
-          const { simpleInvoiceExtraction } = require('../../../../lib/simpleInvoiceExtraction');
-          
-          let ocrResult;
-          if (filename.toLowerCase().endsWith('.pdf')) {
-            // Crear archivo temporal para PDF
-            const fs = require('fs');
-            const path = require('path');
-            
-            const tempDir = path.join(process.cwd(), 'temp');
-            if (!fs.existsSync(tempDir)) {
-              fs.mkdirSync(tempDir, { recursive: true });
+          if (!docError && docData) {
+            document = docData;
+            if (document.ocr_data) {
+              console.log(`✅ [${requestId}] Documento obtenido con datos OCR en intento ${attempts + 1}`);
+              break;
             }
-            
-            const tempFilePath = path.join(tempDir, filename);
-            fs.writeFileSync(tempFilePath, fileBuffer);
-            
-            ocrResult = await ocrService.processPDFFromPath(tempFilePath);
-            
-            // Limpiar archivo temporal
-            if (fs.existsSync(tempFilePath)) {
-              fs.unlinkSync(tempFilePath);
-            }
-          } else {
-            // Para imágenes, usar extractTextFromImage
-            ocrResult = await ocrService.extractTextFromImage(fileBuffer, filename);
           }
           
-          if (ocrResult.success && ocrResult.text) {
-            console.log(`✅ [${requestId}] OCR exitoso, extrayendo datos estructurados...`);
-            
-            // Extraer datos estructurados
-            const extractedData = await simpleInvoiceExtraction.extractFromText(ocrResult.text, filename);
-            
-                   // Actualizar documento con datos extraídos
-                   await documentService.updateDocumentWithOCRData(documentId, {
-                     extracted_text: ocrResult.text,
-                     extracted_data: extractedData.success ? extractedData.data : null,
-                     confidence_score: extractedData.success ? extractedData.confidence : 0
-                   });
-            
-            console.log(`✅ [${requestId}] Datos extraídos y guardados:`, {
-              hasText: !!ocrResult.text,
-              hasStructuredData: extractedData.success,
-              confidence: extractedData.success ? extractedData.confidence : 0
-            });
-            
-            // Si es una factura con datos válidos, intentar asociar a orden
-            // Detectar factura por nombre del archivo O por datos extraídos (invoiceNumber, totalAmount, etc.)
-            const isInvoice = filename.toLowerCase().includes('factura') || 
-                             (extractedData.data && extractedData.data.invoiceNumber && extractedData.data.totalAmount);
-            
-            if (extractedData.success && extractedData.data && isInvoice) {
-              console.log(`🔍 [${requestId}] Factura detectada, intentando asociar a orden:`, {
-                filename: filename,
-                hasInvoiceNumber: !!extractedData.data.invoiceNumber,
-                hasTotalAmount: !!extractedData.data.totalAmount,
-                isInvoice: isInvoice
-              });
-              await tryAssociateInvoiceToOrder(documentId, extractedData.data, requestId);
-            } else {
-              console.log(`⚠️ [${requestId}] No se detectó como factura:`, {
-                filename: filename,
-                extractedDataSuccess: extractedData.success,
-                hasData: !!extractedData.data,
-                hasInvoiceNumber: extractedData.data?.invoiceNumber,
-                hasTotalAmount: extractedData.data?.totalAmount,
-                isInvoice: isInvoice
-              });
-            }
-          } else {
-            console.log(`⚠️ [${requestId}] OCR falló o no extrajo texto:`, ocrResult.error);
-          }
-        } else {
-          // Fallback al sistema anterior
-          const result = await documentService.processDocumentWithOCR(documentId);
-          
-          if (result.success) {
-            console.log(`✅ [${requestId}] OCR completado exitosamente para documento: ${documentId}`);
+          attempts++;
+          if (attempts < maxAttempts) {
+            console.log(`⏳ [${requestId}] Esperando datos OCR... (intento ${attempts + 1}/${maxAttempts})`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
         }
         
-        // Enviar notificación de procesamiento completado
-        const { DocumentNotificationService } = await import('../../../../lib/documentNotificationService');
-        const notificationService = new DocumentNotificationService();
-        
-        // Obtener documento por ID directamente
-        const document = await documentService.getDocumentById(documentId);
-        if (document) {
-          await notificationService.notifyDocumentProcessed(
-            document.user_id,
-            documentId,
-            document.filename,
-            document.file_type,
-            document.confidence_score || 0
-          );
-          
-          // Si se asignó a una orden, notificar
-          if (document.order_id) {
-            await notificationService.notifyDocumentAssigned(
-              document.user_id,
-              documentId,
-              document.filename,
-              document.order_id
-            );
-          }
-        } else {
-          console.error(`❌ [${requestId}] Error obteniendo documento: ${documentId}`);
+        if (!document?.user_id) {
+          await logger.warn(requestId, 'No se pudo obtener user_id del documento para crear orden', { documentId, document });
+          console.warn(`⚠️ [${requestId}] No se pudo obtener user_id del documento para crear orden`);
+          return;
         }
-      } catch (error) {
-        console.error(`❌ [${requestId}] Error en procesamiento background:`, error);
+        
+        if (!document?.ocr_data) {
+          await logger.warn(requestId, `Documento no tiene datos OCR después de ${maxAttempts} intentos`, { documentId, attempts: maxAttempts });
+          console.warn(`⚠️ [${requestId}] Documento no tiene datos OCR después de ${maxAttempts} intentos`);
+          return;
+        }
+        
+        // Usar el sistema existente para crear/actualizar orden desde factura
+        await logger.info(requestId, 'Llamando a updateOrderWithExtractedDataFromDocument', { documentId, userId: document.user_id, providerId: document.provider_id });
+        console.log(`🚀 [${requestId}] Llamando a updateOrderWithExtractedDataFromDocument...`);
+        const result = await updateOrderWithExtractedDataFromDocument(documentId, requestId, document.user_id, supabase);
+        await logger.success(requestId, 'updateOrderWithExtractedDataFromDocument completado', { documentId });
+        console.log(`✅ [${requestId}] updateOrderWithExtractedDataFromDocument completado`);
+      } catch (orderError: any) {
+        await logger.error(requestId, 'ERROR CRÍTICO EN CREACIÓN DE ORDEN', {
+          errorType: orderError?.constructor?.name || typeof orderError,
+          errorMessage: orderError?.message || String(orderError),
+          stack: orderError?.stack,
+          error: orderError
+        });
+        console.error(`❌ [${requestId}] ===== ERROR CRÍTICO EN CREACIÓN DE ORDEN =====`);
+        console.error(`❌ [${requestId}] Tipo de error:`, orderError?.constructor?.name || typeof orderError);
+        console.error(`❌ [${requestId}] Mensaje:`, orderError?.message || String(orderError));
+        console.error(`❌ [${requestId}] Stack trace:`, orderError?.stack);
+        console.error(`❌ [${requestId}] Error completo:`, JSON.stringify(orderError, Object.getOwnPropertyNames(orderError), 2));
+        console.error(`❌ [${requestId}] ===== FIN ERROR CRÍTICO =====`);
+        // No fallar el proceso completo si hay error creando la orden
       }
-    }, 1000); // Esperar 1 segundo antes de procesar
+    } else {
+      await logger.error(requestId, 'Error en OCR', { error: ocrResult.error, documentId });
+      console.error(`❌ [${requestId}] Error en OCR: ${ocrResult.error}`);
+    }
+  } catch (error: any) {
+    await logger.error(requestId, 'ERROR EN PROCESAMIENTO OCR', {
+      errorType: error?.constructor?.name || typeof error,
+      errorMessage: error?.message || String(error),
+      stack: error?.stack,
+      error: error
+    });
+    console.error(`❌ [${requestId}] ===== ERROR EN PROCESAMIENTO OCR =====`);
+    console.error(`❌ [${requestId}] Tipo de error:`, error?.constructor?.name || typeof error);
+    console.error(`❌ [${requestId}] Mensaje:`, error?.message || String(error));
+    console.error(`❌ [${requestId}] Stack trace:`, error?.stack);
+    console.error(`❌ [${requestId}] ===== FIN ERROR OCR =====`);
+  }
+}
 
+// 🔧 FUNCIÓN AUXILIAR: Crear orden desde factura (copiada de kapso/supabase-events para evitar import)
+async function createOrderFromInvoiceLocal(
+  document: any,
+  requestId: string,
+  userId: string,
+  supabase: any
+): Promise<{ success: boolean; order?: any; error?: string }> {
+  const { InvoiceOrderLogger } = await import('../../../../lib/invoiceOrderLogger');
+  const logger = InvoiceOrderLogger.getInstance();
+  
+  try {
+    await logger.info(requestId, 'INICIANDO createOrderFromInvoiceLocal', {
+      documentId: document.id,
+      documentFilename: document.filename,
+      userId: userId,
+      hasOcrData: !!document.ocr_data,
+      hasExtractedText: !!document.extracted_text,
+      provider_id: document.provider_id
+    });
+    console.log(`🆕 [${requestId}] ===== INICIANDO createOrderFromInvoiceLocal =====`);
+    console.log(`🆕 [${requestId}] Parámetros:`, {
+      documentId: document.id,
+      documentFilename: document.filename,
+      userId: userId,
+      hasOcrData: !!document.ocr_data,
+      hasExtractedText: !!document.extracted_text,
+      provider_id: document.provider_id
+    });
+    
+    const extractedData = document.ocr_data;
+    const invoiceData = extractedData?.invoice_data || {};
+    
+    await logger.info(requestId, 'Estructura de datos OCR', {
+      hasExtractedData: !!extractedData,
+      hasInvoiceData: !!invoiceData,
+      extractedDataKeys: extractedData ? Object.keys(extractedData) : [],
+      invoiceDataKeys: invoiceData ? Object.keys(invoiceData) : []
+    });
+    console.log(`📊 [${requestId}] Estructura de datos:`, {
+      hasExtractedData: !!extractedData,
+      hasInvoiceData: !!invoiceData,
+      extractedDataKeys: extractedData ? Object.keys(extractedData) : [],
+      invoiceDataKeys: invoiceData ? Object.keys(invoiceData) : []
+    });
+    
+    // Extraer monto total
+    let invoiceTotal = null;
+    if (invoiceData.total_amount) {
+      invoiceTotal = invoiceData.total_amount;
+    } else if (invoiceData.totalAmount) {
+      invoiceTotal = invoiceData.totalAmount;
+    } else if (extractedData.totalAmount) {
+      invoiceTotal = extractedData.totalAmount;
+    } else if (extractedData.total) {
+      invoiceTotal = extractedData.total;
+    } else if (extractedData.amount) {
+      invoiceTotal = extractedData.amount;
+    }
+    
+    if (!invoiceTotal && document.extracted_text) {
+      const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
+      if (amountMatch) {
+        invoiceTotal = parseFloat(amountMatch[1].replace(',', '.'));
+      }
+    }
+    
+    // 🔧 FIX: Si no se encuentra monto, usar fallback de 0 en lugar de retornar error
+    if (!invoiceTotal || invoiceTotal <= 0) {
+      await logger.warn(requestId, 'No se encontró monto válido en la factura, usando fallback de 0', {
+        invoiceTotal,
+        extractedDataKeys: extractedData ? Object.keys(extractedData) : [],
+        invoiceDataKeys: invoiceData ? Object.keys(invoiceData) : [],
+        extractedText: document.extracted_text ? document.extracted_text.substring(0, 500) : 'no disponible'
+      });
+      console.warn(`⚠️ [${requestId}] No se encontró monto válido en la factura, usando fallback de monto 0`);
+      console.warn(`⚠️ [${requestId}] Datos disponibles:`, {
+        invoiceData: JSON.stringify(invoiceData, null, 2),
+        extractedData: JSON.stringify(extractedData, null, 2),
+        extractedText: document.extracted_text ? document.extracted_text.substring(0, 500) : 'no disponible'
+      });
+      // 🔧 FALLBACK: Usar monto 0 para permitir crear la orden
+      // El monto puede actualizarse después cuando se procese mejor la factura
+      invoiceTotal = 0;
+      console.log(`✅ [${requestId}] Continuando con monto 0 (fallback)`);
+    }
+    
+    await logger.info(requestId, 'Monto extraído de la factura', { invoiceTotal });
+    console.log(`💰 [${requestId}] Monto extraído de la factura: $${invoiceTotal}`);
+    
+    // Extraer items de la factura
+    let items: any[] = [];
+    if (invoiceData.items && Array.isArray(invoiceData.items)) {
+      items = invoiceData.items.map((item: any) => ({
+        productName: item.description || item.name || 'Producto sin nombre',
+        quantity: item.quantity || 1,
+        unit: item.unit || 'un',
+        price: item.unitPrice || item.priceUnitNet || item.price || 0,
+        total: item.total || item.priceTotalNet || (item.unitPrice || item.priceUnitNet || 0) * item.quantity || 0
+      }));
+    } else if (extractedData.items && Array.isArray(extractedData.items)) {
+      items = extractedData.items.map((item: any) => ({
+        productName: item.description || item.name || 'Producto sin nombre',
+        quantity: item.quantity || 1,
+        unit: item.unit || 'un',
+        price: item.unitPrice || item.priceUnitNet || item.price || 0,
+        total: item.total || item.priceTotalNet || (item.unitPrice || item.priceUnitNet || 0) * item.quantity || 0
+      }));
+    }
+    
+    // Si no hay items, crear un item genérico
+    if (items.length === 0) {
+      items = [{
+        productName: 'Factura sin desglose de items',
+        quantity: 1,
+        unit: 'un',
+        price: invoiceTotal,
+        total: invoiceTotal
+      }];
+    }
+    
+    // Generar número de orden único
+    const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+    const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const orderNumber = `ORD-${timestamp}-${randomSuffix}`;
+    
+    // Validar que el documento tenga provider_id
+    if (!document.provider_id) {
+      console.error(`❌ [${requestId}] Documento no tiene provider_id, no se puede crear orden`);
+      
+      // Intentar encontrar el proveedor por CUIT del OCR
+      if (extractedData?.provider_cuit || invoiceData?.supplier_cuit) {
+        const cuit = extractedData.provider_cuit || invoiceData.supplier_cuit;
+        console.log(`🔍 [${requestId}] Intentando encontrar proveedor por CUIT: ${cuit}`);
+        
+        const { data: provider } = await supabase
+          .from('providers')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('cuit_cuil', String(cuit).replace(/[^0-9]/g, ''))
+          .single();
+        
+        if (provider) {
+          console.log(`✅ [${requestId}] Proveedor encontrado por CUIT: ${provider.id}`);
+          // Actualizar documento con provider_id
+          await supabase
+            .from('documents')
+            .update({ provider_id: provider.id })
+            .eq('id', document.id);
+          document.provider_id = provider.id;
+        } else {
+          return { success: false, error: 'No se encontró proveedor para la factura' };
+        }
+      } else {
+        return { success: false, error: 'Documento no tiene provider_id y no se pudo identificar por CUIT' };
+      }
+    }
+    
+    // Crear la orden
+    // 🔧 FIX: Solo incluir campos que existen en la tabla orders
+    const orderData: any = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      provider_id: document.provider_id,
+      order_number: orderNumber,
+      items: items,
+      status: 'pendiente_de_pago',
+      total_amount: invoiceTotal,
+      currency: invoiceData.currency || 'ARS',
+      receipt_url: document.file_url,
+      order_date: invoiceData.issue_date || invoiceData.issueDate || new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    // Agregar campos opcionales solo si existen en la base de datos
+    if (invoiceData.invoice_number || invoiceData.invoiceNumber) {
+      orderData.invoice_number = invoiceData.invoice_number || invoiceData.invoiceNumber;
+    }
+    
+    // Nota: invoice_data, invoice_currency, invoice_date, extraction_confidence pueden no existir en la tabla
+    // Solo incluir si la tabla los tiene
+    
+    await logger.info(requestId, 'Insertando orden en base de datos', {
+      orderNumber: orderData.order_number,
+      provider_id: orderData.provider_id,
+      total_amount: orderData.total_amount,
+      items_count: orderData.items?.length || 0,
+      userId: orderData.user_id,
+      orderId: orderData.id
+    });
+    console.log(`📝 [${requestId}] Datos completos de la orden a insertar:`, {
+      id: orderData.id,
+      order_number: orderData.order_number,
+      provider_id: orderData.provider_id,
+      user_id: orderData.user_id,
+      total_amount: orderData.total_amount,
+      items_count: orderData.items?.length || 0,
+      status: orderData.status
+    });
+    
+    const { data: createdOrder, error: createError } = await supabase
+      .from('orders')
+      .insert([orderData])
+      .select()
+      .single();
+    
+    if (createError) {
+      await logger.error(requestId, 'Error creando orden en base de datos', {
+        error: createError.message,
+        errorCode: createError.code,
+        errorDetails: createError.details,
+        errorHint: createError.hint,
+        orderData: {
+          orderNumber: orderData.order_number,
+          provider_id: orderData.provider_id,
+          total_amount: orderData.total_amount,
+          user_id: orderData.user_id,
+          orderId: orderData.id
+        }
+      });
+      console.error(`❌ [${requestId}] Error creando orden en Supabase:`, {
+        message: createError.message,
+        code: createError.code,
+        details: createError.details,
+        hint: createError.hint
+      });
+      console.error(`❌ [${requestId}] OrderData completo:`, JSON.stringify(orderData, null, 2));
+      return { success: false, error: createError.message || 'Error desconocido creando orden' };
+    }
+    
+    if (!createdOrder) {
+      await logger.error(requestId, 'Insert no devolvió datos', {
+        orderNumber: orderData.order_number
+      });
+      console.error(`❌ [${requestId}] Insert no devolvió datos, pero no hubo error`);
+      return { success: false, error: 'No se devolvieron datos después de insertar la orden' };
+    }
+    
+    await logger.success(requestId, 'Orden creada exitosamente en base de datos', {
+      orderId: createdOrder.id,
+      orderNumber: createdOrder.order_number,
+      status: createdOrder.status,
+      totalAmount: createdOrder.total_amount
+    });
+    console.log(`✅ [${requestId}] Orden creada exitosamente:`, {
+      orderId: createdOrder.id,
+      orderNumber: createdOrder.order_number
+    });
+    
+    // Actualizar documento con order_id
+    await supabase
+      .from('documents')
+      .update({ 
+        order_id: createdOrder.id,
+        status: 'assigned',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', document.id);
+    
+    return { success: true, order: createdOrder };
+    
+  } catch (error: any) {
+    await logger.error(requestId, 'ERROR en createOrderFromInvoiceLocal', {
+      errorType: error?.constructor?.name || typeof error,
+      errorMessage: error?.message || String(error),
+      stack: error?.stack,
+      error: error
+    });
+    console.error(`❌ [${requestId}] Error creando orden desde factura:`, error);
+    return { success: false, error: 'Error creando orden desde factura' };
+  }
+}
+
+// 🔧 FUNCIÓN AUXILIAR: Actualizar orden con datos extraídos (reutilizando lógica de kapso/supabase-events)
+async function updateOrderWithExtractedDataFromDocument(
+  documentId: string,
+  requestId: string,
+  userId: string,
+  supabase: any
+): Promise<void> {
+  const { InvoiceOrderLogger } = await import('../../../../lib/invoiceOrderLogger');
+  const logger = InvoiceOrderLogger.getInstance();
+  
+  try {
+    await logger.info(requestId, 'INICIANDO updateOrderWithExtractedDataFromDocument', { documentId, userId });
+    console.log(`🔄 [${requestId}] ===== INICIANDO updateOrderWithExtractedDataFromDocument =====`);
+    console.log(`🔄 [${requestId}] Parámetros: documentId=${documentId}, userId=${userId}`);
+    
+    // Obtener el documento con datos OCR
+    const { data: document, error: docError } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('id', documentId)
+      .single();
+    
+    if (docError || !document) {
+      console.error(`❌ [${requestId}] Error obteniendo documento:`, docError);
+      console.error(`❌ [${requestId}] Documento buscado: ${documentId}`);
+      return;
+    }
+    
+    console.log(`📄 [${requestId}] Documento obtenido:`, {
+      id: document.id,
+      filename: document.filename,
+      hasOcrData: !!document.ocr_data,
+      hasExtractedText: !!document.extracted_text,
+      provider_id: document.provider_id,
+      user_id: document.user_id,
+      order_id: document.order_id,
+      status: document.status
+    });
+    
+    if (!document.ocr_data || !document.extracted_text) {
+      console.log(`⚠️ [${requestId}] Documento no tiene datos OCR extraídos aún`);
+      console.log(`⚠️ [${requestId}] ocr_data existe: ${!!document.ocr_data}, extracted_text existe: ${!!document.extracted_text}`);
+      return;
+    }
+    
+    console.log(`📊 [${requestId}] Datos OCR encontrados:`, {
+      hasOcrData: !!document.ocr_data,
+      hasExtractedText: !!document.extracted_text,
+      extractedTextLength: document.extracted_text?.length || 0,
+      confidence: document.confidence_score,
+      orderId: document.order_id,
+      ocrDataKeys: document.ocr_data ? Object.keys(document.ocr_data) : []
+    });
+    
+    // Extraer datos del documento
+    const extractedData = document.ocr_data;
+    const invoiceData = extractedData?.invoice_data || {};
+    
+    let order;
+    
+    // Verificar si el documento ya está asociado a una orden
+    if (document.order_id) {
+      console.log(`🔗 [${requestId}] Documento ya está asociado a una orden: ${document.order_id}`);
+      const { data: existingOrder, error: existingOrderError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', document.order_id)
+        .single();
+      
+      if (existingOrderError || !existingOrder) {
+        console.error(`❌ [${requestId}] Error obteniendo orden asociada:`, existingOrderError);
+        return;
+      }
+      
+      order = existingOrder;
+      console.log(`📋 [${requestId}] Usando orden existente:`, {
+        id: order.id,
+        orderNumber: order.order_number,
+        currentAmount: order.total_amount,
+        status: order.status
+      });
+    } else {
+      // Extraer el número de factura del documento
+      const currentInvoiceNumber = invoiceData.invoice_number || invoiceData.invoiceNumber;
+      
+      // Validar que el documento tenga provider_id
+      if (!document.provider_id) {
+        console.error(`❌ [${requestId}] Documento no tiene provider_id, buscando por CUIT...`);
+        
+        // Intentar encontrar el proveedor por CUIT del OCR
+        const extractedData = document.ocr_data;
+        const invoiceData = extractedData?.invoice_data || {};
+        const cuit = extractedData?.provider_cuit || invoiceData?.supplier_cuit;
+        
+        if (cuit) {
+          const cuitDigits = String(cuit).replace(/[^0-9]/g, '');
+          console.log(`🔍 [${requestId}] Intentando encontrar proveedor por CUIT: ${cuitDigits}`);
+          
+          const { data: provider } = await supabase
+            .from('providers')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('cuit_cuil', cuitDigits)
+            .single();
+          
+          if (provider) {
+            console.log(`✅ [${requestId}] Proveedor encontrado por CUIT: ${provider.id}`);
+            // Actualizar documento con provider_id
+            await supabase
+              .from('documents')
+              .update({ provider_id: provider.id })
+              .eq('id', documentId);
+            document.provider_id = provider.id;
+          } else {
+            console.warn(`⚠️ [${requestId}] No se encontró proveedor con CUIT ${cuitDigits}`);
+            return;
+          }
+        } else {
+          console.warn(`⚠️ [${requestId}] Documento no tiene provider_id ni CUIT para buscar proveedor`);
+          return;
+        }
+      }
+      
+      // Buscar órdenes del proveedor en estado enviado, esperando_factura o pendiente_de_pago
+      console.log(`🔍 [${requestId}] Buscando órdenes pendientes para proveedor:`, {
+        provider_id: document.provider_id,
+        user_id: userId,
+        statuses: ['enviado', 'esperando_factura', 'pendiente_de_pago']
+      });
+      
+      const { data: orders, error: ordersError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('user_id', userId)
+        .in('status', ['enviado', 'esperando_factura', 'pendiente_de_pago'])
+        .eq('provider_id', document.provider_id)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      
+      if (ordersError) {
+        console.error(`❌ [${requestId}] Error obteniendo órdenes:`, {
+          message: ordersError.message,
+          code: ordersError.code,
+          details: ordersError.details
+        });
+        return;
+      }
+      
+      console.log(`📊 [${requestId}] Órdenes encontradas: ${orders?.length || 0}`);
+      
+      if (!orders || orders.length === 0) {
+        await logger.info(requestId, 'No hay órdenes pendientes para el proveedor, creando nueva orden', {
+          documentId: document.id,
+          provider_id: document.provider_id,
+          hasOcrData: !!document.ocr_data,
+          hasInvoiceData: !!invoiceData,
+          invoiceTotal: invoiceData?.total_amount || invoiceData?.totalAmount || 'no encontrado'
+        });
+        console.log(`⚠️ [${requestId}] No hay órdenes pendientes para el proveedor`);
+        console.log(`🆕 [${requestId}] Creando nueva orden desde factura recibida...`);
+        console.log(`📋 [${requestId}] Datos del documento antes de crear orden:`, {
+          documentId: document.id,
+          provider_id: document.provider_id,
+          hasOcrData: !!document.ocr_data,
+          hasInvoiceData: !!invoiceData,
+          invoiceTotal: invoiceData?.total_amount || invoiceData?.totalAmount || 'no encontrado'
+        });
+        
+        // Crear orden automáticamente desde la factura
+        await logger.info(requestId, 'Llamando a createOrderFromInvoiceLocal', { documentId: document.id });
+        console.log(`🔨 [${requestId}] Llamando a createOrderFromInvoiceLocal...`);
+        const createResult = await createOrderFromInvoiceLocal(document, requestId, userId, supabase);
+        
+        await logger.info(requestId, 'Resultado de createOrderFromInvoiceLocal', {
+          success: createResult.success,
+          hasOrder: !!createResult.order,
+          error: createResult.error,
+          orderId: createResult.order?.id,
+          orderNumber: createResult.order?.order_number
+        });
+        console.log(`📊 [${requestId}] Resultado de createOrderFromInvoiceLocal:`, {
+          success: createResult.success,
+          hasOrder: !!createResult.order,
+          error: createResult.error,
+          orderId: createResult.order?.id,
+          orderNumber: createResult.order?.order_number
+        });
+        
+        if (!createResult.success || !createResult.order) {
+          await logger.error(requestId, 'Error creando orden desde factura', {
+            error: createResult.error,
+            result: createResult
+          });
+          console.error(`❌ [${requestId}] Error creando orden desde factura:`, createResult.error);
+          console.error(`❌ [${requestId}] Detalles del error:`, JSON.stringify(createResult, null, 2));
+          return;
+        }
+        
+        order = createResult.order;
+        await logger.success(requestId, 'Orden creada exitosamente desde factura', {
+          orderId: order.id,
+          orderNumber: order.order_number,
+          status: order.status,
+          totalAmount: order.total_amount,
+          providerId: order.provider_id
+        });
+        console.log(`✅ [${requestId}] Orden creada exitosamente desde factura:`, {
+          orderId: order.id,
+          orderNumber: order.order_number,
+          status: order.status,
+          totalAmount: order.total_amount,
+          providerId: order.provider_id
+        });
+      } else {
+        // Tomar la orden más reciente
+        order = orders[0];
+        
+        // Si la orden ya tiene un invoice_number diferente, crear nueva orden
+        if (order.invoice_number && currentInvoiceNumber && order.invoice_number !== currentInvoiceNumber) {
+          console.log(`⚠️ [${requestId}] Orden existente tiene factura diferente:`, {
+            existingInvoice: order.invoice_number,
+            newInvoice: currentInvoiceNumber
+          });
+          console.log(`🆕 [${requestId}] Creando nueva orden para factura diferente...`);
+          
+          const createResult = await createOrderFromInvoiceLocal(document, requestId, userId, supabase);
+          
+          if (!createResult.success || !createResult.order) {
+            console.error(`❌ [${requestId}] Error creando orden desde factura:`, createResult.error);
+            return;
+          }
+          
+          order = createResult.order;
+          console.log(`✅ [${requestId}] Nueva orden creada para factura diferente:`, {
+            orderId: order.id,
+            orderNumber: order.order_number
+          });
+        } else {
+          console.log(`📋 [${requestId}] Orden encontrada para actualizar:`, {
+            id: order.id,
+            orderNumber: order.order_number,
+            currentAmount: order.total_amount,
+            currentInvoiceNumber: order.invoice_number,
+            status: order.status
+          });
+        }
+      }
+    }
+    
+    // Actualizar la orden con los datos extraídos de la factura
+    let invoiceTotal = null;
+    if (invoiceData.total_amount) {
+      invoiceTotal = invoiceData.total_amount;
+    } else if (invoiceData.totalAmount) {
+      invoiceTotal = invoiceData.totalAmount;
+    } else if (extractedData.totalAmount) {
+      invoiceTotal = extractedData.totalAmount;
+    } else if (extractedData.total) {
+      invoiceTotal = extractedData.total;
+    } else if (extractedData.amount) {
+      invoiceTotal = extractedData.amount;
+    }
+    
+    if (!invoiceTotal && document.extracted_text) {
+      const amountMatch = document.extracted_text.match(/(?:total|importe|monto)[\s:]*\$?[\s]*([\d,\.]+)/i);
+      if (amountMatch) {
+        invoiceTotal = parseFloat(amountMatch[1].replace(',', '.'));
+      }
+    }
+    
+    console.log(`💰 [${requestId}] Monto extraído de la factura:`, invoiceTotal);
+    
+    const updateData: any = {
+      updated_at: new Date().toISOString(),
+      invoice_data: extractedData,
+      invoice_number: invoiceData.invoice_number || invoiceData.invoiceNumber,
+      invoice_currency: invoiceData.currency || 'ARS',
+      invoice_date: invoiceData.issue_date || invoiceData.issueDate,
+      extraction_confidence: document.confidence_score,
+      receipt_url: document.file_url
+    };
+    
+    if (order.status === 'enviado' || order.status === 'esperando_factura') {
+      updateData.status = 'pendiente_de_pago';
+    }
+    
+    if (invoiceTotal && invoiceTotal > 0) {
+      updateData.total_amount = invoiceTotal;
+      updateData.invoice_total = invoiceTotal;
+      console.log(`✅ [${requestId}] Actualizando monto de orden: $${order.total_amount} → $${invoiceTotal}`);
+    }
+    
+    const { error: updateError } = await supabase
+      .from('orders')
+      .update(updateData)
+      .eq('id', order.id);
+    
+    if (updateError) {
+      console.error(`❌ [${requestId}] Error actualizando orden:`, updateError);
+    } else {
+      console.log(`✅ [${requestId}] Orden actualizada exitosamente con datos de factura`);
+    }
+    
+    // Asociar documento a la orden
+    if (order && !document.order_id) {
+      await supabase
+        .from('documents')
+        .update({ order_id: order.id })
+        .eq('id', documentId);
+      
+      console.log(`✅ [${requestId}] Documento asociado a orden: ${order.order_number}`);
+    }
   } catch (error) {
-    console.error(`❌ [${requestId}] Error iniciando procesamiento OCR:`, error);
+    console.error(`❌ [${requestId}] Error actualizando orden con datos extraídos:`, error);
   }
 }
 
@@ -1614,7 +2760,7 @@ async function tryAssociateInvoiceToOrder(
       invoice_date: extractedData.issueDate,
       extraction_confidence: extractedData.confidence,
       // 🔧 CORRECCIÓN: Preservar el provider_id para evitar desconexión
-      provider_id: order.provider_id
+      // provider_id: order.provider_id // Comentado temporalmente
     };
     
     // Actualizar monto si es diferente
@@ -1643,6 +2789,34 @@ async function tryAssociateInvoiceToOrder(
     
     console.log(`✅ [${requestId}] Factura asociada exitosamente a orden ${order.order_number}`);
     console.log(`🔄 [${requestId}] Orden actualizada de '${order.status}' a 'pendiente_de_pago'`);
+    console.log(`🔔 [${requestId}] Esta actualización debería disparar un evento Realtime para los suscriptores`);
+    
+    // 🔧 WORKAROUND: Emitir broadcast manual para notificar a los clientes Realtime
+    try {
+      const broadcastResult = await supabase
+        .channel('orders-updates')
+        .send({
+          type: 'broadcast' as const,
+          event: 'order_updated',
+          payload: {
+            orderId: order.id,
+            status: 'pendiente_de_pago',
+            receiptUrl: updateData.receipt_url,
+            invoiceNumber: updateData.invoice_number,
+            invoiceDate: updateData.invoice_date,
+            timestamp: new Date().toISOString(),
+            source: 'invoice_association'
+          }
+        });
+
+      if (broadcastResult === 'error') {
+        console.error(`⚠️ [${requestId}] Error enviando broadcast`);
+      } else {
+        console.log(`✅ [${requestId}] Broadcast de actualización enviado`);
+      }
+    } catch (broadcastErr) {
+      console.error(`⚠️ [${requestId}] Error en broadcast:`, broadcastErr);
+    }
     
     // 🔧 CORRECCIÓN: Actualizar documento con order_id para que aparezca asociado en el modal
     const { error: documentUpdateError } = await supabase
@@ -1676,4 +2850,5 @@ async function tryAssociateInvoiceToOrder(
     console.error(`❌ [${requestId}] Error asociando factura a orden:`, error);
   }
 }
+
 

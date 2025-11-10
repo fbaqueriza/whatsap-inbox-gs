@@ -369,7 +369,14 @@ export default function DateSelector({
 
       {providerDeliveryDays && providerDeliveryTime && (
         <p className="mt-1 text-xs text-gray-500">
-          Días de entrega del proveedor: {translateDeliveryDays(providerDeliveryDays).join(', ')} a las {Array.isArray(providerDeliveryTime) ? providerDeliveryTime.join(', ') : providerDeliveryTime}
+          Días de entrega del proveedor: {translateDeliveryDays(providerDeliveryDays).join(', ')}
+          {Array.isArray(providerDeliveryTime) && providerDeliveryTime.length === 2 && providerDeliveryTime[0] && providerDeliveryTime[1]
+            ? ` de ${providerDeliveryTime[0]} a ${providerDeliveryTime[1]}`
+            : Array.isArray(providerDeliveryTime) && providerDeliveryTime.length > 0
+              ? ` a las ${providerDeliveryTime[0]}`
+              : typeof providerDeliveryTime === 'string'
+                ? ` a las ${providerDeliveryTime}`
+                : ''}
         </p>
       )}
     </div>

@@ -1,16 +1,11 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
-import { useRealtimeManager } from '../hooks/useRealtimeManager';
 import { useSupabaseAuth } from '../hooks/useSupabaseAuth';
 import { mapOrderFromDb } from '../lib/orderMapper';
-
-// Helper para detectar páginas protegidas
-const isProtectedPage = (pathname: string): boolean => {
-  const protectedPaths = ['/dashboard', '/orders', '/providers', '/stock', '/profile'];
-  return protectedPaths.some(path => pathname.startsWith(path));
-};
 import { supabase } from '../lib/supabase/client';
+import { normalizePhoneNumber } from '../lib/phoneNormalization';
+import { Order } from '../types';
 
 // Tipos
 interface RealtimeMessage {
@@ -21,16 +16,28 @@ interface RealtimeMessage {
   contact_id: string;
   status: string;
   user_id?: string;
+  // ✅ CORRECCIÓN RAÍZ: Agregar message_type para identificar correctamente el tipo
+  message_type?: 'received' | 'sent';
+  // 🔧 CORRECCIÓN: Agregar campos para documentos
+  media_url?: string;
+  media_type?: string;
 }
 
 interface RealtimeOrder {
   id: string;
-  status: string;
-  total_amount?: number;
-  invoice_number?: string;
-  receipt_url?: string;
-  invoice_data?: any;
-  updated_at?: string;
+  status?: Order['status'];
+  orderNumber?: string;
+  totalAmount?: number;
+  invoiceNumber?: string;
+  receiptUrl?: string;
+  invoiceFileUrl?: string;
+  paymentReceiptUrl?: string;
+  invoiceData?: any;
+  updatedAt?: string | Date;
+  providerId?: string;
+  provider?: Order['provider'];
+  items?: Order['items'];
+  source?: string;
 }
 
 interface RealtimeServiceContextType {
@@ -64,10 +71,14 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const { user } = useSupabaseAuth();
   const currentUserId = user?.id || null;
 
+  // Referencias para control de actualizaciones
+  const lastOrdersUpdateRef = useRef<string>('');
+
   const messageListeners = useRef<Set<(message: RealtimeMessage) => void>>(new Set());
   const orderListeners = useRef<Set<(order: RealtimeOrder) => void>>(new Set());
 
-  const { subscribe, unsubscribe } = useRealtimeManager();
+  // Referencias para suscripciones
+  const subscriptionsRef = useRef<Set<any>>(new Set());
 
 
   // 🔧 CORREGIDO: Ya no necesitamos este useEffect porque currentUserId viene de useSupabaseAuth
@@ -75,46 +86,49 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   // Handlers para mensajes
   const handleNewMessage = async (payload: any) => {
     const newMessage = payload.new;
-    // console.log('🔍 [RealtimeService] Nuevo mensaje recibido:', newMessage?.id);
+    // Silenciado logs
 
     if (!newMessage || !currentUserId) {
-      console.log('🔐 RealtimeService: Ignorando mensaje - usuario no autenticado');
+      // Silenciado
       return;
     }
 
     // 🔧 LÓGICA SIMPLIFICADA: Aceptar mensajes del usuario actual O mensajes sin user_id
     const isValidMessage = newMessage.user_id === currentUserId || !newMessage.user_id;
 
-    // console.log('🔍 [RealtimeService] Validación de mensaje:', isValidMessage);
+    // Silenciado
 
     if (!isValidMessage) {
-      console.log('❌ [RealtimeService] Mensaje rechazado - user_id no coincide');
+      // Silenciado
       return; // Ignorar mensaje no válido
     }
 
-    // 🔧 MEJORA: Crear mensaje y notificar listeners
+    // ✅ CORRECCIÓN RAÍZ: Crear mensaje y notificar listeners
+    // ✅ CORRECCIÓN RAÍZ: Normalizar contact_id para evitar contactos duplicados
+    const normalizedContactId = normalizePhoneNumber(newMessage.contact_id).normalized;
+    
     const message: RealtimeMessage = {
       id: newMessage.id,
       content: newMessage.content,
       timestamp: new Date(newMessage.timestamp),
-      type: newMessage.message_type,
-      contact_id: newMessage.contact_id,
+      // ✅ CORRECCIÓN: Usar message_type del mensaje de la BD
+      type: newMessage.message_type || 'text',
+      contact_id: normalizedContactId, // Usar número normalizado
       status: newMessage.status || 'delivered',
-      user_id: newMessage.user_id
+      user_id: newMessage.user_id,
+      // 🔧 CORRECCIÓN: Incluir media_url y media_type para documentos
+      media_url: newMessage.media_url,
+      media_type: newMessage.media_type
     };
 
     setMessages(prev => {
       const exists = prev.some(msg => msg.id === message.id);
-      if (exists) {
-        console.log('🔄 [RealtimeService] Mensaje ya existe, ignorando:', message.id);
-        return prev;
-      }
-      // console.log('✅ [RealtimeService] Agregando nuevo mensaje al estado:', message.id);
+      if (exists) { return prev; }
       return [...prev, message];
     });
 
     // 🔧 OPTIMIZACIÓN: Notificar a todos los listeners de forma segura
-    // console.log('📢 [RealtimeService] Notificando a', messageListeners.current.size, 'listeners');
+    // Silenciado
     messageListeners.current.forEach(callback => {
       try {
         callback(message);
@@ -122,32 +136,6 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
         console.error('Error en message listener:', error);
       }
     });
-
-    // 🔧 FALLBACK: Actualizar órdenes cuando se recibe un mensaje nuevo
-    try {
-      const response = await fetch(`/api/data/orders?user_id=${currentUserId}`);
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && result.orders) {
-          const updatedOrders = result.orders.map(mapOrderFromDb);
-          setOrders(updatedOrders);
-          
-          // Notificar a los listeners sobre las órdenes actualizadas
-          updatedOrders.forEach(order => {
-            orderListeners.current.forEach(callback => {
-              try {
-                callback(order);
-              } catch (error) {
-                console.error('Error en order listener:', error);
-              }
-            });
-          });
-        }
-      }
-    } catch (error) {
-      console.error('Error actualizando órdenes en fallback:', error);
-    }
-
   };
 
   const handleMessageUpdate = (payload: any) => {
@@ -185,34 +173,38 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const handleNewOrder = (payload: any) => {
     const newOrder = payload.new;
     if (!newOrder || !currentUserId) {
-      console.log('🔐 RealtimeService: Ignorando nueva orden - usuario no autenticado');
+      // Silenciado
       return;
     }
 
     // 🔧 OPTIMIZACIÓN: Filtrar nuevas órdenes por user_id
     if (newOrder.user_id && newOrder.user_id !== currentUserId) {
-      console.log('🔍 RealtimeService: Orden filtrada - user_id no coincide');
+      // Silenciado
       return;
     }
 
-      setOrders(prev => {
-        const exists = prev.some(order => order.id === newOrder.id);
-        if (exists) return prev;
-        return [...prev, newOrder];
-      });
+    // Mapear la orden antes de agregarla
+    const mappedOrder = mapOrderFromDb(newOrder);
 
-      // 🔧 OPTIMIZACIÓN: Notificar a los listeners sobre la nueva orden
-      orderListeners.current.forEach(callback => {
-        try {
-          callback(newOrder);
-        } catch (error) {
-          console.error('Error en order listener:', error);
-        }
-      });
+    setOrders(prev => {
+      const exists = prev.some(order => order.id === mappedOrder.id);
+      if (exists) return prev;
+      return [...prev, mappedOrder];
+    });
+
+    // 🔧 OPTIMIZACIÓN: Notificar a los listeners sobre la nueva orden
+    orderListeners.current.forEach(callback => {
+      try {
+        callback(mappedOrder);
+      } catch (error) {
+        console.error('Error en order listener:', error);
+      }
+    });
   };
 
   const handleOrderUpdate = (payload: any) => {
     const updatedOrder = payload.new;
+
     if (!updatedOrder || !currentUserId) {
       return;
     }
@@ -225,15 +217,18 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // Mapear la orden una sola vez
     const mappedOrder = mapOrderFromDb(updatedOrder);
     
-    setOrders(prev =>
-      prev.map(order =>
-        order.id === updatedOrder.id
-          ? { ...order, ...mappedOrder }
-          : order
-      )
-    );
+    setOrders(prev => {
+      const existingIndex = prev.findIndex(order => order.id === updatedOrder.id);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex] = { ...updated[existingIndex], ...mappedOrder };
+        return updated;
+      } else {
+        return [mappedOrder, ...prev];
+      }
+    });
 
-    // Notificar a los listeners sobre la actualización
+    // Notificar a los listeners sobre la actualización (esto es lo que DataProvider escucha)
     orderListeners.current.forEach(callback => {
       try {
         callback(mappedOrder);
@@ -246,19 +241,224 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
   const handleOrderDelete = (payload: any) => {
     const deletedOrder = payload.old;
     if (!deletedOrder || !currentUserId) {
-      console.log('🔐 RealtimeService: Ignorando eliminación de orden - usuario no autenticado');
+      // Silenciado
       return;
     }
 
     // 🔧 OPTIMIZACIÓN: Filtrar eliminaciones por user_id
     if (deletedOrder.user_id && deletedOrder.user_id !== currentUserId) {
-      console.log('🔍 RealtimeService: Eliminación de orden filtrada - user_id no coincide');
+      // Silenciado
       return;
     }
 
     setOrders(prev =>
       prev.filter(order => order.id !== deletedOrder.id)
     );
+  };
+
+  // 🔧 NUEVO: Handlers para eventos de Kapso
+  const handleKapsoOrderUpdate = (payload: any) => {
+    if (!currentUserId) {
+      return;
+    }
+
+    const orderId = payload.payload?.orderId;
+    if (!orderId) {
+      return;
+    }
+
+    const orderFromPayload = payload.payload?.order;
+
+    if (orderFromPayload) {
+      const mappedOrder = mapOrderFromDb(orderFromPayload);
+
+      if (mappedOrder.user_id && mappedOrder.user_id !== currentUserId) {
+        return;
+      }
+
+      setOrders(prev => {
+        const existingIndex = prev.findIndex(order => order.id === mappedOrder.id);
+        if (existingIndex >= 0) {
+          const updated = [...prev];
+          updated[existingIndex] = { ...mappedOrder };
+          return updated;
+        }
+        return [mappedOrder, ...prev];
+      });
+
+      orderListeners.current.forEach(callback => {
+        try {
+          callback(mappedOrder);
+        } catch (error) {
+          console.error('❌ [RealtimeService] Error notificando listener de orden (payload completo):', error);
+        }
+      });
+
+      return;
+    }
+
+    // Buscar la orden en el estado actual y actualizarla cuando sólo llega metadata mínima
+    setOrders(prev => {
+      const updated = prev.map(order => {
+        if (order.id === orderId) {
+          const updateData: any = {
+            ...order,
+            status: payload.payload.status || order.status,
+            updatedAt: payload.payload.timestamp ? new Date(payload.payload.timestamp) : order.updatedAt
+          };
+          if (payload.payload.receiptUrl !== undefined) {
+            updateData.receiptUrl = payload.payload.receiptUrl;
+          }
+        if (payload.payload.invoiceFileUrl !== undefined) {
+          updateData.invoiceFileUrl = payload.payload.invoiceFileUrl;
+        }
+          if (payload.payload.paymentReceiptUrl !== undefined) {
+            updateData.paymentReceiptUrl = payload.payload.paymentReceiptUrl;
+          }
+          if (payload.payload.totalAmount !== undefined) {
+            updateData.totalAmount = payload.payload.totalAmount;
+          }
+          if (payload.payload.invoiceNumber !== undefined) {
+            updateData.invoiceNumber = payload.payload.invoiceNumber;
+          }
+          if (payload.payload.invoiceDate !== undefined) {
+            updateData.invoiceDate = payload.payload.invoiceDate ? new Date(payload.payload.invoiceDate) : undefined;
+          }
+          return updateData;
+        }
+        return order;
+      });
+      return updated;
+    });
+
+    // Notificar a los listeners
+    orderListeners.current.forEach(callback => {
+      try {
+        const updatedOrder: any = {
+          id: orderId,
+          status: payload.payload.status,
+          source: payload.payload.source || 'invoice_ocr'
+        };
+        if (payload.payload.receiptUrl !== undefined) {
+          updatedOrder.receiptUrl = payload.payload.receiptUrl;
+        }
+        if (payload.payload.invoiceFileUrl !== undefined) {
+          updatedOrder.invoiceFileUrl = payload.payload.invoiceFileUrl;
+        }
+        if (payload.payload.paymentReceiptUrl !== undefined) {
+          updatedOrder.paymentReceiptUrl = payload.payload.paymentReceiptUrl;
+        }
+        if (payload.payload.totalAmount !== undefined) {
+          updatedOrder.totalAmount = payload.payload.totalAmount;
+        }
+        if (payload.payload.invoiceNumber !== undefined) {
+          updatedOrder.invoiceNumber = payload.payload.invoiceNumber;
+        }
+        if (payload.payload.invoiceDate !== undefined) {
+          updatedOrder.invoiceDate = payload.payload.invoiceDate;
+        }
+        callback(updatedOrder);
+      } catch (error) {
+        console.error('❌ [RealtimeService] Error notificando listener de orden:', error);
+      }
+    });
+  };
+
+  // 🆕 NUEVO: Manejar creación de orden desde factura
+  const handleKapsoOrderCreate = (payload: any) => {
+    // 🔧 LIMPIEZA: Log removido
+    
+    if (!currentUserId) {
+      // 🔧 LIMPIEZA: Log removido
+      return;
+    }
+
+    // Crear objeto de orden completo desde el payload
+    const newOrder: any = {
+      id: payload.payload.orderId,
+      orderNumber: payload.payload.orderNumber,
+      providerId: payload.payload.providerId,
+      status: payload.payload.status,
+      items: payload.payload.items || [],
+      receiptUrl: payload.payload.receiptUrl,
+      invoiceFileUrl: payload.payload.invoiceFileUrl,
+      paymentReceiptUrl: payload.payload.paymentReceiptUrl,
+      totalAmount: payload.payload.totalAmount,
+      currency: payload.payload.currency || 'ARS',
+      invoiceNumber: payload.payload.invoiceNumber,
+      invoiceDate: payload.payload.invoiceDate ? new Date(payload.payload.invoiceDate) : undefined,
+      orderDate: payload.payload.orderDate || payload.payload.timestamp,
+      updatedAt: payload.payload.timestamp,
+      createdAt: payload.payload.timestamp,
+      source: payload.payload.source || 'invoice_auto_create'
+    };
+    
+    // Agregar la orden al estado si no existe
+    setOrders(prev => {
+      const exists = prev.some(order => order.id === newOrder.id);
+      if (exists) {
+        // 🔧 LIMPIEZA: Log removido
+        return prev;
+      }
+      // 🔧 LIMPIEZA: Log removido
+      return [...prev, newOrder];
+    });
+
+    // Notificar a los listeners
+    orderListeners.current.forEach(callback => {
+      try {
+        callback(newOrder);
+      } catch (error) {
+        console.error('❌ [RealtimeService] Error en order listener (Kapso create):', error);
+      }
+    });
+  };
+
+  // ✅ COMENTADO: Esta función causaba duplicación de eventos de mensajes
+  // Los mensajes ahora los maneja exclusivamente ChatContext
+  // const handleKapsoMessageUpdate = (payload: any) => {
+  //   console.log(`📨 [RealtimeService] Procesando mensaje desde Kapso:`, payload);
+  //   
+  //   if (!currentUserId) {
+  //     console.log(`⚠️ [RealtimeService] Ignorando mensaje de Kapso - usuario no autenticado`);
+  //     return;
+  //   }
+
+  //   // Crear mensaje desde el evento de Kapso
+  //   const message: RealtimeMessage = {
+  //     id: payload.payload.messageId,
+  //     content: payload.payload.content,
+  //     timestamp: new Date(payload.payload.timestamp),
+  //     type: 'text',
+  //     contact_id: payload.payload.from,
+  //     status: 'delivered',
+  //     user_id: currentUserId,
+  //     source: 'kapso'
+  //   };
+
+  //   setMessages(prev => {
+  //     const exists = prev.some(msg => msg.id === message.id);
+  //     if (exists) {
+  //       console.log('🔄 [RealtimeService] Mensaje de Kapso ya existe, ignorando:', message.id);
+  //       return prev;
+  //     }
+  //     console.log('✅ [RealtimeService] Agregando mensaje de Kapso:', message.id);
+  //     return [...prev, message];
+  //   });
+
+  //   // Notificar a los listeners
+  //   messageListeners.current.forEach(callback => {
+  //     try {
+  //       callback(message);
+  //     } catch (error) {
+  //       console.error('❌ [RealtimeService] Error en message listener (Kapso):', error);
+  //     }
+  //   });
+  // };
+
+  const handleKapsoDocumentUpdate = (payload: any) => {
+    console.log(`📎 [RealtimeService] Procesando documento desde Kapso:`, payload);
+    // Aquí podrías actualizar el estado de documentos si es necesario
   };
 
   // 🔧 FUNCIÓN: Cargar órdenes iniciales
@@ -288,26 +488,19 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
       // Órdenes iniciales cargadas
       setOrders(mappedOrders);
       
-        // 🔧 NUEVO: Pasar órdenes iniciales al DataProvider
-        if (mappedOrders && mappedOrders.length > 0) {
-          // Notificar a los listeners de órdenes con las órdenes iniciales mapeadas
-          mappedOrders.forEach(order => {
-            orderListeners.current.forEach(callback => {
-              callback(order);
-            });
-          });
-        }
+      // 🔧 REMOVIDO: No notificar órdenes iniciales - causaba logs duplicados y no es necesario
+      // DataProvider carga las órdenes directamente con fetchAll
     } catch (error) {
       console.error('❌ [RealtimeService] Error inesperado cargando órdenes:', error);
     }
-  }, [currentUserId, supabase]);
+  }, [currentUserId]);
 
   // 🔧 OPTIMIZACIÓN: Configurar suscripciones una sola vez por usuario
   const subscriptionsInitializedRef = useRef<Set<string>>(new Set());
   
   useEffect(() => {
     if (!currentUserId) {
-      // console.log('🔐 RealtimeService: Esperando autenticación...');
+      // Silenciado
       setIsConnected(false);
       return;
     }
@@ -319,7 +512,7 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
     subscriptionsInitializedRef.current.add(currentUserId);
     
-    // console.log('✅ RealtimeService: Usuario autenticado, configurando tiempo real...');
+    // Silenciado
     setIsConnected(true);
 
     // 🔧 CARGAR ÓRDENES INICIALES
@@ -328,26 +521,29 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
     // 🔧 SOLUCIÓN OPTIMIZADA: Una sola llamada de suscripción por tipo
     const setupWhatsAppSuscription = async () => {
       try {
-        await subscribe(
-          {
-            table: 'whatsapp_messages',
-            event: '*'
-          },
-          {
-            onInsert: handleNewMessage,
-            onUpdate: handleMessageUpdate,
-            onDelete: handleMessageDelete
-          },
-          {
-            debounceMs: 150,
-            retryConfig: {
-              maxRetries: 5,
-              retryDelay: 2000,
-              backoffMultiplier: 1.5
+        // Silenciado
+        // 🔧 FIX: Agregar filtro por user_id para que RLS permita los mensajes
+        const channel = supabase
+          .channel('whatsapp-messages')
+          .on('postgres_changes', 
+            { 
+              event: '*', 
+              schema: 'public', 
+              table: 'whatsapp_messages'
+              // ✅ CORRECCIÓN: Remover filtro para que funcione con RLS
+            }, 
+            (payload) => {
+              // Silenciado
+              if (payload.eventType === 'INSERT') handleNewMessage(payload);
+              else if (payload.eventType === 'UPDATE') handleMessageUpdate(payload);
+              else if (payload.eventType === 'DELETE') handleMessageDelete(payload);
             }
-          }
-        );
+          )
+          .subscribe();
+        
+        subscriptionsRef.current.add(channel);
         setIsConnected(true);
+        // Silenciado
       } catch (error) {
         console.error(`❌ RealtimeService: Error configurando suscripción a whatsapp_messages:`, error);
         setIsConnected(false);
@@ -356,29 +552,42 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
     setupWhatsAppSuscription();
 
-    // 🔧 SOLUCIÓN OPTIMIZADA: Suscripción a órdenes con configuración única
+    // 🔧 SOLUCIÓN OPTIMIZADA: Suscripción a órdenes sin filtro (filtrar en handler)
     const setupOrdersSuscription = async () => {
       try {
-        await subscribe(
-          {
-            table: 'orders',
-            event: '*',
-            filter: currentUserId ? `user_id=eq.${currentUserId}` : undefined
-          },
-          {
-            onInsert: handleNewOrder,
-            onUpdate: handleOrderUpdate,
-            onDelete: handleOrderDelete
-          },
-          {
-            debounceMs: 100,
-            retryConfig: {
-              maxRetries: 3,
-              retryDelay: 1000,
-              backoffMultiplier: 2
+        const channel = supabase
+          .channel('orders-realtime')
+          .on('postgres_changes', 
+            { 
+              event: '*', 
+              schema: 'public', 
+              table: 'orders'
+            }, 
+            (payload) => {
+              try {
+                if (payload.eventType === 'INSERT') {
+                  handleNewOrder(payload);
+                } else if (payload.eventType === 'UPDATE') {
+                  handleOrderUpdate(payload);
+                } else if (payload.eventType === 'DELETE') {
+                  handleOrderDelete(payload);
+                }
+              } catch (error) {
+                console.error('❌ [RealtimeService] Error manejando evento:', error);
+              }
             }
-          }
-        );
+          )
+          .subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+              console.log('✅ [RealtimeService] Suscripción a orders ACTIVA');
+              setIsConnected(true);
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              console.error('❌ [RealtimeService] Error en suscripción orders:', status);
+              setIsConnected(false);
+            }
+          });
+        
+        subscriptionsRef.current.add(channel);
       } catch (error) {
         console.error(`❌ [RealtimeService] Error configurando suscripción a orders:`, error);
       }
@@ -386,31 +595,63 @@ export function RealtimeServiceProvider({ children }: { children: React.ReactNod
 
     setupOrdersSuscription();
 
+    // 🔧 NUEVO: Suscripción a eventos de Kapso
+    const setupKapsoEventsSuscription = async () => {
+      try {
+        
+        // Suscripción a eventos de órdenes de Kapso
+        const ordersChannel = supabase
+          .channel('orders-updates')
+          .on('broadcast', { event: 'order_updated' }, (payload) => {
+            console.log('🔄 [RealtimeService] Broadcast order_updated recibido:', payload);
+            // Procesar evento de Kapso como si fuera un evento nativo de Supabase
+            handleKapsoOrderUpdate(payload);
+          })
+          .on('broadcast', { event: 'order_created' }, (payload) => {
+            console.log('🆕 [RealtimeService] Broadcast order_created recibido:', payload);
+            // Procesar nueva orden creada desde factura
+            handleKapsoOrderCreate(payload);
+          })
+          .subscribe();
+
+        // ✅ CORRECCIÓN: No suscribirse a eventos de mensajes aquí - ChatContext lo maneja
+        // Los mensajes de chat los maneja ChatContext directamente via 'kapso_messages' channel
+        // Esta suscripción causaba duplicación de eventos
+
+        // Suscripción a eventos de documentos de Kapso
+        const documentsChannel = supabase
+          .channel('documents-updates')
+          .on('broadcast', { event: 'document_processed' }, (payload) => {
+            // Silenciado
+            handleKapsoDocumentUpdate(payload);
+          })
+          .subscribe();
+      } catch (error) {
+        console.error(`❌ [RealtimeService] Error configurando suscripciones de Kapso:`, error);
+      }
+    };
+
+    setupKapsoEventsSuscription();
+
 
 
 
     return () => {
       // ✅ SOLUCIÓN: Limpiar suscripciones cuando el usuario cambie
       if (currentUserId && subscriptionsInitializedRef.current.has(currentUserId)) {
-        console.log(`🔌 RealtimeService: Desuscribiendo de mensajes y órdenes para usuario ${currentUserId}`);
+        // Silenciado
         
         // Remover del conjunto de usuarios inicializados
         subscriptionsInitializedRef.current.delete(currentUserId);
         
-        // Una sola llamada de desuscripción por tabla
-        unsubscribe({
-          table: 'whatsapp_messages',
-          event: '*'
+        // Desuscribir todos los canales
+        subscriptionsRef.current.forEach(channel => {
+          supabase.removeChannel(channel);
         });
-        
-        unsubscribe({
-          table: 'orders', 
-          event: '*',
-          filter: currentUserId ? `user_id=eq.${currentUserId}` : undefined
-        });
+        subscriptionsRef.current.clear();
       }
     };
-  }, [currentUserId, subscribe, unsubscribe]);
+  }, [currentUserId]);
 
   // Funciones para agregar/remover listeners
   // 🔧 SOLUCIÓN UNIFICADA: addMessageListener con referencia estable

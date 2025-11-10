@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, ShoppingCart, AlertTriangle, Clock, RefreshCw, Upload, FileText, Calendar, CreditCard } from 'lucide-react';
-import { Provider, OrderItem, StockItem, OrderFile } from '../types';
+import { X, ShoppingCart, AlertTriangle, Clock, RefreshCw, Upload, FileText, Calendar, CreditCard, Copy, History } from 'lucide-react';
+import { Provider, OrderItem, StockItem, OrderFile, Order } from '../types';
 import DateSelector from './DateSelector';
 
 interface CreateOrderModalProps {
@@ -14,11 +14,12 @@ interface CreateOrderModalProps {
     notes: string;
     desiredDeliveryDate?: Date;
     desiredDeliveryTime?: string[];
-    paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
+    paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque' | 'none';
     additionalFiles?: OrderFile[];
   }) => void;
   providers: Provider[];
   stockItems: StockItem[];
+  orders?: Order[]; // ✅ NUEVO: Agregar orders para buscar orden anterior
   suggestedOrder?: {
     providerId?: string;
     providerName?: string;
@@ -35,6 +36,7 @@ export default function CreateOrderModal({
   onSubmit,
   providers,
   stockItems,
+  orders = [], // ✅ NUEVO: Agregar orders con valor por defecto
   suggestedOrder,
   isLoading = false,
 }: CreateOrderModalProps) {
@@ -43,9 +45,10 @@ export default function CreateOrderModal({
   const [notes, setNotes] = useState('');
   const [desiredDeliveryDate, setDesiredDeliveryDate] = useState<string>('');
   const [desiredDeliveryTime, setDesiredDeliveryTime] = useState<string[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'transferencia' | 'tarjeta' | 'cheque'>('efectivo');
+  const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'transferencia' | 'tarjeta' | 'cheque' | 'none'>('efectivo');
   const [additionalFiles, setAdditionalFiles] = useState<OrderFile[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [showPreviousOrder, setShowPreviousOrder] = useState(true); // ✅ CAMBIO: Por defecto mostrar la orden anterior
 
   // Set selectedProvider from suggestedOrder if present
   useEffect(() => {
@@ -86,8 +89,9 @@ export default function CreateOrderModal({
           // console.log('🔧 DEBUG - No hay notas del proveedor disponibles');
         }
         
-        // 🔧 MEJORA: Limpiar campos al cambiar de proveedor
-        setOrderText('');
+        // 🔧 MEJORA: Limpiar campos al cambiar de proveedor (PERO NO limpiar orderText aquí, 
+        // el useEffect siguiente se encargará de precargar los items)
+        // setOrderText(''); // ✅ COMENTADO: No limpiar aquí para que el useEffect de precarga funcione
         setAdditionalFiles([]);
         
         // Set default delivery date based on provider's delivery days
@@ -179,25 +183,38 @@ export default function CreateOrderModal({
 
   // 🔧 OPTIMIZACIÓN: Precarga mejorada de items de proveedores
   useEffect(() => {
-    if (selectedProvider) {
+    if (selectedProvider && stockItems.length > 0) {
       const provider = providers.find(p => p.id === selectedProvider);
       if (provider) {
+        // 🔧 LIMPIEZA: Logs removidos para reducir ruido en consola (solo mantener en desarrollo si es necesario)
+        // if (process.env.NODE_ENV === 'development') {
+        //   console.log('🔍 [CreateOrderModal] Precargando items para proveedor:', provider.name);
+        // }
+        
         const now = new Date();
         const weekFromNow = new Date();
         weekFromNow.setDate(now.getDate() + 7);
         
-        // 🔧 MEJORA: Filtrar items asociados al proveedor seleccionado
+        // 🔧 MEJORA: Filtrar items asociados al proveedor seleccionado (lógica menos restrictiva)
         const matchingItems = stockItems.filter(stock => {
-          // Verificar que el item tenga providers asociados
-          if (!Array.isArray(stock.associatedProviders)) return false;
+          // ✅ CAMBIO: Si el item tiene associatedProviders, verificar que el proveedor esté incluido
+          if (Array.isArray(stock.associatedProviders) && stock.associatedProviders.length > 0) {
+            const isAssociated = stock.associatedProviders.includes(selectedProvider);
+            // Si tiene preferredProvider, verificar que sea el seleccionado
+            if (stock.preferredProvider) {
+              return isAssociated && stock.preferredProvider === selectedProvider;
+            }
+            // Si no tiene preferredProvider pero está asociado, incluirlo
+            return isAssociated;
+          }
           
-          // Verificar que el proveedor esté en la lista de asociados
-          const isAssociated = stock.associatedProviders.includes(selectedProvider);
+          // ✅ CAMBIO: Si el item NO tiene associatedProviders pero tiene preferredProvider, incluirlo si coincide
+          if (stock.preferredProvider && stock.preferredProvider === selectedProvider) {
+            return true;
+          }
           
-          // Verificar preferencia si existe
-          const isPreferred = !stock.preferredProvider || stock.preferredProvider === selectedProvider;
-          
-          return isAssociated && isPreferred;
+          // ✅ CAMBIO: Si no tiene ninguna configuración, NO incluirlo (evitar items sin asociación)
+          return false;
         });
         
         // 🔧 MEJORA: Priorizar items urgentes (próxima orden en 7 días)
@@ -243,6 +260,57 @@ export default function CreateOrderModal({
     }
   }, [selectedProvider, providers, stockItems, suggestedOrder]);
 
+  // ✅ NUEVO: Obtener última orden del proveedor seleccionado
+  const getLastOrderForProvider = (providerId: string): Order | null => {
+    if (!providerId || !orders || orders.length === 0) return null;
+    
+    const providerOrders = orders
+      .filter(order => order.providerId === providerId)
+      .sort((a, b) => {
+        const dateA = new Date(a.createdAt || a.orderDate).getTime();
+        const dateB = new Date(b.createdAt || b.orderDate).getTime();
+        return dateB - dateA; // Más reciente primero
+      });
+    
+    return providerOrders.length > 0 ? providerOrders[0] : null;
+  };
+
+  // ✅ NUEVO: Formatear items de orden al formato del textarea
+  const formatOrderItemsToText = (order: Order): string => {
+    if (!order.items || order.items.length === 0) return '';
+    
+    return order.items
+      .map(item => {
+        const unitNormalized = (item.unit || '').toLowerCase();
+        const isFreeText =
+          (!item.quantity || item.quantity === 1) &&
+          (!unitNormalized || ['un', 'unidad', 'unidades', 'u', 'und'].includes(unitNormalized)) &&
+          !item.productName.includes(':');
+
+        if (isFreeText) {
+          return item.productName.trim();
+        }
+
+        return `${item.productName}: ${item.quantity} ${item.unit}`.trim();
+      })
+      .join('\n');
+  };
+
+  // ✅ NUEVO: Obtener texto de la orden anterior
+  const previousOrder = selectedProvider ? getLastOrderForProvider(selectedProvider) : null;
+  const previousOrderText = previousOrder ? formatOrderItemsToText(previousOrder) : null;
+
+  // ✅ CAMBIO: Mostrar orden anterior por defecto cuando se selecciona un proveedor con orden anterior
+  useEffect(() => {
+    if (previousOrder) {
+      // Si hay una orden anterior, mostrarla por defecto
+      setShowPreviousOrder(true);
+    } else {
+      // Si no hay orden anterior, ocultar el panel
+      setShowPreviousOrder(false);
+    }
+  }, [previousOrder]); // Solo dependencia de previousOrder para evitar loops
+
   // Reset form when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
@@ -253,6 +321,7 @@ export default function CreateOrderModal({
       setDesiredDeliveryTime([]);
       setPaymentMethod('efectivo');
       setAdditionalFiles([]);
+      setShowPreviousOrder(true); // ✅ CAMBIO: Reset a true para mostrar por defecto
     }
   }, [isOpen]);
 
@@ -269,6 +338,15 @@ export default function CreateOrderModal({
           productName: productName.trim(),
           quantity: parseFloat(quantity),
           unit: unit.trim(),
+          price: 0,
+          total: 0,
+        });
+      } else {
+        // Si no coincide con el formato, crear un item con el texto completo como nombre
+        items.push({
+          productName: line.trim(),
+          quantity: 1,
+          unit: 'un',
           price: 0,
           total: 0,
         });
@@ -324,7 +402,7 @@ export default function CreateOrderModal({
       notes,
       desiredDeliveryDate: desiredDeliveryDate ? new Date(desiredDeliveryDate) : undefined,
       desiredDeliveryTime: desiredDeliveryTime.length > 0 ? desiredDeliveryTime : undefined,
-      paymentMethod,
+      paymentMethod: paymentMethod === 'none' ? undefined : paymentMethod,
       additionalFiles,
     });
     
@@ -427,7 +505,12 @@ export default function CreateOrderModal({
                   )}
                   {selectedProviderInfo.defaultDeliveryDays && selectedProviderInfo.defaultDeliveryTime && (
                     <div className="text-sm text-blue-700 mt-1">
-                      <strong>Entrega:</strong> {translateDeliveryDays(selectedProviderInfo.defaultDeliveryDays).join(', ')} a las {selectedProviderInfo.defaultDeliveryTime}
+                      <strong>Entrega:</strong> {translateDeliveryDays(selectedProviderInfo.defaultDeliveryDays).join(', ')} 
+                      {selectedProviderInfo.defaultDeliveryTime.length === 2 && selectedProviderInfo.defaultDeliveryTime[0] && selectedProviderInfo.defaultDeliveryTime[1] 
+                        ? ` de ${selectedProviderInfo.defaultDeliveryTime[0]} a ${selectedProviderInfo.defaultDeliveryTime[1]}`
+                        : selectedProviderInfo.defaultDeliveryTime.length > 0 
+                          ? ` a las ${selectedProviderInfo.defaultDeliveryTime[0]}`
+                          : ''}
                     </div>
                   )}
                   {selectedProviderInfo.defaultPaymentMethod && (
@@ -457,25 +540,26 @@ export default function CreateOrderModal({
                 <CreditCard className="inline h-4 w-4 mr-1" />
                 Método de pago
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-5 gap-2">
                 {[
                   { value: 'efectivo', label: 'Efectivo', icon: '💵' },
                   { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
                   { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
                   { value: 'cheque', label: 'Cheque', icon: '📄' },
+                  { value: 'none', label: 'No especificar', icon: '○' },
                 ].map((method) => (
                   <button
                     key={method.value}
                     type="button"
                     onClick={() => setPaymentMethod(method.value as any)}
-                    className={`p-3 border rounded-lg text-center transition-colors ${
+                    className={`p-2 border rounded-lg text-center transition-colors ${
                       paymentMethod === method.value
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
                     }`}
                   >
-                    <div className="text-2xl mb-1">{method.icon}</div>
-                    <div className="text-sm font-medium">{method.label}</div>
+                    <div className="text-xl mb-1">{method.icon}</div>
+                    <div className="text-xs font-medium leading-tight">{method.label}</div>
                   </button>
                 ))}
               </div>
@@ -490,21 +574,76 @@ export default function CreateOrderModal({
             <div className="mb-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-md font-medium text-gray-900">Ítems del pedido</h3>
+                {/* ✅ NUEVO: Botón para mostrar/ocultar orden anterior */}
+                {previousOrder && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPreviousOrder(!showPreviousOrder)}
+                    className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 focus:outline-none"
+                  >
+                    <History className="h-4 w-4" />
+                    {showPreviousOrder ? 'Ocultar orden anterior' : 'Ver orden anterior'}
+                  </button>
+                )}
               </div>
 
-              <div className="mb-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Ítems del pedido (Formato: Producto: Cantidad Unidad - Precio)
-                </label>
-              </div>
+              {/* ✅ CAMBIO: Layout lado a lado (grid) en lugar de uno encima del otro */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* ✅ NUEVO: Columna izquierda - Orden anterior */}
+                {previousOrder && showPreviousOrder && (
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <History className="h-4 w-4 text-blue-600" />
+                        <h4 className="text-sm font-medium text-blue-900">
+                          Última orden ({previousOrder.orderNumber})
+                        </h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (previousOrderText) {
+                            setOrderText(previousOrderText);
+                          }
+                        }}
+                        className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-700 bg-blue-100 rounded hover:bg-blue-200 focus:outline-none"
+                        title="Copiar items al textarea"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <div className="text-xs text-blue-600 mb-2">
+                      {new Date(previousOrder.createdAt || previousOrder.orderDate).toLocaleDateString('es-AR')}
+                    </div>
+                    <div className="p-3 bg-white rounded border border-blue-100 max-h-[300px] overflow-y-auto">
+                      <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono">
+                        {previousOrderText || 'No hay items en la orden anterior'}
+                      </pre>
+                    </div>
+                    {previousOrder.notes && (
+                      <div className="mt-2 text-xs text-blue-700">
+                        <strong>Notas:</strong> {previousOrder.notes}
+                      </div>
+                    )}
+                  </div>
+                )}
 
-              <textarea
-                value={orderText}
-                onChange={(e) => setOrderText(e.target.value)}
-                rows={12}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
-                placeholder="Selecciona un proveedor para ver ítems sugeridos..."
-              />
+                {/* ✅ NUEVO: Columna derecha - Textarea */}
+                <div className={previousOrder && showPreviousOrder ? '' : 'lg:col-span-2'}>
+                  <div className="mb-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Ítems del pedido (Formato: Producto: Cantidad Unidad - Precio, o texto libre)
+                    </label>
+                  </div>
+                  <textarea
+                    value={orderText}
+                    onChange={(e) => setOrderText(e.target.value)}
+                    rows={12}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                    placeholder="Selecciona un proveedor para ver ítems sugeridos..."
+                  />
+                </div>
+              </div>
 
               {/* Order Summary */}
               {orderText.trim() && (

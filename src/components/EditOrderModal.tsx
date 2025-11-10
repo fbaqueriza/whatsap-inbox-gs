@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import { X, ShoppingCart, Upload, FileText, Calendar, CreditCard, Clock, ChevronDown, CheckCircle } from 'lucide-react';
 import { Order, OrderItem, Provider, OrderFile } from '../types';
 import DeliveryDaysSelector from './DeliveryDaysSelector';
-import PaymentMethodSelector from './PaymentMethodSelector';
 import DateSelector from './DateSelector';
 
 interface EditOrderModalProps {
@@ -17,6 +16,7 @@ interface EditOrderModalProps {
     paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
     additionalFiles?: OrderFile[];
     notes?: string;
+    status?: string;
   }) => void;
   onCancel?: (orderId: string) => void;
 }
@@ -35,6 +35,7 @@ export default function EditOrderModal({
   const [notes, setNotes] = useState('');
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [showItems, setShowItems] = useState(false);
+  const [orderStatus, setOrderStatus] = useState<string>('');
 
   // Initialize form when order changes
   useEffect(() => {
@@ -43,6 +44,7 @@ export default function EditOrderModal({
       setPaymentMethod(order.paymentMethod || 'efectivo');
       setAdditionalFiles(order.additionalFiles || []);
       setNotes(order.notes || '');
+      setOrderStatus(order.status || 'standby');
     }
   }, [order]);
 
@@ -89,6 +91,7 @@ export default function EditOrderModal({
       paymentMethod,
       additionalFiles,
       notes,
+      status: orderStatus,
     });
     
     onClose();
@@ -133,67 +136,81 @@ export default function EditOrderModal({
         {/* Content */}
         <div className="px-6 py-4">
           <div className="space-y-6">
-                         {/* Order Info */}
-             <div className="bg-gray-50 rounded-lg p-4">
-               <h3 className="text-sm font-medium text-gray-900 mb-2">Información del Pedido</h3>
-               <div className="text-sm text-gray-600 space-y-1">
-                 <div><strong>Estado:</strong> {order.status}</div>
-                 <div><strong>Fecha de creación:</strong> {new Date(order.orderDate).toLocaleDateString()}</div>
-                 <div><strong>Total:</strong> ${order.totalAmount} {order.currency}</div>
-               </div>
-             </div>
-
-                           {/* Order Items */}
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowItems(!showItems)}
-                  className="flex items-center justify-between w-full text-sm font-medium text-gray-700 mb-2 hover:text-gray-900"
+            {/* Order Info */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <h3 className="text-sm font-medium text-gray-900 mb-2">Información del Pedido</h3>
+              <div className="text-sm text-gray-600 space-y-1">
+                <div><strong>Estado:</strong></div>
+                <select
+                  value={orderStatus}
+                  onChange={(e) => setOrderStatus(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
                 >
-                  <div className="flex items-center">
-                    <ShoppingCart className="h-4 w-4 mr-1" />
-                    Ítems del pedido ({order.items?.length || 0})
-                  </div>
-                  <ChevronDown className={`h-4 w-4 transition-transform ${showItems ? 'rotate-180' : ''}`} />
-                </button>
-                
-                {showItems && (
-                  <div className="bg-white border border-gray-200 rounded-md p-3 max-h-48 overflow-y-auto">
-                    {order.items && order.items.length > 0 ? (
-                      <div className="space-y-1">
-                        {order.items.map((item, index) => (
-                          <div key={index} className="flex justify-between items-center py-1 border-b border-gray-100 last:border-b-0">
-                            <div className="flex-1">
-                              <div className="text-xs font-medium text-gray-900">{item.productName}</div>
-                              <div className="text-xs text-gray-500">
-                                {item.quantity} {item.unit}
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-xs font-medium text-gray-900">
-                                ${item.price || 0}
-                              </div>
-                              <div className="text-xs text-gray-500">
-                                ${item.total || 0}
-                              </div>
+                  <option value="standby">Standby</option>
+                  <option value="enviado">Enviado</option>
+                  <option value="esperando_factura">Esperando Factura</option>
+                  <option value="pendiente_de_pago">Pendiente de Pago</option>
+                  <option value="pagado">Pagado</option>
+                  <option value="comprobante_enviado">Comprobante enviado</option>
+                </select>
+                <div className="mt-2"><strong>Fecha de creación:</strong> {new Date(order.orderDate).toLocaleDateString()}</div>
+                {order.invoiceDate && <div><strong>Fecha de factura:</strong> {new Date(order.invoiceDate).toLocaleDateString()}</div>}
+                {order.invoiceNumber && <div><strong>Número de factura:</strong> {order.invoiceNumber}</div>}
+                <div><strong>Total:</strong> ${order.totalAmount} {order.currency}</div>
+              </div>
+            </div>
+
+            {/* Order Items */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowItems(!showItems)}
+                className="flex items-center justify-between w-full text-sm font-medium text-gray-700 mb-2 hover:text-gray-900"
+              >
+                <div className="flex items-center">
+                  <ShoppingCart className="h-4 w-4 mr-1" />
+                  Ítems del pedido ({order.items?.length || 0})
+                </div>
+                <ChevronDown className={`h-4 w-4 transition-transform ${showItems ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {showItems && (
+                <div className="bg-white border border-gray-200 rounded-md p-3 max-h-48 overflow-y-auto">
+                  {order.items && order.items.length > 0 ? (
+                    <div className="space-y-1">
+                      {order.items.map((item, index) => (
+                        <div key={index} className="flex justify-between items-center py-1 border-b border-gray-100 last:border-b-0">
+                          <div className="flex-1">
+                            <div className="text-xs font-medium text-gray-900">{item.productName}</div>
+                            <div className="text-xs text-gray-500">
+                              {item.quantity} {item.unit}
                             </div>
                           </div>
-                        ))}
-                        <div className="pt-1 border-t border-gray-200">
-                          <div className="flex justify-between text-xs font-semibold text-gray-900">
-                            <span>Total:</span>
-                            <span>${order.totalAmount} {order.currency}</span>
+                          <div className="text-right">
+                            <div className="text-xs font-medium text-gray-900">
+                              ${item.price || 0}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              ${item.total || 0}
+                            </div>
                           </div>
                         </div>
+                      ))}
+                      <div className="pt-1 border-t border-gray-200">
+                        <div className="flex justify-between text-xs font-semibold text-gray-900">
+                          <span>Total:</span>
+                          <span>${order.totalAmount} {order.currency}</span>
+                        </div>
                       </div>
-                    ) : (
-                      <div className="text-gray-500 text-center py-2 text-xs">
-                        No hay ítems en este pedido
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                    </div>
+                  ) : (
+                    <div className="text-gray-500 text-center py-2 text-xs">
+                      No hay ítems en este pedido
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Delivery Date */}
             <DateSelector
@@ -306,100 +323,22 @@ export default function EditOrderModal({
                 placeholder="Instrucciones especiales o notas de entrega..."
               />
             </div>
-
-            {/* 🔧 NUEVO: Sección de facturas */}
-            <div className="mb-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
-                <FileText className="h-5 w-5 mr-2 text-blue-600" />
-                Gestión de Facturas
-              </h3>
-              
-              {/* 🔧 NUEVO: Estado de factura */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Estado de Factura
-                </label>
-                <select
-                  value={order?.status === 'factura_recibida' ? 'factura_recibida' : 'pending'}
-                  onChange={(e) => {
-                    // 🔧 NUEVO: Actualizar estado de factura
-                    if (order) {
-                      const newStatus = e.target.value as 'factura_recibida' | 'pending';
-                      // Aquí se podría llamar a una función para actualizar el estado
-                      console.log('Estado de factura cambiado a:', newStatus);
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="pending">Pendiente de Factura</option>
-                  <option value="factura_recibida">Factura Recibida</option>
-                </select>
-              </div>
-
-              {/* 🔧 NUEVO: Subida de factura */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Subir Factura (PDF, imagen)
-                </label>
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="file"
-                    accept=".pdf,.jpg,.jpeg,.png"
-                    onChange={(e) => {
-                      const files = e.target.files;
-                      if (files && files.length > 0) {
-                        // 🔧 NUEVO: Procesar archivo de factura
-                        console.log('Archivo de factura seleccionado:', files[0].name);
-                        // Aquí se podría implementar la lógica de subida
-                      }
-                    }}
-                    className="flex-1 text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                  />
-                  <button
-                    type="button"
-                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors"
-                    onClick={() => {
-                      // 🔧 NUEVO: Marcar como factura recibida
-                      if (order) {
-                        console.log('Marcando orden como factura recibida:', order.id);
-                        // Aquí se podría implementar la lógica de actualización
-                      }
-                    }}
-                  >
-                    �� Marcar Factura Recibida
-                  </button>
-                </div>
-              </div>
-
-              {/* 🔧 NUEVO: Información de factura */}
-              {order?.status === 'factura_recibida' && (
-                <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="flex items-center">
-                    <CheckCircle className="h-5 w-5 text-green-600 mr-2" />
-                    <div>
-                      <p className="text-sm font-medium text-green-800">Factura Recibida</p>
-                      <p className="text-xs text-green-600">Esta orden tiene factura procesada</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </div>
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-200 flex justify-between">
-                     <div>
-             {onCancel && (
-               <button
-                 onClick={handleCancel}
-                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-               >
-                 <X className="h-4 w-4 mr-1" />
-                 Cancelar pedido
-               </button>
-             )}
-           </div>
+          <div>
+            {onCancel && (
+              <button
+                onClick={handleCancel}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Cancelar pedido
+              </button>
+            )}
+          </div>
           <div className="flex space-x-3">
             <button
               onClick={onClose}
@@ -419,4 +358,4 @@ export default function EditOrderModal({
       </div>
     </div>
   );
-} 
+}

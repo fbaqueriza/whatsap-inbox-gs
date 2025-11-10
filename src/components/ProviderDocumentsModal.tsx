@@ -453,9 +453,12 @@ export default function ProviderDocumentsModal({
                                 <span className={`font-semibold ${
                                   orders[doc.order_id].status === 'pendiente_de_pago' ? 'text-orange-600' :
                                   orders[doc.order_id].status === 'pagado' ? 'text-green-600' :
+                                  orders[doc.order_id].status === 'comprobante_enviado' ? 'text-emerald-600' :
                                   'text-blue-600'
                                 }`}>
-                                  {orders[doc.order_id].status}
+                                  {orders[doc.order_id].status === 'pagado' ? 'Pagado' :
+                                   orders[doc.order_id].status === 'comprobante_enviado' ? 'Comprobante enviado' :
+                                   orders[doc.order_id].status}
                                 </span>
                               </div>
                               <div className="flex justify-between">

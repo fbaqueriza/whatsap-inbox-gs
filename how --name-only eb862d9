@@ -1,0 +1,45 @@
+[33mcommit eb862d9934f1109edb1995cf9c41729689ee0ab0[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature/stock-orders-improvements[m[33m)[m
+Author: fbaqueriza <fbaqueriza@itba.edu.ar>
+Date:   Tue Sep 30 13:41:25 2025 -0300
+
+    feat: Implementar funcionalidad completa para enviar y recibir documentos por WhatsApp
+    
+     ENVÍO DE DOCUMENTOS:
+    -  Nueva API /api/whatsapp/send-document para enviar archivos
+    -  Validación de tipos de archivo (PDF, DOC, XLS, imágenes, etc.)
+    -  Validación de tamaño máximo (16MB)
+    -  Subida automática a Supabase Storage
+    -  Envío real por WhatsApp Business API
+    -  Guardado en base de datos como mensaje
+    -  Notificaciones toast de éxito/error
+    -  UI mejorada con iconos de archivo y botón de descarga
+    
+     RECEPCIÓN DE DOCUMENTOS:
+    -  Modificado webhook para guardar documentos como mensajes de chat
+    -  Procesamiento automático de documentos recibidos
+    -  Mapeo correcto en ChatContext para mostrar documentos
+    -  UI para mostrar documentos recibidos con descarga
+    
+     INTERFAZ DE USUARIO:
+    -  Botón de adjuntar archivo () en el chat
+    -  Iconos específicos por tipo de archivo ( PDF,  DOC,  Imagen)
+    -  Formateo de tamaño de archivo (KB, MB, GB)
+    -  Botón de descarga para documentos
+    -  Indicador visual de carga durante envío
+    
+     FUNCIONALIDADES TÉCNICAS:
+    -  Integración completa con Meta WhatsApp Business API
+    -  Almacenamiento seguro en Supabase Storage
+    -  Manejo de errores robusto
+    -  Soporte para múltiples tipos MIME
+    -  URLs públicas para descarga directa
+    
+     TIPOS DE ARCHIVO SOPORTADOS:
+    - Documentos: PDF, DOC, DOCX, XLS, XLSX, TXT
+    - Imágenes: JPG, JPEG, PNG
+    - Máximo 16MB por archivo (límite de WhatsApp)
+
+src/app/api/whatsapp/send-document/route.ts
+src/app/api/whatsapp/webhook/route.ts
+src/components/IntegratedChatPanel.tsx
+src/contexts/ChatContext.tsx

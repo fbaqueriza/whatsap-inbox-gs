@@ -12,7 +12,8 @@ export const ORDER_FLOW_CONFIG = {
     STANDBY: 'standby',
     ENVIADO: 'enviado', 
     PENDIENTE_DE_PAGO: 'pendiente_de_pago',
-    PAGADO: 'pagado'
+    PAGADO: 'pagado',
+    COMPROBANTE_ENVIADO: 'comprobante_enviado'
   },
 
   // 🔄 Transiciones del flujo (fácil de modificar)
@@ -21,7 +22,7 @@ export const ORDER_FLOW_CONFIG = {
     [ORDER_STATUS.STANDBY]: {
       next: ORDER_STATUS.ENVIADO,
       trigger: 'provider_response',
-      action: 'send_order_details'
+      action: 'send_order_details' // Enviar detalles del pedido cuando el proveedor responde
     },
     
     // enviado → pendiente_de_pago (documento del proveedor con factura válida)
@@ -36,6 +37,13 @@ export const ORDER_FLOW_CONFIG = {
       next: ORDER_STATUS.PAGADO,
       trigger: 'payment_proof_uploaded',
       action: 'complete_order'
+    },
+
+    // pagado → comprobante_enviado (comprobante enviado al usuario)
+    [ORDER_STATUS.PAGADO]: {
+      next: ORDER_STATUS.COMPROBANTE_ENVIADO,
+      trigger: 'comprobante_enviado',
+      action: 'comprobante_enviado'
     }
   },
 
@@ -43,9 +51,19 @@ export const ORDER_FLOW_CONFIG = {
   MESSAGES: {
     send_order_details: (order: any, provider: any) => {
       const currentDate = new Date().toLocaleDateString('es-AR');
-      const items = order.items?.map((item: any) => 
-        `• ${item.name || item.productName}: ${item.quantity} ${item.unit || 'unidades'} - $${item.total || item.price || 0}`
-      ).join('\n') || 'No hay items especificados';
+      const items = order.items?.map((item: any) => {
+        const productName = item.name || item.productName;
+        const quantity = item.quantity;
+        const unit = item.unit || 'unidades';
+        
+        // Si es texto libre (quantity=1 y unit='un'), mostrar solo el texto
+        if (quantity === 1 && unit === 'un') {
+          return `• ${productName}`;
+        }
+        
+        // Si es formato estructurado, mostrar con cantidad y unidad
+        return `• ${productName}: ${quantity} ${unit}`;
+      }).join('\n') || 'No hay items especificados';
 
       let deliveryDate = 'No especificada';
       if (order.desired_delivery_date) {
@@ -58,17 +76,20 @@ export const ORDER_FLOW_CONFIG = {
         }
       }
 
-      return `📋 *DETALLES DEL PEDIDO - ${currentDate} - ${provider.name}*
-🆔 *Número de Orden:* ${order.order_number}
-📅 *Fecha de entrega:* ${deliveryDate}
-💳 *Método de pago:* ${order.payment_method || 'No especificado'}
-📝 *Notas:* ${order.notes || 'Sin notas especiales'}
-📦 *Items del pedido:*
-${items}
----
-📄 *SOLICITUD DE FACTURA*
+      // Mover las notas al final si existen
+      const notesSection = order.notes && order.notes.trim() 
+        ? `\n\nNotas: ${order.notes}` 
+        : '';
+      
+      return `🆔 Orden: ${order.order_number}
+📅 Entrega: ${deliveryDate}
+💳 Pago: ${order.payment_method || 'No especificado'}
 
-Gracias por recibir el pedido. Por favor, envíe la factura correspondiente para proceder con el pago.
+📦 Items:
+${items}
+${notesSection}
+
+Gracias. Aguardamos la factura.
 
 Saludos!`;
     },
@@ -77,11 +98,7 @@ Saludos!`;
     process_invoice: (order: any) => {
       return `✅ *FACTURA RECIBIDA*
 
-La factura para la orden ${order.order_number} ha sido procesada exitosamente.
-
-Ahora puede proceder con el pago y subir el comprobante correspondiente.
-
-Saludos!`;
+La factura para la orden ${order.order_number} ha sido procesada exitosamente. Saludos!`;
     },
 
     complete_order: (order: any) => {
@@ -92,6 +109,12 @@ La orden ${order.order_number} ha sido completada exitosamente.
 ¡Gracias por utilizar nuestros servicios!
 
 Saludos!`;
+    },
+
+    comprobante_enviado: (order: any) => {
+      return `✅ *COMPROBANTE ENVIADO*
+
+El comprobante para la orden ${order.order_number} ha sido enviado al usuario. Saludos!`;
     }
   },
 
@@ -110,6 +133,10 @@ Saludos!`;
       requiredFields: ['order_number', 'receipt_url']
     },
     [ORDER_STATUS.PAGADO]: {
+      canTransitionTo: [ORDER_STATUS.COMPROBANTE_ENVIADO],
+      requiredFields: ['order_number']
+    },
+    [ORDER_STATUS.COMPROBANTE_ENVIADO]: {
       canTransitionTo: [],
       requiredFields: ['order_number']
     }
@@ -117,7 +144,7 @@ Saludos!`;
 } as const;
 
 // 🔧 Función para obtener la siguiente transición
-export function getNextTransition(currentState: string): { next: string; trigger: string; action: string } | null {
+export function getNextTransition(currentState: string): { next: string; trigger: string; action: string | null } | null {
   const transition = ORDER_FLOW_CONFIG.TRANSITIONS[currentState as keyof typeof ORDER_FLOW_CONFIG.TRANSITIONS];
   return transition || null;
 }

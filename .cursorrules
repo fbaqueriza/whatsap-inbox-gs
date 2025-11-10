@@ -1,0 +1,117 @@
+# ============================================
+# ⚙️ CONFIGURACIÓN DE CURSOR
+# MAPA MADRE ADAPTATIVO DEL PROYECTO
+# ============================================
+# Este archivo define los comandos inteligentes que gestionan
+# la creación, actualización y mantenimiento del Mapa Madre Adaptativo.
+# --------------------------------------------
+
+rules:
+
+  # ==========================================================
+  # 1️⃣ Creación inicial del mapa madre (prompt integral)
+  # ==========================================================
+  - when: "El usuario escriba @mapa_madre_adaptativo"
+    then: |
+      🧭 **Objetivo General:**  
+      Generar desde cero un **MAPA MADRE ADAPTATIVO Y DE CONFIABILIDAD** del repositorio actual.  
+      
+      Este documento será la **fuente de verdad viva** del proyecto, y debe:
+      - Mapear toda la estructura, funciones y dependencias.
+      - Detectar integraciones externas (Supabase, Kapso, APIs, SDKs, etc.).
+      - Clasificar cada módulo por nivel de certeza funcional.
+      - Representar el flujo de datos, puntos de entrada y arquitectura.
+      - Servir como base para debugging, integraciones y mantenimiento.
+
+      ---
+      ### 🧩 1. Detección del stack
+      Analiza el proyecto para inferir frameworks, backend, DB, integraciones y lenguajes.  
+      Resume los hallazgos en una sección **"Stack Inferido"**.
+
+      ---
+      ### ⚙️ 2. Mapeo estructural
+      Crea un árbol jerárquico con todas las carpetas y archivos.  
+      Describe brevemente el propósito de cada archivo y clasifícalo (UI, lógica, integración, config, etc.).
+
+      ---
+      ### 🧠 3. Mapeo funcional
+      Dentro de cada archivo, lista todas las funciones, clases o componentes.  
+      Crea una tabla con:
+      `Nombre | Tipo | Descripción | Dependencias | Estado (🟩 Estable / 🟨 Revisión / 🟥 Incierto / 🟦 Indeterminado)`
+
+      ---
+      ### ⚠️ 4. Sistema de confiabilidad
+      Evalúa la solidez de cada módulo según:
+      - claridad del código
+      - tipado o tests
+      - presencia de comentarios TODO/FIXME
+      - estabilidad percibida  
+      Genera un **Mapa de Confiabilidad Global** (por ejemplo, un resumen con porcentajes o emojis 🟩🟨🟥).
+
+      ---
+      ### 🔗 5. Dependencias y flujo
+      Genera diagramas **Mermaid** del flujo general:
+      UI → API → Supabase → DB → Integraciones externas (Kapso, etc.).  
+      Usa colores o etiquetas para reflejar el nivel de confianza.
+
+      ---
+      ### 🧩 6. Arquitectura lógica
+      Agrupa por capas (UI, lógica, integraciones, persistencia, utilidades).  
+      Explica cómo interactúan y marca acoplamientos o anomalías ⚠️.
+
+      ---
+      ### 🧭 7. Puntos críticos y debugging
+      Enumera módulos o funciones inestables (🟥).  
+      Explica riesgos, dependencias sensibles y estrategias de debugging o refactor seguro.
+
+      ---
+      ### 🧰 8. Formato y entrega
+      - Usa Markdown estructurado.
+      - Incluye diagramas Mermaid y tablas.
+      - Guarda el archivo en: `/docs/MAPA_MADRE_ADAPTATIVO.md`.
+      - Añade fecha y versión en el encabezado.
+
+      ---
+      ### 🎯 Propósito final
+      Servirá como **base técnica viva** del proyecto.
+      Prioriza **precisión, trazabilidad y claridad**.
+      Si hay dudas, márcalas como 🟥 Incierto con una breve explicación.
+
+
+  # ==========================================================
+  # 2️⃣ Actualización incremental del mapa
+  # ==========================================================
+  - when: "El usuario escriba @update_mapa"
+    then: |
+      Actualiza el archivo `/docs/MAPA_MADRE_ADAPTATIVO.md` considerando los últimos cambios del código.
+
+      - Revisa qué archivos, funciones o módulos se modificaron desde la última versión.
+      - Actualiza su descripción, dependencias y nivel de certeza (🟩🟨🟥🟦).
+      - Añade nuevas integraciones si las detectas.
+      - Mantén intactas las secciones no afectadas.
+      - Al final del documento, agrega una entrada en **"Historial de Cambios del Mapa"** con fecha y descripción breve.
+        Ejemplo:
+        - 2025-10-24: Estabilizado módulo `/api/users.js` (🟩)
+        - 2025-10-25: Nueva integración detectada con Kapso `/syncWorkflow`
+
+      No regeneres todo el documento, solo actualiza las secciones afectadas.
+
+
+  # ==========================================================
+  # 3️⃣ Reconstrucción total del mapa
+  # ==========================================================
+  - when: "El usuario escriba @rebuild_mapa"
+    then: |
+      Regenera **desde cero** el archivo `/docs/MAPA_MADRE_ADAPTATIVO.md`, usando las mismas reglas que @mapa_madre_adaptativo.
+      No reutilices contenido anterior.
+      Crea nuevamente toda la estructura, funciones, dependencias y flujos.
+      Incluye una nota de versión en el encabezado indicando que es una reconstrucción completa.
+
+
+  # ==========================================================
+  # 4️⃣ Sugerencia automática de actualización
+  # ==========================================================
+  - when: "El repositorio cambie significativamente (commits, merges o nuevos archivos)"
+    then: |
+      Sugerir automáticamente al usuario:
+      "He detectado cambios en el código. ¿Deseas ejecutar `@update_mapa` para mantener actualizado el Mapa Madre Adaptativo?"

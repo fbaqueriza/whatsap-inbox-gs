@@ -15,7 +15,6 @@ const nextConfig = {
   
   // Configuración experimental simplificada
   experimental: {
-    optimizeCss: true,
   },
   
   // Configuración de webpack para evitar errores de módulos
@@ -27,6 +26,11 @@ const nextConfig = {
       net: false,
       tls: false,
     };
+    
+    // Configuración específica para pdfjs-dist en server-side
+    if (isServer) {
+      config.externals = [...(config.externals || []), 'canvas'];
+    }
     
     return config;
   },

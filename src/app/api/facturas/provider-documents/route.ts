@@ -109,8 +109,8 @@ export async function GET(request: NextRequest) {
     const groupedDocuments = {
       invoices: documents.filter(doc => doc.receipt_url),
       orders: documents.filter(doc => !doc.receipt_url),
-      paid: documents.filter(doc => doc.status === 'pagado'),
-      pending: documents.filter(doc => doc.status !== 'pagado' && doc.status !== 'finalizado')
+      paid: documents.filter(doc => doc.status === 'pagado' || doc.status === 'comprobante_enviado'),
+      pending: documents.filter(doc => !['pagado','comprobante_enviado','finalizado'].includes(doc.status))
     };
 
     // Calcular totales

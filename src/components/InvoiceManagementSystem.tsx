@@ -16,15 +16,21 @@ import {
   FileDown,
   Wifi,
   WifiOff,
-  X
+  X,
+  Copy,
+  Calendar,
+  Send,
+  Loader2
 } from 'lucide-react';
 import PaymentReceiptUpload from './PaymentReceiptUpload';
 import PaymentReceiptUploadModal from './PaymentReceiptUploadModal';
 import PaymentReceiptsList from './PaymentReceiptsList';
 import { useData } from './DataProvider';
 import { useSupabaseAuth } from '../hooks/useSupabaseAuth';
+import { usePaymentReceipts } from '../hooks/usePaymentReceipts';
 import EditOrderModal from './EditOrderModal';
 import PaymentDataDisplay from './PaymentDataDisplay';
+import { supabase } from '../lib/supabase/client';
 
 interface PendingPayment {
   id: string;
@@ -38,6 +44,8 @@ interface PendingPayment {
   created_at: string;
   due_date?: string;
   receipt_url: string;
+  invoice_file_url?: string;
+  payment_receipt_url?: string; // 🔧 NUEVO: URL del comprobante de pago
   provider_id: string;
 }
 
@@ -46,10 +54,14 @@ interface PaymentSummary {
   provider_name: string;
   provider_phone: string;
   provider_email: string;
+  cuit: string;
+  cbu: string;
+  razon_social: string;
   orders: any[];
   total_amount: number;
   currency: string;
   order_count: number;
+  execution_date?: string; // Fecha de ejecución seleccionada por el usuario
 }
 
 // 🔧 OPTIMIZACIÓN: Componente memoizado para filas de tabla
@@ -63,8 +75,8 @@ const OrderRow = memo(({
   getStatusClass 
 }: {
   payment: PendingPayment;
-  onEdit: (orderId: string) => void;
-  onUploadReceipt: (orderId: string) => void;
+  onEdit?: (orderId: string) => void;
+  onUploadReceipt?: (orderId: string) => void;
   formatCurrency: (amount: number, currency: string) => string;
   formatDate: (date: string) => string;
   getStatusDisplay: (status: string) => string;
@@ -94,20 +106,24 @@ const OrderRow = memo(({
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
         <div className="flex space-x-2">
-          <button
-            onClick={() => onEdit(payment.id)}
-            className="text-blue-600 hover:text-blue-900"
-            title="Editar orden"
-          >
-            <Edit className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => onUploadReceipt(payment.id)}
-            className="text-green-600 hover:text-green-900"
-            title="Subir comprobante"
-          >
-            <Upload className="h-4 w-4" />
-          </button>
+          {onEdit && (
+            <button
+              onClick={() => onEdit(payment.id)}
+              className="text-blue-600 hover:text-blue-900"
+              title="Editar orden"
+            >
+              <Edit className="h-4 w-4" />
+            </button>
+          )}
+          {onUploadReceipt && (
+            <button
+              onClick={() => onUploadReceipt(payment.id)}
+              className="text-green-600 hover:text-green-900"
+              title="Subir comprobante"
+            >
+              <Upload className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </td>
     </tr>
@@ -116,9 +132,25 @@ const OrderRow = memo(({
 
 OrderRow.displayName = 'OrderRow';
 
-export default function InvoiceManagementSystem() {
+interface InvoiceManagementSystemProps {
+  onEdit?: (orderId: string) => void;
+  onUploadReceipt?: (orderId: string, file: File) => void;
+}
+
+export default function InvoiceManagementSystem({ 
+  onEdit, 
+  onUploadReceipt 
+}: InvoiceManagementSystemProps = {}) {
   const { orders, providers, updateOrder } = useData();
   const { user } = useSupabaseAuth();
+  const { receipts: paymentReceipts, sendReceiptToProvider, getPaymentReceipts } = usePaymentReceipts();
+  
+  // Cargar comprobantes cuando el usuario esté disponible
+  useEffect(() => {
+    if (user?.id) {
+      getPaymentReceipts(user.id);
+    }
+  }, [user?.id, getPaymentReceipts]);
   const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
   const [selectedPayments, setSelectedPayments] = useState<Set<string>>(new Set());
   const [paymentSummary, setPaymentSummary] = useState<PaymentSummary[]>([]);
@@ -150,6 +182,11 @@ export default function InvoiceManagementSystem() {
       created_at: order.createdAt || order.created_at || new Date().toISOString(),
       due_date: order.dueDate || order.due_date,
       receipt_url: order.receiptUrl || order.receipt_url || '',
+      invoice_file_url: order.invoiceFileUrl || order.receiptUrl || order.receipt_url || '',
+      payment_receipt_url:
+        order.paymentReceiptUrl ||
+        (order as any).payment_receipt_url ||
+        undefined, // 🔧 NUEVO: URL del comprobante de pago
       provider_id: order.providerId || order.provider_id || ''
     };
   }, [providers]);
@@ -169,11 +206,35 @@ export default function InvoiceManagementSystem() {
   const processInvoiceFile = useCallback(async (file: File, orderId: string, providerId: string) => {
     setIsLoading(true);
     try {
+      // Verificar perfil del usuario: Razón Social y CUIT obligatorios
+      const { data: sessionResult } = await supabase.auth.getSession();
+      const sessionData = sessionResult?.session;
+      let canProceed = true;
+      try {
+        const token = sessionData?.access_token || '';
+        const profileRes = await fetch('/api/user/profile', {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+        if (profileRes.ok) {
+          const profileJson = await profileRes.json();
+          const rz = profileJson?.profile?.razon_social;
+          const cu = profileJson?.profile?.cuit;
+          if (!rz || !cu) {
+            canProceed = false;
+          }
+        }
+      } catch {}
+      if (!canProceed) {
+        alert('Completa Razón Social y CUIT en tu perfil antes de subir facturas.');
+        return { success: false, error: 'Perfil incompleto' };
+      }
+
       // 1. Subir archivo
       const formData = new FormData();
       formData.append('file', file);
       formData.append('orderId', orderId);
       formData.append('providerId', providerId);
+      formData.append('userId', user?.id || '');
 
       const uploadResponse = await fetch('/api/facturas/upload-invoice', {
         method: 'POST',
@@ -193,7 +254,8 @@ export default function InvoiceManagementSystem() {
         body: JSON.stringify({
           orderId: orderId,
           fileUrl: uploadData.fileUrl,
-          providerId: providerId
+          providerId: providerId,
+          userId: user?.id || ''
         })
       });
 
@@ -252,7 +314,7 @@ export default function InvoiceManagementSystem() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [user]);
 
   // 🔧 NUEVO: Validar datos de factura contra orden
   const validateInvoiceData = useCallback((extractedData: any, order: PendingPayment) => {
@@ -387,21 +449,29 @@ export default function InvoiceManagementSystem() {
       'enviado': 'Enviado',
       'esperando_factura': 'Esperando Factura',
       'pendiente_de_pago': 'Pendiente de Pago',
-      'pagado': 'Pagado'
+      'pagado': 'Pagado',
+      'comprobante_enviado': 'Comprobante enviado'
     };
     return statusMap[status] || status;
   }, []);
 
   // 🔧 OPTIMIZACIÓN: Clases de estado memoizadas
   const getStatusClass = useCallback((status: string) => {
-    const statusClasses: { [key: string]: string } = {
-      'standby': 'bg-yellow-100 text-yellow-800',
-      'enviado': 'bg-blue-100 text-blue-800',
-      'esperando_factura': 'bg-orange-100 text-orange-800',
-      'pendiente_de_pago': 'bg-purple-100 text-purple-800',
-      'pagado': 'bg-green-100 text-green-800'
-    };
-    return statusClasses[status] || 'bg-gray-100 text-gray-800';
+    switch (status) {
+      case 'pagado':
+      case 'comprobante_enviado':
+        return 'bg-green-100 text-green-800';
+      case 'pendiente_de_pago':
+        return 'bg-purple-100 text-purple-800';
+      case 'enviado':
+        return 'bg-blue-100 text-blue-800';
+      case 'esperando_factura':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'standby':
+        return 'bg-gray-100 text-gray-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
   }, []);
 
   // 🔧 NUEVO: Formatear tiempo desde última actualización
@@ -428,8 +498,10 @@ export default function InvoiceManagementSystem() {
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
-            <FileText className="inline-block w-4 h-4 mr-2" />
-            Facturas ({pendingPayments.length})
+            <div className="flex items-center space-x-1">
+              <FileText className="h-4 w-4" />
+              <span className="font-medium">Órdenes ({pendingPayments.length})</span>
+            </div>
           </button>
           
           <button
@@ -475,7 +547,7 @@ export default function InvoiceManagementSystem() {
 
       {/* Contenido de los tabs */}
       <div className="p-6">
-        {/* Tab: Facturas */}
+        {/* Tab: Órdenes */}
         {activeTab === 'facturas' && (
           <div className="space-y-4">
             {/* Barra de herramientas */}
@@ -505,12 +577,63 @@ export default function InvoiceManagementSystem() {
                   <option value="factura_recibida">Pendiente de Pago</option>
                   <option value="factura_con_errores">Factura con Errores</option>
                   <option value="pagado">Pagados</option>
+                  <option value="comprobante_enviado">Comprobante enviado</option>
                   <option value="finalizado">Finalizados</option>
                   <option value="cancelled">Cancelados</option>
                 </select>
               </div>
 
               <div className="flex gap-2">
+                {/* 🔧 CORRECCIÓN: Botón para enviar comprobantes solo de las órdenes seleccionadas */}
+                {(() => {
+                  // Solo mostrar el botón si hay órdenes seleccionadas
+                  if (selectedPayments.size === 0) {
+                    return null;
+                  }
+                  
+                  // Filtrar comprobantes que están asignados a las órdenes seleccionadas
+                  const selectedOrderIds = Array.from(selectedPayments);
+                  const receiptsForSelectedOrders = paymentReceipts?.filter(r => 
+                    r.status === 'assigned' && 
+                    r.auto_assigned_provider_id && 
+                    !r.sent_to_provider &&
+                    (r.auto_assigned_order_id && selectedOrderIds.includes(r.auto_assigned_order_id))
+                  ) || [];
+                  
+                  if (receiptsForSelectedOrders.length > 0) {
+                    return (
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`¿Enviar ${receiptsForSelectedOrders.length} comprobante(s) de las órdenes seleccionadas y eliminarlos del panel?`)) {
+                            return;
+                          }
+                          
+                          const sendPromises = receiptsForSelectedOrders.map(receipt => 
+                            sendReceiptToProvider(receipt.id!, receipt.auto_assigned_provider_id!)
+                          );
+                          
+                          const results = await Promise.all(sendPromises);
+                          const successCount = results.filter(r => r.success).length;
+                          const errorCount = results.length - successCount;
+                          
+                          if (errorCount === 0) {
+                            alert(`✅ ${successCount} comprobante(s) enviado(s) exitosamente`);
+                            // Limpiar selección después de enviar
+                            setSelectedPayments(new Set());
+                          } else {
+                            alert(`⚠️ ${successCount} enviado(s), ${errorCount} error(es)`);
+                          }
+                        }}
+                        className="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 flex items-center space-x-2"
+                      >
+                        <Send className="h-4 w-4" />
+                        <span>Enviar Comprobantes ({receiptsForSelectedOrders.length})</span>
+                      </button>
+                    );
+                  }
+                  return null;
+                })()}
+                
                 <button
                   onClick={selectAllPayments}
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -656,61 +779,28 @@ export default function InvoiceManagementSystem() {
                               <DollarSign className="w-4 h-4" />
                             </button>
                           )}
+
                           
+                          {/* 🔧 CORRECCIÓN: Botones separados para ver factura y comprobante */}
+                          {(payment.invoice_file_url || payment.receipt_url) && (
+                            <button
+                              onClick={() => window.open((payment.invoice_file_url || payment.receipt_url)!, '_blank')}
+                              className="text-blue-600 hover:text-blue-900 p-1 rounded hover:bg-blue-50"
+                              title="Ver factura"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
+                          )}
                           
-                          {payment.receipt_url && (
-                          <button
-                            onClick={async () => {
-                              if (payment.receipt_url) {
-                                try {
-                                  // 🔧 NUEVO: Verificar primero si el archivo es accesible
-                                  const response = await fetch(payment.receipt_url, {
-                                    method: 'HEAD' // Solo verificar headers
-                                  });
-                                  
-                                  if (!response.ok) {
-                                    throw new Error(`Archivo no accesible: ${response.status} ${response.statusText}`);
-                                  }
-                                  
-                                  // Si es accesible, proceder con la descarga
-                                  const downloadResponse = await fetch(payment.receipt_url);
-                                  const blob = await downloadResponse.blob();
-                                  
-                                  // Verificar que sea un PDF
-                                  if (!blob.type.includes('pdf') && !blob.type.includes('application')) {
-                                    console.warn('El archivo puede no ser un PDF válido:', blob.type);
-                                  }
-                                  
-                                  const url = window.URL.createObjectURL(blob);
-                                  const link = document.createElement('a');
-                                  link.href = url;
-                                  link.download = `factura_${payment.order_number}.pdf`;
-                                  document.body.appendChild(link);
-                                  link.click();
-                                  document.body.removeChild(link);
-                                  
-                                  // Limpiar el objeto URL
-                                  window.URL.revokeObjectURL(url);
-                                  
-                                } catch (error) {
-                                  console.error('Error descargando factura:', error);
-                                  
-                                  // Mostrar mensaje de error más específico
-                                  const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
-                                  alert(`No se pudo descargar la factura: ${errorMessage}\n\nIntentando abrir en nueva pestaña...`);
-                                  
-                                  // Fallback: abrir en nueva pestaña
-                                  window.open(payment.receipt_url, '_blank');
-                                }
-                              } else {
-                                alert('No hay factura disponible para esta orden');
-                              }
-                            }}
-                              className="text-gray-600 hover:text-gray-900 p-1 rounded hover:bg-gray-50"
-                              title="Descargar factura"
-                          >
-                              <FileDown className="w-4 h-4" />
-                          </button>
+                          {/* Mostrar botón de comprobante si existe payment_receipt_url */}
+                          {payment.payment_receipt_url && (
+                            <button
+                              onClick={() => window.open(payment.payment_receipt_url!, '_blank')}
+                              className="text-green-600 hover:text-green-900 p-1 rounded hover:bg-green-50"
+                              title="Ver comprobante de pago"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
                           )}
                         </div>
                       </td>
@@ -774,66 +864,124 @@ export default function InvoiceManagementSystem() {
               <h3 className="text-lg font-medium text-gray-900">
                 Resumen de Pagos por Proveedor
               </h3>
-              <button
-                onClick={generatePaymentSummary}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <DollarSign className="inline-block w-4 h-4 mr-2" />
-                Generar Datos de Pago
-              </button>
             </div>
 
             {paymentSummary.length > 0 ? (
               <div className="space-y-4">
-                {paymentSummary.map((provider) => (
-                  <div key={provider.provider_id} className="border border-gray-200 rounded-lg p-4">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h4 className="text-lg font-medium text-gray-900">
-                          {provider.provider_name}
-                        </h4>
-                        <p className="text-sm text-gray-500">
-                          {provider.provider_phone} • {provider.provider_email}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold text-blue-600">
-                          {formatCurrency(provider.total_amount, provider.currency)}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          {provider.order_count} factura{provider.order_count !== 1 ? 's' : ''}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-50 rounded-md p-3">
-                      <h5 className="text-sm font-medium text-gray-700 mb-2">Facturas incluidas:</h5>
-                      <div className="space-y-1">
-                        {provider.orders.map((order, index) => (
-                          <div key={`${order.id}-${index}`} className="flex justify-between text-sm">
-                            <span className="text-gray-600">
-                              {order.order_number} - {order.invoice_number}
-                            </span>
-                            <span className="font-medium text-gray-900">
-                              {formatCurrency(order.total_amount, order.currency)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                <div className="border-t border-gray-200 pt-4">
-                  <div className="flex justify-between items-center">
-                    <span className="text-lg font-medium text-gray-900">Total General:</span>
-                    <span className="text-2xl font-bold text-green-600">
+                {/* Tabla simple de datos de pago (estilo Excel) */}
+                <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
+                  <style dangerouslySetInnerHTML={{__html: `
+                    .payment-table-selectable,
+                    .payment-table-selectable * {
+                      -webkit-user-select: text !important;
+                      -moz-user-select: text !important;
+                      -ms-user-select: text !important;
+                      user-select: text !important;
+                    }
+                    .payment-table-selectable th,
+                    .payment-table-selectable td {
+                      cursor: text;
+                    }
+                    .payment-table-selectable input {
+                      pointer-events: auto;
+                    }
+                  `}} />
+                  <div className="overflow-x-auto payment-table-selectable">
+                    <table className="min-w-full divide-y divide-gray-200 border-collapse">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase border-b border-gray-300">
+                            Razón Social
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase border-b border-gray-300">
+                            CUIT
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase border-b border-gray-300">
+                            CBU
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase border-b border-gray-300">
+                            Monto
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase border-b border-gray-300">
+                            Fecha de Ejecución
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {paymentSummary.map((provider) => {
+                          const defaultDate = new Date().toISOString().split('T')[0];
+                          const executionDate = provider.execution_date || defaultDate;
+                          
+                          return (
+                            <tr 
+                              key={provider.provider_id} 
+                              className="hover:bg-gray-50"
+                            >
+                              <td className="px-4 py-3 text-sm text-gray-900 border-b border-gray-200">
+                                {provider.razon_social || provider.provider_name}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900 font-mono border-b border-gray-200">
+                                {provider.cuit || 'N/A'}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900 font-mono border-b border-gray-200">
+                                {provider.cbu || 'N/A'}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900 border-b border-gray-200">
+                                {formatCurrency(provider.total_amount, provider.currency)}
+                              </td>
+                              <td className="px-4 py-3 border-b border-gray-200">
+                                <input
+                                  type="text"
+                                  value={executionDate}
+                                  placeholder={defaultDate}
+                                  onChange={(e) => {
+                                    const updatedSummary = paymentSummary.map(p => 
+                                      p.provider_id === provider.provider_id 
+                                        ? { ...p, execution_date: e.target.value }
+                                        : p
+                                    );
+                                    setPaymentSummary(updatedSummary);
+                                  }}
+                                  className="text-sm border border-gray-400 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 italic text-gray-700"
+                                  style={{ 
+                                    userSelect: 'text', 
+                                    WebkitUserSelect: 'text', 
+                                    msUserSelect: 'text',
+                                    cursor: 'text',
+                                    fontStyle: 'italic',
+                                    color: '#374151'
+                                  }}
+                                  onFocus={(e) => e.target.select()}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="bg-gray-50">
+                        <tr>
+                          <td colSpan={3} className="px-4 py-3 text-right text-sm font-medium text-gray-900 border-t border-gray-300">
+                            Total General:
+                          </td>
+                          <td className="px-4 py-3 text-sm font-bold text-green-600 border-t border-gray-300">
                       {formatCurrency(
                         paymentSummary.reduce((sum, p) => sum + p.total_amount, 0),
                         paymentSummary[0]?.currency || 'ARS'
                       )}
-                    </span>
+                          </td>
+                          <td className="px-4 py-3 border-t border-gray-300"></td>
+                        </tr>
+                      </tfoot>
+                    </table>
                   </div>
+                </div>
+
+                {/* Instrucción para copiar */}
+                <div className="text-sm text-gray-600 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="font-medium text-blue-900 mb-1">💡 Cómo copiar la tabla:</p>
+                  <p className="text-blue-800">
+                    Haz clic y arrastra el mouse sobre las celdas que deseas copiar (como en Excel). Luego presiona <kbd className="px-1.5 py-0.5 bg-white border border-blue-300 rounded text-xs">Ctrl+C</kbd> (o <kbd className="px-1.5 py-0.5 bg-white border border-blue-300 rounded text-xs">Cmd+C</kbd> en Mac) y pégalo directamente en Excel. La fecha tiene un valor por defecto (hoy) pero puedes editarla haciendo clic en el campo.
+                  </p>
                 </div>
               </div>
             ) : (
@@ -857,6 +1005,7 @@ export default function InvoiceManagementSystem() {
          onClose={() => setIsPaymentReceiptModalOpen(false)}
          selectedOrderIds={Array.from(selectedPayments)}
          userId={user?.id || ''}
+         orders={orders.map(o => ({ id: o.id, total_amount: (o as any).total_amount ?? o.totalAmount ?? 0 }))}
          onSuccess={() => {
            // 🔧 CORREGIDO: No necesitamos recargar, los datos vienen del DataProvider
             setSelectedPayments(new Set());

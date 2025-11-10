@@ -5,8 +5,6 @@ const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 export class TemplateService {
   /**
    * Obtiene la lista de templates disponibles desde Meta API
-   * NOTA: El endpoint /message_templates no existe en WhatsApp Business API
-   * Por ahora, retornamos un array vacío y usamos fallback
    */
   static async getTemplates() {
     try {
@@ -20,13 +18,36 @@ export class TemplateService {
         return []; // Retornar array vacío en lugar de throw error
       }
 
-      // NOTA: El endpoint /message_templates no existe en WhatsApp Business API
-      // Los templates se configuran en el panel de Meta Business y se usan directamente
-      // Por ahora, retornamos un array vacío y usamos el sistema de fallback
-      console.log('ℹ️ Endpoint /message_templates no disponible en WhatsApp Business API');
-      console.log('ℹ️ Usando sistema de fallback para contenido de templates');
+      // 🔧 CORRECCIÓN: Usar el endpoint correcto para obtener templates
+      const businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+      if (!businessAccountId) {
+        console.error('❌ WHATSAPP_BUSINESS_ACCOUNT_ID no configurado');
+        return [];
+      }
+
+      const url = `${WHATSAPP_API_URL}/${businessAccountId}/message_templates`;
       
-      return []; // Retornar array vacío para usar fallback
+      console.log('🔍 Consultando templates en Meta API...');
+      console.log('🔍 URL:', url);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        console.error('❌ Error obteniendo templates:', response.status, response.statusText);
+        return [];
+      }
+
+      const data = await response.json();
+      console.log('✅ Templates obtenidos exitosamente:', data.data?.length || 0, 'templates');
+      console.log('📋 Templates disponibles:', data.data?.map(t => t.name) || []);
+      
+      return data.data || [];
     } catch (error) {
       console.error('❌ Error obteniendo templates:', error);
       return []; // Retornar array vacío en lugar de throw error
@@ -36,23 +57,54 @@ export class TemplateService {
   /**
    * Obtiene el contenido de un template específico
    */
-  static async getTemplateContent(templateName: string, params?: any[]) {
+  static async getTemplateContent(templateName: string, params?: any[] | Record<string, string>) {
     try {
-      // Por ahora, siempre usar el sistema de fallback ya que getTemplates() retorna array vacío
-      console.log(`ℹ️ Usando fallback para template: ${templateName}`);
-      return this.getFallbackTemplateContent(templateName);
+      // 🔧 CORRECCIÓN: Primero buscar en la base de datos local
+      const localContent = await this.getTemplateFromDatabase(templateName);
+      
+      if (localContent) {
+        console.log(`✅ Template encontrado en BD local: ${templateName}`);
+        console.log(`📝 Contenido: ${localContent.substring(0, 100)}...`);
+        return localContent;
+      }
+      
+      // Si no se encuentra en BD local, intentar obtener desde Meta API
+      console.log(`⚠️ Template no encontrado en BD local, consultando Meta API: ${templateName}`);
+      const templates = await this.getTemplates();
+      
+      if (templates && templates.length > 0) {
+        const template = templates.find(t => t.name === templateName);
+        
+        if (template) {
+          console.log(`✅ Template encontrado en Meta API: ${templateName}`);
+          
+          // Extraer el contenido del template desde los componentes
+          const content = this.extractTemplateContent(template);
+          
+          if (content) {
+            console.log(`📝 Contenido extraído del template:`, content.substring(0, 100) + '...');
+            // Guardar en BD local para futuras consultas
+            await this.saveTemplateToDatabase(template, content);
+            return content;
+          }
+        }
+      }
+      
+      // Si no se encuentra el template, usar fallback
+      console.log(`ℹ️ Template no encontrado, usando fallback para: ${templateName}`, params ? 'con parámetros' : 'sin parámetros');
+      return this.getFallbackTemplateContent(templateName, params);
       
     } catch (error) {
       console.error('❌ Error obteniendo contenido del template:', error);
-      return this.getFallbackTemplateContent(templateName);
+      return this.getFallbackTemplateContent(templateName, params);
     }
   }
 
   /**
    * Obtiene contenido de fallback para templates
-   * VERSIÓN MEJORADA: Contenido más detallado y útil
+   * VERSIÓN MEJORADA: Contenido más detallado y útil con variables dinámicas
    */
-  static getFallbackTemplateContent(templateName: string): string {
+  static getFallbackTemplateContent(templateName: string, params?: any[] | Record<string, string>): string {
     const fallbackTemplates: { [key: string]: string } = {
       'envio_de_orden': `🛒 *NUEVO PEDIDO*
 
@@ -70,23 +122,12 @@ Se ha recibido un nuevo pedido para procesar.
 4. Confirmar fecha de entrega
 
 _Por favor confirma la recepción de este pedido y proporciona los detalles solicitados._`,
-      'inicializador_de_conv': '👋 ¡Hola! Iniciando conversación para coordinar pedidos.',
-      'evio_orden': `🛒 *NUEVA ORDEN*
+      'inicializador_de_conv': `👋 ¡Hola! Iniciando conversación para coordinar pedidos.
 
-Se ha recibido una nueva orden para procesar. 
+Este es un mensaje automático para reiniciar nuestra conversación. A partir de ahora puedes enviarme mensajes libremente para coordinar pedidos y consultas.
 
-*Detalles de la orden:*
-• Fecha: ${new Date().toLocaleDateString('es-AR')}
-• Estado: Pendiente de confirmación
-• Tipo: Orden automática
-
-*Acciones requeridas:*
-1. Revisar los productos solicitados
-2. Confirmar disponibilidad
-3. Proporcionar precio final
-4. Confirmar fecha de entrega
-
-_Por favor confirma la recepción de esta orden y proporciona los detalles solicitados._`,
+¡Gracias por tu colaboración!`,
+      'evio_orden': this.getEvioOrdenTemplate(params),
       'notificacion_pedido': '📋 Notificación de nuevo pedido recibido.',
       'confirmacion_pedido': '✅ Pedido confirmado y en proceso.',
       'recordatorio_pedido': '⏰ Recordatorio: Pedido pendiente de confirmación.',
@@ -105,11 +146,150 @@ _Por favor confirma la recepción de esta orden y proporciona los detalles solic
   }
 
   /**
+   * Obtiene el contenido de un template desde la base de datos local
+   */
+  private static async getTemplateFromDatabase(templateName: string): Promise<string | null> {
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+
+      const { data: template, error } = await supabase
+        .from('whatsapp_templates')
+        .select('content')
+        .eq('name', templateName)
+        .single();
+
+      if (error) {
+        console.log(`ℹ️ Template ${templateName} no encontrado en BD local`);
+        return null;
+      }
+
+      return template?.content || null;
+    } catch (error) {
+      console.error('❌ Error obteniendo template de BD:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Guarda un template en la base de datos local
+   */
+  private static async saveTemplateToDatabase(template: any, content: string): Promise<void> {
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+
+      const templateData = {
+        name: template.name,
+        status: template.status,
+        category: template.category,
+        language: template.language,
+        content: content,
+        components: JSON.stringify(template.components || []),
+        meta_id: template.id,
+        created_at: template.created_time ? new Date(template.created_time * 1000).toISOString() : new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      // Verificar si ya existe
+      const { data: existingTemplate } = await supabase
+        .from('whatsapp_templates')
+        .select('id')
+        .eq('name', template.name)
+        .single();
+
+      if (existingTemplate) {
+        // Actualizar
+        await supabase
+          .from('whatsapp_templates')
+          .update({
+            status: templateData.status,
+            category: templateData.category,
+            language: templateData.language,
+            content: templateData.content,
+            components: templateData.components,
+            meta_id: templateData.meta_id,
+            updated_at: templateData.updated_at
+          })
+          .eq('name', template.name);
+        
+        console.log(`✅ Template actualizado en BD local: ${template.name}`);
+      } else {
+        // Crear
+        await supabase
+          .from('whatsapp_templates')
+          .insert([templateData]);
+        
+        console.log(`✅ Template guardado en BD local: ${template.name}`);
+      }
+    } catch (error) {
+      console.error('❌ Error guardando template en BD:', error);
+    }
+  }
+
+  /**
+   * Extrae el contenido de texto de un template desde sus componentes
+   */
+  private static extractTemplateContent(template: any): string {
+    try {
+      if (!template.components || !Array.isArray(template.components)) {
+        return '';
+      }
+
+      // Buscar el componente BODY que contiene el texto principal
+      const bodyComponent = template.components.find((comp: any) => comp.type === 'BODY');
+      
+      if (bodyComponent && bodyComponent.text) {
+        return bodyComponent.text;
+      }
+
+      // Si no hay BODY, buscar HEADER o FOOTER
+      const headerComponent = template.components.find((comp: any) => comp.type === 'HEADER');
+      const footerComponent = template.components.find((comp: any) => comp.type === 'FOOTER');
+      
+      let content = '';
+      if (headerComponent && headerComponent.text) {
+        content += headerComponent.text + '\n\n';
+      }
+      if (footerComponent && footerComponent.text) {
+        content += footerComponent.text;
+      }
+
+      return content.trim();
+    } catch (error) {
+      console.error('❌ Error extrayendo contenido del template:', error);
+      return '';
+    }
+  }
+
+  /**
    * Obtiene información detallada de un template
    */
   static async getTemplateInfo(templateName: string) {
     try {
-      // Por ahora, retornar información básica ya que getTemplates() retorna array vacío
+      const templates = await this.getTemplates();
+      const template = templates.find(t => t.name === templateName);
+      
+      if (template) {
+        return {
+          id: template.id,
+          name: template.name,
+          status: template.status,
+          category: template.category,
+          language: template.language,
+          components: template.components || []
+        };
+      }
+      
+      // Fallback si no se encuentra
       return {
         id: `fallback_${templateName}`,
         name: templateName,
@@ -122,5 +302,53 @@ _Por favor confirma la recepción de esta orden y proporciona los detalles solic
       console.error('❌ Error obteniendo información del template:', error);
       return null;
     }
+  }
+
+  /**
+   * Genera el contenido del template evio_orden con variables dinámicas
+   */
+  private static getEvioOrdenTemplate(params?: any[] | Record<string, string>): string {
+    // Extraer variables del parámetro
+    let providerName = 'Proveedor';
+    let orderNumber = 'N/A';
+    let items = 'Productos solicitados';
+    let total = 'Pendiente';
+
+    if (params) {
+      if (Array.isArray(params)) {
+        // Si es un array, asumir orden: [providerName, orderNumber, items, total]
+        providerName = params[0] || providerName;
+        orderNumber = params[1] || orderNumber;
+        items = params[2] || items;
+        total = params[3] || total;
+      } else if (typeof params === 'object') {
+        // Si es un objeto, extraer por keys
+        providerName = params.provider_name || params.providerName || providerName;
+        orderNumber = params.order_number || params.orderNumber || orderNumber;
+        items = params.items || items;
+        total = params.total || total;
+      }
+    }
+
+    return `🛒 *NUEVA ORDEN PARA ${providerName.toUpperCase()}*
+
+Se ha recibido una nueva orden para procesar.
+
+*Detalles de la orden:*
+• 🆔 Número: ${orderNumber}
+• 📅 Fecha: ${new Date().toLocaleDateString('es-AR')}
+• 📦 Items: ${items}
+• 💰 Total: ${total}
+• ⏰ Estado: Pendiente de confirmación
+
+*Acciones requeridas:*
+1. Revisar los productos solicitados
+2. Confirmar disponibilidad
+3. Proporcionar precio final
+4. Confirmar fecha de entrega
+
+_Por favor confirma la recepción de esta orden y proporciona los detalles solicitados._
+
+¡Gracias por tu colaboración!`;
   }
 }

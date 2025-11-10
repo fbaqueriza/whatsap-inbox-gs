@@ -13,6 +13,8 @@ import {
   Send,
   FileText,
   X,
+  Eye,
+  Upload,
 } from 'lucide-react';
 
 interface OrdersModuleProps {
@@ -71,6 +73,8 @@ export default function OrdersModule({
         return 'bg-purple-100 text-purple-800';
       case 'pagado':
         return 'bg-green-100 text-green-800';
+      case 'comprobante_enviado':
+        return 'bg-green-100 text-green-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
@@ -95,10 +99,10 @@ export default function OrdersModule({
     });
   };
 
-  // Ordenar órdenes por fecha descendente - EXACTAMENTE como en la página original
+  // Ordenar órdenes por fecha de actualización descendente (más recientes primero)
   const sortedOrders = [...orders].sort((a, b) => {
-    const dateA = new Date(a.createdAt || a.orderDate || 0);
-    const dateB = new Date(b.createdAt || b.orderDate || 0);
+    const dateA = new Date(a.updatedAt || a.createdAt || a.orderDate || 0);
+    const dateB = new Date(b.updatedAt || b.createdAt || b.orderDate || 0);
     return dateB.getTime() - dateA.getTime();
   });
 
@@ -142,49 +146,81 @@ export default function OrdersModule({
             )}
           </div>
         ) : (
-          currentOrders.slice(0, maxOrders).map((order) => (
-            <div key={order.id} className="px-6 py-4 hover:bg-gray-50">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  {getStatusIcon(order.status)}
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <span className="font-medium text-gray-900">
-                        {order.orderNumber}
-                      </span>
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(order.status)}`}>
-                        {order.status === 'standby' ? 'Standby' :
-                         order.status === 'enviado' ? 'Enviado' :
-                         order.status === 'esperando_factura' ? 'Esperando Factura' :
-                         order.status === 'pendiente_de_pago' ? 'Pendiente de Pago' :
-                         order.status === 'pagado' ? 'Pagado' :
-                         order.status}
-                      </span>
+          currentOrders.slice(0, maxOrders).map((order) => {
+            const invoiceLink =
+              order.invoiceFileUrl ||
+              order.receiptUrl ||
+              (order as any).receipt_url ||
+              undefined;
+            const paymentLink =
+              order.paymentReceiptUrl ||
+              (order as any).payment_receipt_url ||
+              (order as any).comprobante_url ||
+              undefined;
+
+            return (
+              <div key={order.id} className="px-6 py-4 hover:bg-gray-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    {getStatusIcon(order.status)}
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-medium text-gray-900">
+                          {order.orderNumber}
+                        </span>
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(order.status)}`}>
+                          {order.status === 'standby' ? 'Standby' :
+                           order.status === 'enviado' ? 'Enviado' :
+                           order.status === 'esperando_factura' ? 'Esperando Factura' :
+                           order.status === 'pendiente_de_pago' ? 'Pendiente de Pago' :
+                           order.status === 'pagado' ? 'Pagado' :
+                           order.status === 'comprobante_enviado' ? 'Comprobante enviado' :
+                           order.status}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-500">
+                        {getProviderName(order.providerId)} • {order.items?.length || 0} ítems • {formatDate(order.orderDate)}
+                      </p>
                     </div>
-                    <p className="text-sm text-gray-500">
-                      {getProviderName(order.providerId)} • {order.items?.length || 0} ítems • {formatDate(order.orderDate)}
-                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => onOrderClick(order)}
+                      className="p-2 text-gray-400 hover:text-blue-600"
+                      title="Chat con proveedor"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                    </button>
+                    {invoiceLink && (
+                      <button
+                        onClick={() => window.open(invoiceLink as string, '_blank')}
+                        className="p-2 text-gray-400 hover:text-blue-600"
+                        title="Ver factura"
+                      >
+                        <FileText className="h-4 w-4" />
+                      </button>
+                    )}
+                    {paymentLink && (
+                      <button
+                        onClick={() => window.open(paymentLink as string, '_blank')}
+                        className="p-2 text-gray-400 hover:text-green-600"
+                        title="Ver comprobante de pago"
+                      >
+                        <Upload className="h-4 w-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onEditOrder(order)}
+                      className="p-2 text-gray-400 hover:text-blue-600"
+                      title="Editar orden"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => onOrderClick(order)}
-                    className="p-2 text-gray-400 hover:text-blue-600"
-                    title="Chat con proveedor"
-                  >
-                    <MessageSquare className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => onEditOrder(order)}
-                    className="p-2 text-gray-400 hover:text-blue-600"
-                    title="Editar orden"
-                  >
-                    <Edit className="h-4 w-4" />
-                  </button>
-                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
       

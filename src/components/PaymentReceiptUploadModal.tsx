@@ -22,6 +22,7 @@ interface PaymentReceiptUploadModalProps {
   selectedOrderIds: string[];
   onSuccess: () => void;
   userId: string;
+  orders?: Array<{ id: string; total_amount: string | number }>;
 }
 
 interface UploadedFile {
@@ -35,7 +36,8 @@ export default function PaymentReceiptUploadModal({
   onClose,
   selectedOrderIds,
   onSuccess,
-  userId
+  userId,
+  orders
 }: PaymentReceiptUploadModalProps) {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -153,25 +155,72 @@ export default function PaymentReceiptUploadModal({
           });
         }, 200);
 
-        // Subir archivo usando API endpoint - los datos se extraerán automáticamente
-        const formData = new FormData();
-        formData.append('file', uploadedFile.file);
-        formData.append('userId', userId);
+        let uploadSuccess = false;
+        
+        // 🔧 CORRECCIÓN: Si hay selectedOrderIds, intentar primero con el endpoint que actualiza órdenes
+        // pero si falla, usar el genérico que siempre permite subir
+        if (selectedOrderIds && selectedOrderIds.length > 0) {
+          try {
+            const orderFormData = new FormData();
+            orderFormData.append('file', uploadedFile.file);
+            orderFormData.append('orderIds', selectedOrderIds.join(','));
+            
+            // Calcular el monto total de las órdenes seleccionadas
+            let totalAmount = 0;
+            if (orders) {
+              totalAmount = selectedOrderIds.reduce((sum, orderId) => {
+                const order = orders.find(o => o.id === orderId);
+                return sum + parseFloat(order?.total_amount?.toString() || '0');
+              }, 0);
+            }
+            orderFormData.append('paymentAmount', totalAmount.toString());
+            orderFormData.append('paymentDate', new Date().toISOString().split('T')[0]);
+            orderFormData.append('paymentMethod', 'transferencia');
+            
+            const orderResponse = await fetch('/api/facturas/upload-payment-receipt', {
+              method: 'POST',
+              body: orderFormData
+            });
+            
+            if (orderResponse.ok) {
+              const orderResult = await orderResponse.json();
+              if (orderResult.success) {
+                clearInterval(progressInterval);
+                setUploadProgress(prev => ({ ...prev, [uploadedFile.id]: 100 }));
+                results[uploadedFile.id] = {
+                  success: true,
+                  error: undefined
+                };
+                uploadSuccess = true;
+              }
+            }
+          } catch (orderError) {
+            // Si hay error, continuar con el endpoint genérico
+            console.log(`⚠️ Error verificando órdenes para ${uploadedFile.file.name}, subiendo sin asociar órdenes`);
+          }
+        }
+        
+        // Si no se pudo subir con el endpoint de órdenes, usar el genérico que siempre permite subir
+        if (!uploadSuccess) {
+          const formData = new FormData();
+          formData.append('file', uploadedFile.file);
+          formData.append('userId', userId);
+          
+          const response = await fetch('/api/payment-receipts/upload', {
+            method: 'POST',
+            body: formData
+          });
 
-        const response = await fetch('/api/payment-receipts/upload', {
-          method: 'POST',
-          body: formData
-        });
+          const result = await response.json();
 
-        const result = await response.json();
+          clearInterval(progressInterval);
+          setUploadProgress(prev => ({ ...prev, [uploadedFile.id]: 100 }));
 
-        clearInterval(progressInterval);
-        setUploadProgress(prev => ({ ...prev, [uploadedFile.id]: 100 }));
-
-        results[uploadedFile.id] = {
-          success: result.success,
-          error: result.error
-        };
+          results[uploadedFile.id] = {
+            success: result.success,
+            error: result.error
+          };
+        }
 
       } catch (error) {
         results[uploadedFile.id] = {
@@ -192,7 +241,7 @@ export default function PaymentReceiptUploadModal({
         onClose();
       }, 2000);
     }
-  }, [uploadedFiles, userId, onSuccess, onClose]);
+  }, [uploadedFiles, userId, selectedOrderIds, orders, onSuccess, onClose]);
 
   // Limpiar URLs de preview al desmontar
   React.useEffect(() => {

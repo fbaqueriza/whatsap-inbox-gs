@@ -7,6 +7,7 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit') || '20';
     const providerId = searchParams.get('providerId');
     const userId = searchParams.get('userId');
+    const contactId = searchParams.get('contact_id');
 
     // 🔧 CORRECCIÓN: Requerir userId como parámetro obligatorio
     if (!userId) {
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
      // 🔧 CORRECCIÓN: Obtener mensajes de WhatsApp con columnas correctas
      let query = supabase
        .from('whatsapp_messages')
-       .select('id, content, timestamp, message_type, status, contact_id, user_id, created_at, read_at')
+       .select('id, content, timestamp, message_type, status, contact_id, user_id, created_at, read_at, media_url, media_type')
        .order('timestamp', { ascending: false })
        .limit(parseInt(limit));
      
@@ -43,6 +44,11 @@ export async function GET(request: NextRequest) {
     // Si hay providerId específico, filtrar por él
     if (providerId) {
       query = query.eq('provider_id', providerId);
+    }
+    
+    // Si hay contactId específico, filtrar por él
+    if (contactId) {
+      query = query.eq('contact_id', contactId);
     }
     
     const { data: messages, error } = await query;
@@ -88,6 +94,8 @@ export async function GET(request: NextRequest) {
         filteredMessages = messages.filter((msg: any) => msg.user_id === currentUserId);
       }
     }
+
+    // Logs removidos para limpieza
 
     return NextResponse.json({ 
       messages: filteredMessages,

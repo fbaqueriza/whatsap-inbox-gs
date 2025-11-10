@@ -1,0 +1,85 @@
+[33mcommit f593107bf75a6789b0caf0a81f80d539c236f250[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mkapso-integration[m[33m)[m
+Author: fbaqueriza <fbaqueriza@itba.edu.ar>
+Date:   Fri Oct 17 12:09:49 2025 -0300
+
+    feat: implement Supabase Realtime for chat functionality
+    
+    - Configure Supabase Realtime subscriptions for kapso_messages and kapso_conversations
+    - Remove SSE system and use only Supabase Realtime for real-time updates
+    - Optimize useKapsoRealtime hook with proper error handling and reconnection
+    - Clean up webhook to rely on Supabase Realtime automatic notifications
+    - Add comprehensive logging for debugging real-time events
+    - Ensure messages appear instantly when received via WhatsApp webhooks
+    
+    The chat now works in real-time using Supabase Realtime without polling or SSE.
+
+INFINITE_LOOP_FIXES_SUMMARY.md
+configure-supabase-realtime.md
+setup-realtime-simple.sql
+setup-realtime.sql
+setup-supabase-realtime.js
+src/app/api/kapso/data/route.ts
+src/app/api/kapso/events/route.ts
+src/app/api/kapso/supabase-events/route.ts
+src/app/api/kapso/sync/route.ts
+src/app/kapso-chat/page.tsx
+src/components/IntegratedChatPanel.tsx
+src/components/KapsoChatPanel.tsx
+src/contexts/ChatContext.tsx
+src/hooks/useKapsoRealtime.ts
+src/hooks/useSupabaseAuth.ts
+src/lib/extensibleOrderFlowService.ts
+src/lib/kapsoSupabaseService.ts
+src/services/realtimeService.tsx
+src/types/whatsapp.ts
+temporario/FINAL_FIXES_SUMMARY.md
+temporario/FINAL_STATUS.md
+temporario/FRONTEND_FIX_FINAL.md
+temporario/IMPLEMENTATION_GUIDE.md
+temporario/INTEGRATION_COMPLETE.md
+temporario/KAPSO_ONLY_MIGRATION_SUMMARY.md
+temporario/KAPSO_OPTIMIZATION_PLAN.md
+temporario/KAPSO_SUPABASE_SETUP.sql
+temporario/MESSAGE_DISPLAY_FIX.md
+temporario/MIGRATION_INSTRUCTIONS.md
+temporario/MIGRATION_SUMMARY.md
+temporario/backup/IntegratedChatPanel.tsx
+temporario/backup/extensibleOrderFlowService.ts
+temporario/backup/realtimeService.tsx
+temporario/backup/serverOrderFlowService.ts
+temporario/check-current-order.js
+temporario/check-messages-in-db.js
+temporario/check-order-status.js
+temporario/check-realtime-subscriptions.js
+temporario/check-supabase-realtime-config.js
+temporario/debug-contact-list.js
+temporario/debug-frontend-matching.js
+temporario/debug-message-display.js
+temporario/fix-documents-sync.js
+temporario/migrate-to-kapso-optimization.js
+temporario/migrate-to-kapso-system.js
+temporario/setup-kapso-supabase-sync.js
+temporario/simulate-order-update.js
+temporario/test-chat-fixes.js
+temporario/test-chat-functionality.js
+temporario/test-combined-messages.js
+temporario/test-complete-migration.js
+temporario/test-complete-setup.js
+temporario/test-final-migration.js
+temporario/test-frontend-debug.js
+temporario/test-frontend-fix.js
+temporario/test-frontend-live.js
+temporario/test-hook-complete.js
+temporario/test-integrated-chat.js
+temporario/test-kapso-event.js
+temporario/test-kapso-only-functionality.js
+temporario/test-kapso-optimization.js
+temporario/test-kapso-supabase-integration.js
+temporario/test-message-direction.js
+temporario/test-message-sync.js
+temporario/test-realtime-frontend.js
+temporario/test-realtime-no-filter.js
+temporario/test-realtime-orders.js
+temporario/test-webhook-endpoint.js
+temporario/test-with-real-user.js
+temporario/verify-migration-complete.js

@@ -126,6 +126,34 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
+    console.log(`✅ Documento ${documentId} linkeado exitosamente a orden ${orderId} como ${linkType}`);
+    console.log(`🔔 Esta actualización debería disparar un evento Realtime para los suscriptores`);
+    
+    // 🔧 WORKAROUND: Emitir broadcast manual para notificar a los clientes Realtime
+    try {
+      const broadcastResult = await supabase
+        .channel('orders-updates')
+        .send({
+          type: 'broadcast' as const,
+          event: 'order_updated',
+          payload: {
+            orderId: orderId,
+            status: orderUpdateData.status,
+            receiptUrl: linkType === 'comprobante' ? orderUpdateData.payment_receipt_url : orderUpdateData.receipt_url,
+            timestamp: new Date().toISOString(),
+            source: 'document_link'
+          }
+        });
+
+      if (broadcastResult === 'error') {
+        console.error(`⚠️ Error enviando broadcast`);
+      } else {
+        console.log(`✅ Broadcast de actualización enviado`);
+      }
+    } catch (broadcastErr) {
+      console.error(`⚠️ Error en broadcast:`, broadcastErr);
+    }
+
     // Registrar el linkeo en el historial
     const { error: historyError } = await supabase
       .from('document_links')
@@ -141,8 +169,6 @@ export async function POST(request: NextRequest) {
       console.warn('Error registrando historial de linkeo:', historyError);
       // No fallar por esto, solo loggearlo
     }
-
-    console.log(`✅ Documento ${documentId} linkeado exitosamente a orden ${orderId} como ${linkType}`);
 
     return NextResponse.json({
       success: true,

@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
         )
       `)
       .not('receipt_url', 'is', null)  // Con factura
-      .not('status', 'eq', 'pagado')   // No pagadas
+      .not('status', 'in', '("pagado","comprobante_enviado")')   // No pagadas
       .not('status', 'eq', 'finalizado') // No finalizadas
       .order('created_at', { ascending: false });
 

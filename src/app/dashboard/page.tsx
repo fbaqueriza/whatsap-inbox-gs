@@ -5,8 +5,6 @@ import { useSupabaseAuth } from '../../hooks/useSupabaseAuth';
 import { DataProvider, useData } from '../../components/DataProvider';
 import { useRouter } from 'next/navigation';
 import { Order, Provider, StockItem, OrderItem } from '../../types';
-import { useChat } from '../../contexts/ChatContext';
-import { useGlobalChat } from '../../contexts/GlobalChatContext';
 import { NotificationService } from '../../lib/notificationService';
 import { PhoneNumberService } from '../../lib/phoneNumberService';
 import { supabase } from '../../lib/supabase/client';
@@ -27,6 +25,7 @@ import {
   ChevronDown,
   Edit,
   BarChart3,
+  Settings,
 } from 'lucide-react';
 import { Menu } from '@headlessui/react';
 import SuggestedOrders from '../../components/SuggestedOrders';
@@ -37,17 +36,61 @@ import { useRealtimeService } from '../../services/realtimeService';
 import { useSessionValidator } from '../../hooks/useSessionValidator';
 
 export default function DashboardPageWrapper() {
-  const { user, loading: authLoading } = useSupabaseAuth();
+  const { user, isLoading: authLoading } = useSupabaseAuth();
   const router = useRouter();
+  const [hasWhatsAppConfig, setHasWhatsAppConfig] = useState(false);
   
-  // Validar sesión automáticamente
-  useSessionValidator();
+  // ❌ DESHABILITADO: useSessionValidator() para evitar loops infinitos
+  // useSessionValidator();
   
+  // 🔧 VERIFICACIÓN OPTIMIZADA: Con rate limiting para evitar llamadas repetitivas
+  const [configChecked, setConfigChecked] = useState(false);
+  
+  // 🔧 VERIFICACIÓN DE CONFIGURACIÓN: Verificar si el usuario tiene configuración de WhatsApp
   useEffect(() => {
-    if (!authLoading && !user && typeof window !== 'undefined') {
-      router.push('/auth/login');
+    if (user && !configChecked) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📱 [Dashboard] Verificando configuración de WhatsApp para usuario:', user.id);
+      }
+      checkWhatsAppConfig();
+      setConfigChecked(true);
     }
-  }, [authLoading, user, router]);
+  }, [user, configChecked]);
+
+  const checkWhatsAppConfig = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session?.access_token) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📱 [Dashboard] No hay sesión activa para verificar configuración');
+        }
+        setHasWhatsAppConfig(false);
+        return;
+      }
+
+      const response = await fetch('/api/whatsapp/configs', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const hasConfig = data.configs && data.configs.length > 0;
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📱 [Dashboard] Configuración encontrada:', hasConfig);
+        }
+        setHasWhatsAppConfig(hasConfig);
+      } else {
+        console.log('📱 [Dashboard] Error verificando configuración, asumiendo que no hay');
+        setHasWhatsAppConfig(false);
+      }
+    } catch (error) {
+      console.error('📱 [Dashboard] Error verificando configuración:', error);
+      setHasWhatsAppConfig(false);
+    }
+  };
   
   if (authLoading) {
     return <div className="min-h-screen flex items-center justify-center"><div className="text-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div><p className="mt-4 text-gray-600">Cargando...</p></div></div>;
@@ -59,14 +102,15 @@ export default function DashboardPageWrapper() {
   
   return (
     <DataProvider userEmail={user?.email ?? undefined} userId={user?.id}>
-      <DashboardPage />
+      <DashboardPage hasWhatsAppConfig={hasWhatsAppConfig} />
     </DataProvider>
   );
 }
 
-function DashboardPage() {
-  const { user, loading: authLoading } = useSupabaseAuth();
+function DashboardPage({ hasWhatsAppConfig }: { hasWhatsAppConfig: boolean }) {
+  const { user, isLoading: authLoading } = useSupabaseAuth();
   const { orders, providers, stockItems, setOrders, updateOrder, fetchAll } = useData();
+  const router = useRouter();
   // Remove isSeedUser and mockConversations logic
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [suggestedOrder, setSuggestedOrder] = useState<any>(null);
@@ -102,6 +146,8 @@ function DashboardPage() {
       setSelectedProviderId={setSelectedProviderId}
       paymentProofs={paymentProofs}
       setPaymentProofs={setPaymentProofs}
+      hasWhatsAppConfig={hasWhatsAppConfig}
+      router={router}
     />
   );
 }
@@ -122,6 +168,8 @@ function DashboardPageContent({
   setSelectedProviderId,
   paymentProofs,
   setPaymentProofs,
+  hasWhatsAppConfig,
+  router,
 }: {
   orders: Order[];
   providers: Provider[];
@@ -138,11 +186,13 @@ function DashboardPageContent({
   setSelectedProviderId: (id: string | null) => void;
   paymentProofs: { [orderId: string]: { url: string; name: string } };
   setPaymentProofs: (proofs: { [orderId: string]: { url: string; name: string } }) => void;
+  hasWhatsAppConfig: boolean;
+  router: any;
 }) {
   const { addOrder, updateOrder, fetchAll } = useData();
   // Chat hooks
-  const { openChat, isChatOpen: contextIsChatOpen, closeChat } = useChat();
-  const { openGlobalChat } = useGlobalChat();
+  // Chat eliminado: usar navegación a /chat
+  const contextIsChatOpen = false;
   
   // Sincronizar el estado local con el contexto
   useEffect(() => {
@@ -202,33 +252,8 @@ function DashboardPageContent({
       const createdOrder = await addOrder(newOrder, user.id);
       
       if (createdOrder) {
-        // Enviar notificación al proveedor en segundo plano
-        const provider = providers.find(p => p.id === orderData.providerId);
-        
-        if (provider) {
-          // Ejecutar en segundo plano sin bloquear la UI
-          fetch('/api/orders/send-notification', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              order: createdOrder,
-              userId: user.id
-            }),
-          }).then(response => {
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-            }
-            return response.json();
-          }).then(data => {
-            // Notificación enviada exitosamente
-          }).catch(error => {
-            console.error('Error enviando notificación de pedido:', error);
-          });
-        } else {
-          console.error('Proveedor no encontrado para ID:', orderData.providerId);
-        }
+        // 🔧 FIX: La notificación se envía desde DataProvider, no desde aquí
+        console.log('✅ Orden creada exitosamente');
       } else {
         console.error('No se pudo crear la orden - pero modal permanece cerrado para mejor UX');
         // No reabrir modal - el usuario puede crear una nueva orden si es necesario
@@ -300,18 +325,11 @@ function DashboardPageContent({
     }
   }, []);
 
-  // Usar nuestro RealtimeService unificado
-  const { orders: realtimeOrders, isConnected } = useRealtimeService();
+  // 🔧 REMOVIDO: listener duplicado - DataProvider ya maneja las actualizaciones de Realtime
+  // const { orders: realtimeOrders, isConnected } = useRealtimeService();
   
-  // Sincronizar con órdenes de tiempo real
-  useEffect(() => {
-    if (realtimeOrders && realtimeOrders.length > 0) {
-      setOrders(realtimeOrders);
-    }
-  }, [realtimeOrders]);
-
-  const isSubscribed = isConnected;
-  const connectionStatus = isConnected ? 'connected' : 'disconnected';
+  // const isSubscribed = false; // Ya no se necesita
+  const connectionStatus = 'connected'; // Asumir conectado siempre ya que DataProvider maneja esto
 
   // Sincronizar con lógica de página de órdenes
   const currentOrders = useMemo(() => {
@@ -321,9 +339,9 @@ function DashboardPageContent({
       !['finalizado', 'cancelled'].includes(order.status)
     );
     
-    // Ordenar por fecha de creación (más recientes primero)
+    // Ordenar por fecha de actualización (más recientes primero)
     const sortedOrders = activeOrders.sort((a, b) => 
-      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime()
     );
     
     return sortedOrders;
@@ -415,41 +433,8 @@ function DashboardPageContent({
   };
 
 
-    const handleOrderClick = (order: Order) => {
-    // Encontrar el proveedor correspondiente
-    const provider = providers.find(p => p.id === order.providerId);
-    
-    if (provider) {
-      // Usar servicio centralizado de normalización
-      const normalizedPhone = PhoneNumberService.normalizePhoneNumber(provider.phone) || provider.phone || '';
-      
-      // Crear contacto para el chat con el formato correcto
-      const contact = {
-        id: provider.id,
-        name: provider.contactName 
-          ? `${provider.name} - ${provider.contactName}`
-          : provider.name,
-        phone: normalizedPhone,
-        providerId: provider.id,
-        lastMessage: '',
-        lastMessageTime: new Date(),
-        unreadCount: 0
-      };
-      
-      // Abrir el chat usando el contexto global
-      openGlobalChat(contact);
-      
-      // También seleccionar el contacto en el chat local
-      if (typeof window !== 'undefined') {
-        // Usar un timeout para asegurar que el chat esté abierto
-        setTimeout(() => {
-          const event = new CustomEvent('selectContact', { 
-            detail: { contact } 
-          });
-          window.dispatchEvent(event);
-        }, 100);
-      }
-    }
+  const handleOrderClick = (order: Order) => {
+    window.location.href = '/chat';
   };
 
   const openReceipt = (receiptUrl: string | undefined) => {
@@ -563,7 +548,7 @@ function DashboardPageContent({
               <div className="flex-shrink-0">
                 <BarChart3 className="h-5 w-5 text-blue-400" />
               </div>
-              <div className="ml-3">
+              <div className="ml-3 flex-1">
                 <h3 className="text-sm font-medium text-blue-800">
                   ¿Cómo usar el dashboard?
                 </h3>
@@ -576,6 +561,19 @@ function DashboardPageContent({
                     <li><strong>Acciones rápidas:</strong> Todos los botones funcionan igual que en las páginas específicas</li>
                   </ul>
                 </div>
+              </div>
+              <div className="ml-4">
+                <button
+                  onClick={() => router.push('/dashboard/whatsapp-config')}
+                  className={`px-4 py-2 text-white rounded-md hover:opacity-90 flex items-center text-sm ${
+                    hasWhatsAppConfig 
+                      ? 'bg-green-600 hover:bg-green-700' 
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+                >
+                  <Settings className="h-4 w-4 mr-2" />
+                  {hasWhatsAppConfig ? 'Gestionar WhatsApp' : 'Configurar WhatsApp'}
+                </button>
               </div>
             </div>
           </div>
@@ -593,6 +591,7 @@ function DashboardPageContent({
          onSubmit={handleCreateOrder}
         providers={providers}
         stockItems={stockItems}
+        orders={orders} // ✅ NUEVO: Pasar orders al modal
         suggestedOrder={suggestedOrder}
         isLoading={false}
       />

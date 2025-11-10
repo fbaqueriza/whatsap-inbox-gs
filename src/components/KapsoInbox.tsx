@@ -58,18 +58,35 @@ export default function KapsoInbox({ className = '' }: KapsoInboxProps) {
 
         setHasWhatsAppConfig(true);
 
-        // Usar el inbox local en desarrollo o el de producción en staging
-        const baseUrl = process.env.NEXT_PUBLIC_KAPSO_INBOX_URL || 
-          (typeof window !== 'undefined' && window.location.hostname === 'localhost' 
-            ? 'http://localhost:4000' 
-            : 'https://whatsapp-inbox.vercel.app');
-        
+        const phoneNumberId = userConfig.phone_number_id;
+        const wabaId = userConfig.waba_id;
+        const userId = user.id;
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL ||
+          (typeof window !== 'undefined' ? window.location.origin : '');
+
+        // Usar el inbox configurado explícitamente o el hosted por defecto
+        const baseUrl = process.env.NEXT_PUBLIC_KAPSO_INBOX_URL ||
+          'https://whatsapp-inbox.vercel.app';
+
         // Pasar el token vía URL para que el inbox lo use en sus requests
         const params = new URLSearchParams({
           authToken: token,
-          kapsoConfigId: userConfig.kapso_config_id
+          kapsoConfigId: userConfig.kapso_config_id,
+          userId
         });
-        
+
+        if (phoneNumberId) {
+          params.set('phoneNumberId', phoneNumberId);
+        }
+
+        if (wabaId) {
+          params.set('wabaId', wabaId);
+        }
+
+        if (appUrl) {
+          params.set('appUrl', appUrl);
+        }
+
         setIframeUrl(`${baseUrl}?${params.toString()}`);
         setLoading(false);
       } catch (err) {

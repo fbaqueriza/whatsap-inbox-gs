@@ -73,13 +73,51 @@ export default function OrdersPageWrapper() {
   const { user, loading: authLoading } = useSupabaseAuth();
   const router = useRouter();
 
-  // Handle authentication
-  if (!authLoading && !user) {
-    if (typeof window !== 'undefined') {
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = sessionStorage.getItem('orders_debug');
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored);
+      console.log('📦 [OrdersPageWrapper] Debug previo:', parsed);
+    } catch (error) {
+      console.warn('⚠️ [OrdersPageWrapper] No se pudo parsear orders_debug previo:', error);
+    }
+    sessionStorage.removeItem('orders_debug');
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    console.log('🧪 [OrdersPageWrapper] Estado auth:', {
+      authLoading,
+      hasUser: !!user,
+      userId: user?.id,
+      email: user?.email,
+    });
+  }, [authLoading, user]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!authLoading && !user) {
+      sessionStorage.setItem('orders_debug', JSON.stringify({
+        at: new Date().toISOString(),
+        reason: 'no_user',
+        authLoading,
+      }));
+      console.warn('⚠️ [OrdersPageWrapper] Usuario no autenticado, redirigiendo a login.');
       router.push('/auth/login');
     }
-    return null;
-  }
+  }, [authLoading, user, router]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !user) return;
+    sessionStorage.setItem('orders_debug', JSON.stringify({
+      at: new Date().toISOString(),
+      reason: 'render_orders',
+      userId: user.id,
+      email: user.email,
+    }));
+  }, [user]);
 
   if (authLoading) {
     return (
@@ -92,10 +130,14 @@ export default function OrdersPageWrapper() {
     );
   }
 
+  if (!user) {
+    return null;
+  }
+
   return (
     <ErrorBoundary>
-      <DataProvider userEmail={user?.email ?? undefined} userId={user?.id}>
-        {user && <OrdersPage user={user} />}
+      <DataProvider userEmail={user.email ?? undefined} userId={user.id}>
+        <OrdersPage user={user} />
       </DataProvider>
     </ErrorBoundary>
   );

@@ -1,13 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { User, AuthChangeEvent } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import type { User, AuthChangeEvent } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase/client';
 
 export { SupabaseAuthProvider } from './SupabaseAuthProvider';
 
@@ -117,6 +112,26 @@ export const useSupabaseAuth = () => {
     }
   };
 
+  const getSession = async () => {
+    try {
+      const { data, error } = await supabase.auth.getSession();
+
+      if (error) {
+        if (error.message !== 'Auth session missing!') {
+          console.error('🔐 SupabaseAuth: Error en getSession:', error);
+        }
+        return null;
+      }
+
+      return data.session ?? null;
+    } catch (error: any) {
+      if (error?.message !== 'Auth session missing!') {
+        console.error('🔐 SupabaseAuth: Error inesperado en getSession:', error);
+      }
+      return null;
+    }
+  };
+
   const resetPassword = async (email: string) => {
     try {
       console.log('🔐 [ResetPassword] Iniciando reset para email:', email);
@@ -158,11 +173,13 @@ export const useSupabaseAuth = () => {
   return {
     user,
     isLoading,
+    loading: isLoading,
     needsEmailVerification,
     signIn,
     signUp,
     signOut,
     resetPassword,
+    getSession,
     clearEmailVerification,
   };
 };

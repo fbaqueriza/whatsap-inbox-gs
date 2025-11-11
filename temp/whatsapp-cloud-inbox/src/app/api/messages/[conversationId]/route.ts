@@ -17,6 +17,15 @@ type WithOptionalTimestamp = {
   lastMessageTimestamp?: unknown;
 };
 
+function sanitizeString(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'undefined') {
+    return null;
+  }
+  return trimmed;
+}
+
 function toIsoString(timestamp: unknown, fallback?: unknown): string {
   const coerceToNumber = (value: unknown): number | null => {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -83,18 +92,20 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const parsedLimit = Number.parseInt(searchParams.get('limit') ?? '', 10);
     const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 50;
-    const appUrl =
+    const appUrl = sanitizeString(
       searchParams.get('appUrl') ||
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.APP_URL ||
-      null;
-    const userId = searchParams.get('userId');
-    const authHeader = request.headers.get('authorization');
-    let phoneNumberId =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        process.env.APP_URL ||
+        null
+    );
+    const userId = sanitizeString(searchParams.get('userId'));
+    const authHeader = sanitizeString(request.headers.get('authorization'));
+    let phoneNumberId = sanitizeString(
       searchParams.get('phoneNumberId') ||
-      request.headers.get('x-phone-number-id') ||
-      process.env.PHONE_NUMBER_ID ||
-      null;
+        request.headers.get('x-phone-number-id') ||
+        process.env.PHONE_NUMBER_ID ||
+        null
+    );
 
     if (!phoneNumberId && authHeader && userId && appUrl) {
       try {

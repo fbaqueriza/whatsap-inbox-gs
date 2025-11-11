@@ -12,6 +12,15 @@ type TemplateHeaderParameter = Extract<NonNullable<TemplateSendInput['header']>,
 type TemplateButtonParameter = Extract<NonNullable<TemplateSendInput['buttons']>[number], { subType: 'url' }>;
 type TemplateButtonParameterValue = NonNullable<TemplateButtonParameter['parameters']>[number];
 
+function sanitizeString(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'undefined') {
+    return null;
+  }
+  return trimmed;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -42,16 +51,16 @@ export async function POST(request: Request) {
       );
     }
 
-    const appUrl =
+    const appUrl = sanitizeString(
       appUrlRaw ||
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.APP_URL ||
-      null;
-    const authHeader = request.headers.get('authorization');
-    let resolvedPhoneNumberId =
-      typeof phoneNumberId === 'string' && phoneNumberId.trim() !== ''
-        ? phoneNumberId
-        : process.env.PHONE_NUMBER_ID;
+        process.env.NEXT_PUBLIC_APP_URL ||
+        process.env.APP_URL ||
+        null
+    );
+    const authHeader = sanitizeString(request.headers.get('authorization'));
+    let resolvedPhoneNumberId = sanitizeString(
+      typeof phoneNumberId === 'string' ? phoneNumberId : process.env.PHONE_NUMBER_ID ?? null
+    );
 
     if (!resolvedPhoneNumberId && authHeader && userId && appUrl) {
       try {

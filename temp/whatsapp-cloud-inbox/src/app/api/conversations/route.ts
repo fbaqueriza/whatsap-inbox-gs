@@ -6,6 +6,15 @@ import {
 } from '@kapso/whatsapp-cloud-api';
 import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 
+function sanitizeString(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'undefined') {
+    return null;
+  }
+  return trimmed;
+}
+
 function parseDirection(kapso?: ConversationKapsoExtensions): 'inbound' | 'outbound' {
   if (!kapso) {
     return 'inbound';
@@ -136,21 +145,23 @@ async function fetchConversationsFromApp({
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const status = searchParams.get('status');
+    const status = sanitizeString(searchParams.get('status'));
     const parsedLimit = Number.parseInt(searchParams.get('limit') ?? '', 10);
     const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 50;
-    const appUrl =
+    const appUrl = sanitizeString(
       searchParams.get('appUrl') ||
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.APP_URL ||
-      null;
-    const userId = searchParams.get('userId');
-    const authHeader = request.headers.get('authorization');
-    let phoneNumberId =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        process.env.APP_URL ||
+        null
+    );
+    const userId = sanitizeString(searchParams.get('userId'));
+    const authHeader = sanitizeString(request.headers.get('authorization'));
+    let phoneNumberId = sanitizeString(
       searchParams.get('phoneNumberId') ||
-      request.headers.get('x-phone-number-id') ||
-      process.env.PHONE_NUMBER_ID ||
-      null;
+        request.headers.get('x-phone-number-id') ||
+        process.env.PHONE_NUMBER_ID ||
+        null
+    );
 
     if (!phoneNumberId) {
       phoneNumberId = await fetchPhoneNumberIdFromApp({

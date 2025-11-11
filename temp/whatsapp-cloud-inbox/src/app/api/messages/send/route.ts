@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server';
 import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 
+function sanitizeString(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'undefined') {
+    return null;
+  }
+  return trimmed;
+}
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -9,9 +18,16 @@ export async function POST(request: Request) {
     const file = formData.get('file') as File | null;
     const phoneNumberIdRaw = formData.get('phoneNumberId');
     const userId = formData.get('userId') as string | null;
-    const appUrl = (formData.get('appUrl') as string | null) ?? process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? null;
-    const authHeader = request.headers.get('authorization');
-    let phoneNumberId = typeof phoneNumberIdRaw === 'string' ? phoneNumberIdRaw : process.env.PHONE_NUMBER_ID;
+    const appUrl = sanitizeString(
+      (formData.get('appUrl') as string | null) ??
+        process.env.NEXT_PUBLIC_APP_URL ??
+        process.env.APP_URL ??
+        null
+    );
+    const authHeader = sanitizeString(request.headers.get('authorization'));
+    let phoneNumberId = sanitizeString(
+      typeof phoneNumberIdRaw === 'string' ? phoneNumberIdRaw : process.env.PHONE_NUMBER_ID ?? null
+    );
 
     if (!to) {
       return NextResponse.json(

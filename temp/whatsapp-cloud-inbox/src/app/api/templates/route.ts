@@ -1,14 +1,24 @@
 import { NextResponse } from 'next/server';
 import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 
+function sanitizeString(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'undefined') {
+    return null;
+  }
+  return trimmed;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const wabaId =
+    const wabaId = sanitizeString(
       searchParams.get('wabaId') ||
-      request.headers.get('x-waba-id') ||
-      process.env.WABA_ID ||
-      null;
+        request.headers.get('x-waba-id') ||
+        process.env.WABA_ID ||
+        null
+    );
 
     if (!wabaId) {
       return NextResponse.json(

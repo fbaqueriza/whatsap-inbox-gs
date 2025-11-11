@@ -25,7 +25,7 @@ async function createTemplatesForBaqufra() {
         name: 'inicializador_de_conv',
         language_code: 'es',
         category: 'UTILITY',
-        content: '👋 ¡Hola! Iniciando conversación para coordinar pedidos.\n\nEste es un mensaje automático para reiniciar nuestra conversación. A partir de ahora puedes enviarme mensajes libremente para coordinar pedidos y consultas.\n\n¡Gracias por tu colaboración!'
+        content: 'Hola! Este es un mensaje para que retomemos nuestra conversacion. En cuanto me respondas podemos seguir conversando.'
       },
       {
         name: 'evio_orden',

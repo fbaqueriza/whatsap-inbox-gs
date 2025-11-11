@@ -122,11 +122,7 @@ Se ha recibido un nuevo pedido para procesar.
 4. Confirmar fecha de entrega
 
 _Por favor confirma la recepción de este pedido y proporciona los detalles solicitados._`,
-      'inicializador_de_conv': `👋 ¡Hola! Iniciando conversación para coordinar pedidos.
-
-Este es un mensaje automático para reiniciar nuestra conversación. A partir de ahora puedes enviarme mensajes libremente para coordinar pedidos y consultas.
-
-¡Gracias por tu colaboración!`,
+      'inicializador_de_conv': `Hola! Este es un mensaje para que retomemos nuestra conversacion. En cuanto me respondas podemos seguir conversando.`,
       'evio_orden': this.getEvioOrdenTemplate(params),
       'notificacion_pedido': '📋 Notificación de nuevo pedido recibido.',
       'confirmacion_pedido': '✅ Pedido confirmado y en proceso.',

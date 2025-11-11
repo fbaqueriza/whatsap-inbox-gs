@@ -55,7 +55,7 @@ const REQUIRED_TEMPLATES: TemplateDefinition[] = [
     components: [
       {
         type: 'BODY',
-        text: 'Hola! Te puedo comentar algo?'
+        text: 'Hola! Este es un mensaje para que retomemos nuestra conversacion. En cuanto me respondas podemos seguir conversando.'
         // ✅ CORRECCIÓN: Este template NO tiene parámetros, solo texto estático
       }
     ]

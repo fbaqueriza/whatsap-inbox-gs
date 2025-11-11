@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
             {
               name: 'inicializador_de_conv',
               language: 'es_AR',
-              text: 'Hola! Te puedo comentar algo?'
+              text: 'Hola! Este es un mensaje para que retomemos nuestra conversacion. En cuanto me respondas podemos seguir conversando.'
             },
             {
               name: 'evio_orden',
@@ -93,7 +93,7 @@ export async function GET(request: NextRequest) {
           name: 'inicializador_de_conv',
           language: 'es_AR',
           category: 'UTILITY',
-          text: 'Hola! Te puedo comentar algo?',
+          text: 'Hola! Este es un mensaje para que retomemos nuestra conversacion. En cuanto me respondas podemos seguir conversando.',
           hasParameters: false
         },
         {

@@ -27,11 +27,7 @@ Esto indica que el Business Account ID de bimbinilo (`1111665601092656`) no est�
    - Categoría: UTILITY
    - Cuerpo:
      ```
-     👋 ¡Hola! Iniciando conversación para coordinar pedidos.
-     
-     Este es un mensaje automático para reiniciar nuestra conversación. A partir de ahora puedes enviarme mensajes libremente para coordinar pedidos y consultas.
-     
-     ¡Gracias por tu colaboración!
+    Hola! Este es un mensaje para que retomemos nuestra conversacion. En cuanto me respondas podemos seguir conversando.
      ```
 
 3. **Crear Template: evio_orden**

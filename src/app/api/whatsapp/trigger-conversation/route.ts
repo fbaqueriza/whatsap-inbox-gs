@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       if (provider) {
         // Crear mensaje en la BD
         const messageData = {
-          content: templateContent || 'Hola! Te puedo comentar algo?',
+          content: templateContent || 'Hola! Este es un mensaje para que retomemos nuestra conversacion. En cuanto me respondas podemos seguir conversando.',
           message_type: 'sent',
           status: 'sent',
           contact_id: to,

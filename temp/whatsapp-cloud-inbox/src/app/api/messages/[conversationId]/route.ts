@@ -5,7 +5,7 @@ import {
   type MediaData,
   type MetaMessage
 } from '@kapso/whatsapp-cloud-api';
-import { whatsappClient } from '@/lib/whatsapp-client';
+import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 
 type MessageTypeData = {
   filename?: string;
@@ -141,6 +141,19 @@ export async function GET(
     if (!phoneNumberId) {
       return NextResponse.json(
         { error: 'phoneNumberId es requerido', conversationId },
+        { status: 400 }
+      );
+    }
+
+    const whatsappClient = tryGetWhatsAppClient();
+
+    if (!whatsappClient) {
+      return NextResponse.json(
+        {
+          error: 'WhatsAppClient no disponible',
+          conversationId,
+          detail: 'No se encontró KAPSO_API_KEY en el entorno del inbox desplegado'
+        },
         { status: 400 }
       );
     }

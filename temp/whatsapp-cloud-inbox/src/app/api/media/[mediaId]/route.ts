@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { whatsappClient } from '@/lib/whatsapp-client';
+import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 
 export async function GET(
   request: Request,
@@ -17,6 +17,19 @@ export async function GET(
     if (!phoneNumberId) {
       return NextResponse.json(
         { error: 'phoneNumberId es requerido', mediaId },
+        { status: 400 }
+      );
+    }
+
+    const whatsappClient = tryGetWhatsAppClient();
+
+    if (!whatsappClient) {
+      return NextResponse.json(
+        {
+          error: 'WhatsAppClient no disponible',
+          detail: 'No se encontró KAPSO_API_KEY en el entorno del inbox desplegado',
+          mediaId
+        },
         { status: 400 }
       );
     }

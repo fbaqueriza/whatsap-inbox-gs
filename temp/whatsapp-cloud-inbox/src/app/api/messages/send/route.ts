@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { whatsappClient } from '@/lib/whatsapp-client';
+import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 
 export async function POST(request: Request) {
   try {
@@ -65,6 +65,18 @@ export async function POST(request: Request) {
     if (!phoneNumberId) {
       return NextResponse.json(
         { error: 'Missing required field: phoneNumberId' },
+        { status: 400 }
+      );
+    }
+
+    const whatsappClient = tryGetWhatsAppClient();
+
+    if (!whatsappClient) {
+      return NextResponse.json(
+        {
+          error: 'WhatsAppClient no disponible',
+          detail: 'No se encontró KAPSO_API_KEY en el entorno del inbox desplegado'
+        },
         { status: 400 }
       );
     }

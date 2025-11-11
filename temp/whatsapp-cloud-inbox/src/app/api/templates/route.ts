@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { whatsappClient } from '@/lib/whatsapp-client';
+import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 
 export async function GET(request: Request) {
   try {
@@ -13,6 +13,18 @@ export async function GET(request: Request) {
     if (!wabaId) {
       return NextResponse.json(
         { error: 'WABA_ID no está configurado' },
+        { status: 400 }
+      );
+    }
+
+    const whatsappClient = tryGetWhatsAppClient();
+
+    if (!whatsappClient) {
+      return NextResponse.json(
+        {
+          error: 'WhatsAppClient no disponible',
+          detail: 'No se encontró KAPSO_API_KEY en el entorno del inbox desplegado'
+        },
         { status: 400 }
       );
     }

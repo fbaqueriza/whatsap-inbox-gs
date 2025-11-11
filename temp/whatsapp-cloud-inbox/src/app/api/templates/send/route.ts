@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { buildTemplateSendPayload } from '@kapso/whatsapp-cloud-api';
-import { whatsappClient } from '@/lib/whatsapp-client';
+import type { WhatsAppClient } from '@kapso/whatsapp-cloud-api';
+import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 import type { TemplateParameterInfo } from '@/types/whatsapp';
 
 type TemplateSendInput = Parameters<typeof buildTemplateSendPayload>[0];
-type TemplateMessageInput = Parameters<(typeof whatsappClient.messages)['sendTemplate']>[0];
+type TemplateMessageInput = Parameters<WhatsAppClient['messages']['sendTemplate']>[0];
 type TemplatePayload = TemplateMessageInput['template'];
 type TemplateBodyParameter = NonNullable<TemplateSendInput['body']>[number];
 type TemplateHeaderParameter = Extract<NonNullable<TemplateSendInput['header']>, { type: 'text' }>;
@@ -189,6 +190,18 @@ export async function POST(request: Request) {
       if (buttonParameters.length > 0) {
         templateOptions.buttons = buttonParameters;
       }
+    }
+
+    const whatsappClient = tryGetWhatsAppClient();
+
+    if (!whatsappClient) {
+      return NextResponse.json(
+        {
+          error: 'WhatsAppClient no disponible',
+          detail: 'No se encontró KAPSO_API_KEY en el entorno del inbox desplegado'
+        },
+        { status: 400 }
+      );
     }
 
     const templatePayload = buildTemplateSendPayload(templateOptions) as TemplatePayload;

@@ -4,7 +4,7 @@ import {
   type ConversationKapsoExtensions,
   type ConversationRecord
 } from '@kapso/whatsapp-cloud-api';
-import { whatsappClient } from '@/lib/whatsapp-client';
+import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 
 function parseDirection(kapso?: ConversationKapsoExtensions): 'inbound' | 'outbound' {
   if (!kapso) {
@@ -195,9 +195,16 @@ export async function GET(request: Request) {
       );
     }
 
-    if (!phoneNumberId) {
+    const whatsappClient = tryGetWhatsAppClient();
+
+    if (!phoneNumberId || !whatsappClient) {
       return NextResponse.json(
-        { error: 'phoneNumberId es requerido' },
+        {
+          error: 'phoneNumberId es requerido o WhatsAppClient no disponible',
+          detail: !phoneNumberId
+            ? 'phoneNumberId es requerido'
+            : 'No se encontró KAPSO_API_KEY en el entorno del inbox desplegado',
+        },
         { status: 400 }
       );
     }

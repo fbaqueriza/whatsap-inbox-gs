@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { whatsappClient } from '@/lib/whatsapp-client';
+import { tryGetWhatsAppClient } from '@/lib/whatsapp-client';
 
 export async function POST(request: Request) {
   try {
@@ -123,6 +123,18 @@ export async function POST(request: Request) {
     }
 
     // Send interactive button message
+    const whatsappClient = tryGetWhatsAppClient();
+
+    if (!whatsappClient) {
+      return NextResponse.json(
+        {
+          error: 'WhatsAppClient no disponible',
+          detail: 'No se encontró KAPSO_API_KEY en el entorno del inbox desplegado'
+        },
+        { status: 400 }
+      );
+    }
+
     const result = await whatsappClient.messages.sendInteractiveButtons(payload);
 
     return NextResponse.json(result);

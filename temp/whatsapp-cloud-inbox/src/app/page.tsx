@@ -35,11 +35,6 @@ export default function Home() {
     const userId = params.get('userId');
     const appUrl = params.get('appUrl');
 
-    if (!phoneNumberId) {
-      setConfigError('Falta phoneNumberId en la URL del iframe.');
-      return;
-    }
-
     setParamsConfig({
       authToken,
       kapsoConfigId,

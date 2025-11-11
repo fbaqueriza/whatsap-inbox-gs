@@ -165,7 +165,7 @@ export async function GET(request: Request) {
       authHeader,
     });
 
-    if (conversationsFromApp && conversationsFromApp.length > 0) {
+    if (Array.isArray(conversationsFromApp)) {
       const normalized = conversationsFromApp.map((conversation) => ({
         ...conversation,
         phoneNumberId: conversation.phoneNumberId ?? phoneNumberId ?? undefined,
@@ -176,6 +176,23 @@ export async function GET(request: Request) {
         data: limited,
         paging: { source: 'app' },
       });
+    }
+
+    const kapsoApiKey = process.env.KAPSO_API_KEY?.trim();
+    const hasKapsoCredentials =
+      kapsoApiKey &&
+      kapsoApiKey.length > 0 &&
+      kapsoApiKey.toLowerCase() !== 'dummy';
+
+    if (!hasKapsoCredentials) {
+      return NextResponse.json(
+        {
+          error: 'Kapso API Key no configurada',
+          detail:
+            'Configura la variable de entorno KAPSO_API_KEY o utiliza la plataforma principal como fuente de conversaciones.',
+        },
+        { status: 503 },
+      );
     }
 
     if (!phoneNumberId) {

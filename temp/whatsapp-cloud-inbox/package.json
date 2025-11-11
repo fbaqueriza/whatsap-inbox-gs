@@ -8,8 +8,8 @@
     "lint": "eslint"
   },
   "engines": {
-    "node": "18.x",
-    "npm": "9.x"
+    "node": "22.x",
+    "npm": "10.x"
   },
   "dependencies": {
     "@kapso/whatsapp-cloud-api": "^0.1.0",

@@ -54,16 +54,18 @@ async function fetchPhoneNumberIdFromApp({
       cache: 'no-store',
     });
 
-    if (!response.ok) {
+    const configPayload = await response.json().catch(() => null);
+
+    if (!response.ok || !configPayload) {
       console.warn(
         '⚠️ [Conversations] No se pudo obtener phone_number_id desde appUrl:',
         response.status,
         response.statusText,
+        { appUrl, userId, hasAuthHeader: Boolean(authHeader), body: configPayload }
       );
-      return null;
+      return { value: null, meta: { status: response.status, body: configPayload } };
     }
 
-    const configPayload = await response.json();
     const configs: any[] =
       configPayload?.configs ??
       configPayload?.data ??
@@ -75,15 +77,20 @@ async function fetchPhoneNumberIdFromApp({
       configs.find((config: any) => config?.isActive) ??
       configs[0];
 
-    return (
+    const resolved =
       activeConfig?.phone_number_id ??
       activeConfig?.meta_phone_number_id ??
       activeConfig?.meta_phone_id ??
-      null
-    );
+      null;
+
+    return { value: sanitizeString(resolved ?? null), meta: { status: response.status, configs: configs?.length ?? 0 } };
   } catch (error) {
-    console.error('❌ [Conversations] Error consultando appUrl para phone_number_id:', error);
-    return null;
+    console.error('❌ [Conversations] Error consultando appUrl para phone_number_id:', error, {
+      appUrl,
+      userId,
+      hasAuthHeader: Boolean(authHeader),
+    });
+    return { value: null, meta: { error: error instanceof Error ? error.message : String(error) } };
   }
 }
 
@@ -110,22 +117,25 @@ async function fetchConversationsFromApp({
       },
     );
 
-    if (!response.ok) {
+    const payloadText = await response.text();
+    const payload = payloadText ? JSON.parse(payloadText) : null;
+
+    if (!response.ok || !payload) {
       console.warn(
         '⚠️ [Conversations] No se pudo obtener conversaciones desde appUrl:',
         response.status,
         response.statusText,
+        { appUrl, hasAuthHeader: Boolean(authHeader), payload }
       );
-      return null;
+      return { data: null, meta: { status: response.status, payload } };
     }
 
-    const payload = await response.json();
     const conversations: any[] =
       payload?.data ??
       payload?.conversations ??
       [];
 
-    return conversations.map((conversation: any) => ({
+    const mapped = conversations.map((conversation: any) => ({
       id: conversation.id,
       phoneNumber: conversation.phone_number ?? '',
       status: conversation.status ?? 'unknown',
@@ -136,9 +146,11 @@ async function fetchConversationsFromApp({
       messagesCount: conversation.messages_count ?? undefined,
       lastMessage: undefined,
     }));
+
+    return { data: mapped, meta: { status: response.status, count: mapped.length } };
   } catch (error) {
     console.error('❌ [Conversations] Error consultando conversaciones en appUrl:', error);
-    return null;
+    return { data: null, meta: { error: error instanceof Error ? error.message : String(error) } };
   }
 }
 
@@ -163,12 +175,16 @@ export async function GET(request: Request) {
         null
     );
 
+    let phoneNumberMeta: Record<string, unknown> | undefined;
+
     if (!phoneNumberId) {
-      phoneNumberId = await fetchPhoneNumberIdFromApp({
+      const resolved = await fetchPhoneNumberIdFromApp({
         appUrl,
         authHeader,
         userId,
       });
+      phoneNumberId = resolved?.value ?? null;
+      phoneNumberMeta = resolved?.meta;
     }
 
     const conversationsFromApp = await fetchConversationsFromApp({
@@ -176,8 +192,8 @@ export async function GET(request: Request) {
       authHeader,
     });
 
-    if (Array.isArray(conversationsFromApp)) {
-      const normalized = conversationsFromApp.map((conversation) => ({
+    if (Array.isArray(conversationsFromApp?.data)) {
+      const normalized = conversationsFromApp!.data!.map((conversation) => ({
         ...conversation,
         phoneNumberId: conversation.phoneNumberId ?? phoneNumberId ?? undefined,
       }));
@@ -185,7 +201,7 @@ export async function GET(request: Request) {
 
       return NextResponse.json({
         data: limited,
-        paging: { source: 'app' },
+        paging: { source: 'app', meta: conversationsFromApp?.meta, phoneNumberMeta },
       });
     }
 
@@ -202,6 +218,8 @@ export async function GET(request: Request) {
       appUrl,
       userId,
       authHeaderPresent: Boolean(authHeader),
+      phoneNumberMeta,
+      conversationsMeta: conversationsFromApp?.meta ?? null,
     });
 
     if (!hasKapsoCredentials) {
@@ -215,13 +233,27 @@ export async function GET(request: Request) {
       );
     }
 
+    if (!phoneNumberId) {
+      console.error('❌ [Conversations] No se pudo resolver phoneNumberId');
+      return NextResponse.json(
+        {
+          error: 'phoneNumberId no disponible',
+          detail: {
+            appUrl,
+            userId,
+            authHeaderPresent: Boolean(authHeader),
+            phoneNumberMeta,
+            conversationsMeta: conversationsFromApp?.meta ?? null,
+          },
+        },
+        { status: 503 },
+      );
+    }
+
     const whatsappClient = tryGetWhatsAppClient();
 
-    if (!phoneNumberId || !whatsappClient) {
-      console.warn('⚠️ [Conversations] Falta phoneNumberId o WhatsAppClient', {
-        phoneNumberId,
-        hasWhatsappClient: Boolean(whatsappClient),
-      });
+    if (!whatsappClient) {
+      console.warn('⚠️ [Conversations] WhatsAppClient no disponible');
       return NextResponse.json(
         {
           error: 'phoneNumberId es requerido o WhatsAppClient no disponible',

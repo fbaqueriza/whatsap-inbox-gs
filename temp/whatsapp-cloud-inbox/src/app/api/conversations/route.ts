@@ -23,6 +23,116 @@ function parseDirection(kapso?: ConversationKapsoExtensions): 'inbound' | 'outbo
   return 'inbound';
 }
 
+async function fetchPhoneNumberIdFromApp({
+  appUrl,
+  authHeader,
+  userId,
+}: {
+  appUrl: string | null;
+  authHeader: string | null;
+  userId: string | null;
+}): Promise<string | null> {
+  if (!appUrl || !authHeader || !userId) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`${appUrl.replace(/\/$/, '')}/api/whatsapp/configs`, {
+      method: 'GET',
+      headers: {
+        Authorization: authHeader,
+      },
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      console.warn(
+        '⚠️ [Conversations] No se pudo obtener phone_number_id desde appUrl:',
+        response.status,
+        response.statusText,
+      );
+      return null;
+    }
+
+    const configPayload = await response.json();
+    const configs: any[] =
+      configPayload?.configs ??
+      configPayload?.data ??
+      configPayload?.result ??
+      [];
+
+    const activeConfig =
+      configs.find((config: any) => config?.is_active) ??
+      configs.find((config: any) => config?.isActive) ??
+      configs[0];
+
+    return (
+      activeConfig?.phone_number_id ??
+      activeConfig?.meta_phone_number_id ??
+      activeConfig?.meta_phone_id ??
+      null
+    );
+  } catch (error) {
+    console.error('❌ [Conversations] Error consultando appUrl para phone_number_id:', error);
+    return null;
+  }
+}
+
+async function fetchConversationsFromApp({
+  appUrl,
+  authHeader,
+}: {
+  appUrl: string | null;
+  authHeader: string | null;
+}) {
+  if (!appUrl || !authHeader) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `${appUrl.replace(/\/$/, '')}/api/kapso/chat?action=conversations`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: authHeader,
+        },
+        cache: 'no-store',
+      },
+    );
+
+    if (!response.ok) {
+      console.warn(
+        '⚠️ [Conversations] No se pudo obtener conversaciones desde appUrl:',
+        response.status,
+        response.statusText,
+      );
+      return null;
+    }
+
+    const payload = await response.json();
+    const conversations: any[] =
+      payload?.data ??
+      payload?.conversations ??
+      [];
+
+    return conversations.map((conversation: any) => ({
+      id: conversation.id,
+      phoneNumber: conversation.phone_number ?? '',
+      status: conversation.status ?? 'unknown',
+      lastActiveAt: conversation.last_active_at ?? null,
+      phoneNumberId: conversation.phone_number_id ?? null,
+      metadata: conversation.metadata ?? {},
+      contactName: conversation.contact_name ?? undefined,
+      messagesCount: conversation.messages_count ?? undefined,
+      lastMessage: undefined,
+    }));
+  } catch (error) {
+    console.error('❌ [Conversations] Error consultando conversaciones en appUrl:', error);
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -42,49 +152,30 @@ export async function GET(request: Request) {
       process.env.PHONE_NUMBER_ID ||
       null;
 
-    if (!phoneNumberId && authHeader && appUrl && userId) {
-      try {
-        const response = await fetch(
-          `${appUrl.replace(/\/$/, '')}/api/whatsapp/configs`,
-          {
-            method: 'GET',
-            headers: {
-              Authorization: authHeader,
-            },
-            cache: 'no-store',
-          }
-        );
+    if (!phoneNumberId) {
+      phoneNumberId = await fetchPhoneNumberIdFromApp({
+        appUrl,
+        authHeader,
+        userId,
+      });
+    }
 
-        if (response.ok) {
-          const configPayload = await response.json();
-          const configs: any[] =
-            configPayload?.configs ??
-            configPayload?.data ??
-            configPayload?.result ??
-            [];
+    const conversationsFromApp = await fetchConversationsFromApp({
+      appUrl,
+      authHeader,
+    });
 
-          const activeConfig =
-            configs.find((config: any) => config?.is_active) ??
-            configs.find((config: any) => config?.isActive) ??
-            configs[0];
+    if (conversationsFromApp && conversationsFromApp.length > 0) {
+      const normalized = conversationsFromApp.map((conversation) => ({
+        ...conversation,
+        phoneNumberId: conversation.phoneNumberId ?? phoneNumberId ?? undefined,
+      }));
+      const limited = normalized.slice(0, limit);
 
-          if (activeConfig) {
-            phoneNumberId =
-              activeConfig?.phone_number_id ??
-              activeConfig?.meta_phone_number_id ??
-              activeConfig?.meta_phone_id ??
-              null;
-          }
-        } else {
-          console.warn(
-            '⚠️ [Conversations] No se pudo obtener phone_number_id desde appUrl:',
-            response.status,
-            response.statusText
-          );
-        }
-      } catch (error) {
-        console.error('❌ [Conversations] Error consultando appUrl para phone_number_id:', error);
-      }
+      return NextResponse.json({
+        data: limited,
+        paging: { source: 'app' },
+      });
     }
 
     if (!phoneNumberId) {
@@ -141,7 +232,10 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error('Error fetching conversations:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch conversations' },
+      {
+        error: 'Failed to fetch conversations',
+        detail: error instanceof Error ? error.message : 'Unknown error',
+      },
       { status: 500 }
     );
   }

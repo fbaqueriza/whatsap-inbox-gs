@@ -32,6 +32,26 @@ function parseDirection(kapso?: ConversationKapsoExtensions): 'inbound' | 'outbo
   return 'inbound';
 }
 
+type PhoneNumberResolution = {
+  value: string | null;
+  meta: Record<string, unknown>;
+};
+
+type ConversationsResolution = {
+  data: Array<{
+    id: string;
+    phoneNumber: string;
+    status: string;
+    lastActiveAt: string | null;
+    phoneNumberId: string | null;
+    metadata: Record<string, unknown>;
+    contactName?: string;
+    messagesCount?: number;
+    lastMessage?: unknown;
+  }> | null;
+  meta: Record<string, unknown>;
+};
+
 async function fetchPhoneNumberIdFromApp({
   appUrl,
   authHeader,
@@ -40,9 +60,9 @@ async function fetchPhoneNumberIdFromApp({
   appUrl: string | null;
   authHeader: string | null;
   userId: string | null;
-}): Promise<string | null> {
+}): Promise<PhoneNumberResolution> {
   if (!appUrl || !authHeader || !userId) {
-    return null;
+    return { value: null, meta: { reason: 'missing_params', appUrl, hasAuthHeader: Boolean(authHeader), userId } };
   }
 
   try {
@@ -83,7 +103,15 @@ async function fetchPhoneNumberIdFromApp({
       activeConfig?.meta_phone_id ??
       null;
 
-    return { value: sanitizeString(resolved ?? null), meta: { status: response.status, configs: configs?.length ?? 0 } };
+    return {
+      value: sanitizeString(resolved ?? null),
+      meta: {
+        status: response.status,
+        configs: configs?.length ?? 0,
+        hasActiveConfig: Boolean(activeConfig),
+        resolved,
+      },
+    };
   } catch (error) {
     console.error('❌ [Conversations] Error consultando appUrl para phone_number_id:', error, {
       appUrl,
@@ -100,9 +128,16 @@ async function fetchConversationsFromApp({
 }: {
   appUrl: string | null;
   authHeader: string | null;
-}) {
+}): Promise<ConversationsResolution> {
   if (!appUrl || !authHeader) {
-    return null;
+    return {
+      data: null,
+      meta: {
+        reason: 'missing_params',
+        appUrl,
+        hasAuthHeader: Boolean(authHeader),
+      },
+    };
   }
 
   try {

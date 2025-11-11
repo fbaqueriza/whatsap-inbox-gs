@@ -195,6 +195,15 @@ export async function GET(request: Request) {
       kapsoApiKey.length > 0 &&
       kapsoApiKey.toLowerCase() !== 'dummy';
 
+    console.log('ℹ️ [Conversations] Estado previo a Kapso', {
+      phoneNumberId,
+      hasKapsoCredentials,
+      hasWhatsappClientConfigured: Boolean(process.env.KAPSO_API_KEY),
+      appUrl,
+      userId,
+      authHeaderPresent: Boolean(authHeader),
+    });
+
     if (!hasKapsoCredentials) {
       return NextResponse.json(
         {
@@ -209,6 +218,10 @@ export async function GET(request: Request) {
     const whatsappClient = tryGetWhatsAppClient();
 
     if (!phoneNumberId || !whatsappClient) {
+      console.warn('⚠️ [Conversations] Falta phoneNumberId o WhatsAppClient', {
+        phoneNumberId,
+        hasWhatsappClient: Boolean(whatsappClient),
+      });
       return NextResponse.json(
         {
           error: 'phoneNumberId es requerido o WhatsAppClient no disponible',
@@ -222,8 +235,8 @@ export async function GET(request: Request) {
 
     const response = await whatsappClient.conversations.list({
       phoneNumberId,
-      ...(status && { status: status as 'active' | 'ended' }),
       limit,
+      ...(status && { status: status as 'active' | 'ended' }),
       fields: buildKapsoFields([
         'contact_name',
         'messages_count',

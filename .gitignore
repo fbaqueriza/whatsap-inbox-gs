@@ -87,4 +87,7 @@ jspm_packages/
 .vercel
 .env*.local
 
-temp/
+temp/*
+!temp/
+!temp/whatsapp-cloud-inbox/
+!temp/whatsapp-cloud-inbox/**

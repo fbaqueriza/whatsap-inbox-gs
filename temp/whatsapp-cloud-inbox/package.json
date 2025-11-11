@@ -7,6 +7,10 @@
     "start": "next start",
     "lint": "eslint"
   },
+  "engines": {
+    "node": "18.x",
+    "npm": "9.x"
+  },
   "dependencies": {
     "@kapso/whatsapp-cloud-api": "^0.1.0",
     "@radix-ui/react-avatar": "^1.1.10",

@@ -13,14 +13,7 @@ interface DateSelectorProps {
   onTimeRangesChange?: (times: string[]) => void;
 }
 
-const TIME_RANGES = [
-  { value: '08:00-10:00', label: '8:00 - 10:00 AM', description: 'Mañana temprano' },
-  { value: '10:00-12:00', label: '10:00 - 12:00 AM', description: 'Mañana' },
-  { value: '12:00-14:00', label: '12:00 - 2:00 PM', description: 'Mediodía' },
-  { value: '14:00-16:00', label: '2:00 - 4:00 PM', description: 'Tarde' },
-  { value: '16:00-18:00', label: '4:00 - 6:00 PM', description: 'Tarde tarde' },
-  { value: '18:00-20:00', label: '6:00 - 8:00 PM', description: 'Noche' },
-];
+// TIME_RANGES removido - solo se usa hora personalizada
 
 export default function DateSelector({ 
   value, 
@@ -32,8 +25,6 @@ export default function DateSelector({
   onTimeRangesChange
 }: DateSelectorProps) {
   const [showQuickOptions, setShowQuickOptions] = useState(false);
-  const [showTimeSelector, setShowTimeSelector] = useState(false);
-  const [showCustomTime, setShowCustomTime] = useState(false);
   const [customStartTime, setCustomStartTime] = useState('');
   const [customEndTime, setCustomEndTime] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
@@ -85,21 +76,7 @@ export default function DateSelector({
     return dates;
   };
 
-  const getTimeCategory = (time: string) => {
-    const startHour = parseInt(time.split('-')[0].split(':')[0]);
-    if (startHour < 12) return 'morning';
-    if (startHour < 18) return 'afternoon';
-    return 'evening';
-  };
-
-  const getCategoryColor = (category: string) => {
-    switch (category) {
-      case 'morning': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'afternoon': return 'bg-orange-100 text-orange-800 border-orange-200';
-      case 'evening': return 'bg-purple-100 text-purple-800 border-purple-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
+// Funciones getTimeCategory y getCategoryColor removidas - ya no se usan
 
   const toggleTimeRange = (timeRange: string) => {
     if (!onTimeRangesChange) return;
@@ -165,7 +142,6 @@ export default function DateSelector({
       
       // Solo cerrar si el clic es completamente fuera
       setShowQuickOptions(false);
-      setShowTimeSelector(false);
     };
 
     // 🔧 MEJORA: Usar capture phase para interceptar eventos antes
@@ -181,10 +157,11 @@ export default function DateSelector({
     <div ref={containerRef} className={`relative ${className}`}>
       <label className="block text-sm font-medium text-gray-700 mb-2">
         <Calendar className="inline h-4 w-4 mr-1" />
-        Fecha de entrega deseada
+        Fecha y hora de entrega deseada
       </label>
       
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center">
+        {/* Fecha */}
         <input
           type="date"
           value={value}
@@ -197,27 +174,72 @@ export default function DateSelector({
             e.preventDefault();
             e.stopPropagation();
             setShowQuickOptions(!showQuickOptions);
-            setShowTimeSelector(false); // Close time selector when opening date selector
           }}
           className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          title="Fechas sugeridas"
         >
           <Calendar className="h-4 w-4" />
         </button>
+        
+        {/* Hora - Siempre visible si hay onTimeRangesChange */}
         {onTimeRangesChange && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setShowTimeSelector(!showTimeSelector);
-              setShowQuickOptions(false); // Close date selector when opening time selector
-            }}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <Clock className="h-4 w-4" />
-          </button>
+          <>
+            <span className="text-sm text-gray-500">|</span>
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-gray-500" />
+              <input
+                type="time"
+                value={customStartTime}
+                onChange={(e) => setCustomStartTime(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Inicio"
+                title="Hora de inicio"
+              />
+              <span className="text-sm text-gray-500">a</span>
+              <input
+                type="time"
+                value={customEndTime}
+                onChange={(e) => setCustomEndTime(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Fin"
+                title="Hora de fin"
+              />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  addCustomTimeRange();
+                }}
+                disabled={!customStartTime || !customEndTime}
+                className="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                title="Agregar rango horario"
+              >
+                +
+              </button>
+            </div>
+          </>
         )}
       </div>
+      
+      {/* Rangos horarios seleccionados - Mostrar debajo */}
+      {onTimeRangesChange && timeRanges.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {timeRanges.map((time, index) => (
+            <div key={index} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-md px-2 py-1">
+              <span className="text-sm text-blue-700">{time}</span>
+              <button
+                type="button"
+                onClick={() => toggleTimeRange(time)}
+                className="text-blue-500 hover:text-blue-700 text-xs"
+                title="Eliminar"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Date Quick Options */}
       {showQuickOptions && (
@@ -257,115 +279,7 @@ export default function DateSelector({
         </div>
       )}
 
-      {/* Time Range Selector */}
-      {showTimeSelector && onTimeRangesChange && (
-        <div 
-          className="absolute z-[9999] mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="p-3 space-y-3">
-            <h4 className="text-sm font-medium text-gray-900 mb-2">Rangos horarios</h4>
-            
-            {/* Quick Time Selection */}
-            <div className="grid grid-cols-2 gap-2">
-              {TIME_RANGES.map((timeRange) => {
-                const category = getTimeCategory(timeRange.value);
-                const isSelected = timeRanges.includes(timeRange.value);
-                
-                return (
-                  <button
-                    key={timeRange.value}
-                    type="button"
-                    onClick={() => toggleTimeRange(timeRange.value)}
-                    className={`p-2 rounded-lg text-center transition-colors border min-h-[60px] flex flex-col justify-center ${
-                      isSelected
-                        ? 'bg-blue-500 text-white border-blue-600 shadow-md'
-                        : `${getCategoryColor(category)} hover:border-blue-300`
-                    }`}
-                  >
-                    <div className="text-xs font-medium mb-1">{timeRange.label}</div>
-                    <div className="text-[9px] opacity-75 leading-tight">{timeRange.description}</div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Custom Time Input */}
-            <div className="border-t pt-3">
-              <button
-                type="button"
-                onClick={() => setShowCustomTime(!showCustomTime)}
-                className="text-sm text-blue-600 hover:text-blue-800 underline"
-              >
-                {showCustomTime ? 'Ocultar hora personalizada' : 'Hora personalizada'}
-              </button>
-
-              {showCustomTime && (
-                <div className="mt-3 space-y-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="text-sm font-medium text-gray-700 mb-2">
-                    Agregar rango personalizado:
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="time"
-                      value={customStartTime}
-                      onChange={(e) => setCustomStartTime(e.target.value)}
-                      className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="Hora inicio"
-                    />
-                    <span className="text-sm text-gray-500">a</span>
-                    <input
-                      type="time"
-                      value={customEndTime}
-                      onChange={(e) => setCustomEndTime(e.target.value)}
-                      className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="Hora fin"
-                    />
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        addCustomTimeRange();
-                      }}
-                      disabled={!customStartTime || !customEndTime}
-                      className="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                    >
-                      Agregar
-                    </button>
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    Formato: HH:MM (24 horas)
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Selected Times Display */}
-            {timeRanges.length > 0 && (
-              <div className="border-t pt-3">
-                <div className="text-sm text-gray-600 mb-2">
-                  <strong>Horarios seleccionados:</strong>
-                </div>
-                <div className="space-y-1">
-                  {timeRanges.map((time, index) => (
-                    <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded border">
-                      <span className="text-sm">{time}</span>
-                      <button
-                        type="button"
-                        onClick={() => toggleTimeRange(time)}
-                        className="text-red-500 hover:text-red-700 text-xs"
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Time Range Selector - Ya no se usa, los campos están siempre visibles */}
 
       {providerDeliveryDays && providerDeliveryTime && (
         <p className="mt-1 text-xs text-gray-500">

@@ -50,6 +50,14 @@ export const ORDER_FLOW_CONFIG = {
   // 📱 Mensajes por transición (fácil de personalizar)
   MESSAGES: {
     send_order_details: (order: any, provider: any) => {
+      // Debug: verificar campos de fecha de vencimiento disponibles
+      console.log('🔍 [OrderFlowConfig] Campos de fecha de vencimiento en order:', {
+        due_date: order.due_date,
+        dueDate: order.dueDate,
+        due_date_value: order.due_date_value,
+        orderKeys: Object.keys(order)
+      });
+      
       const currentDate = new Date().toLocaleDateString('es-AR');
       const items = order.items?.map((item: any) => {
         const productName = item.name || item.productName;
@@ -76,14 +84,50 @@ export const ORDER_FLOW_CONFIG = {
         }
       }
 
+      // Formatear fecha de vencimiento (buscar en múltiples campos posibles)
+      let dueDateText = 'No especificada';
+      // Buscar en todos los campos posibles (snake_case y camelCase)
+      const dueDateValue = order.due_date || order.dueDate || order.due_date_value || 
+                          (order as any).dueDate || (order as any)['due_date'];
+      
+      console.log('🔍 [OrderFlowConfig] Buscando fecha de vencimiento:', {
+        due_date: order.due_date,
+        dueDate: order.dueDate,
+        due_date_value: order.due_date_value,
+        foundValue: dueDateValue,
+        type: typeof dueDateValue
+      });
+      
+      if (dueDateValue) {
+        try {
+          const dueDate = new Date(dueDateValue);
+          if (!isNaN(dueDate.getTime())) {
+            dueDateText = dueDate.toLocaleDateString('es-AR');
+            console.log('✅ [OrderFlowConfig] Fecha de vencimiento formateada:', dueDateText);
+          } else {
+            console.warn('⚠️ [OrderFlowConfig] Fecha de vencimiento inválida:', dueDateValue);
+          }
+        } catch (dateError) {
+          console.error('❌ [OrderFlowConfig] Error parseando fecha de vencimiento:', dateError);
+        }
+      } else {
+        console.warn('⚠️ [OrderFlowConfig] No se encontró fecha de vencimiento en el objeto order');
+      }
+
       // Mover las notas al final si existen
       const notesSection = order.notes && order.notes.trim() 
         ? `\n\nNotas: ${order.notes}` 
         : '';
       
+      // Formatear método de pago con fecha de vencimiento entre paréntesis
+      const paymentMethodText = order.payment_method || 'No especificado';
+      const paymentLine = dueDateText !== 'No especificada' 
+        ? `💳 Pago: ${paymentMethodText} (venc. ${dueDateText})`
+        : `💳 Pago: ${paymentMethodText}`;
+      
       return `🆔 Orden: ${order.order_number}
 📅 Entrega: ${deliveryDate}
-💳 Pago: ${order.payment_method || 'No especificado'}
+${paymentLine}
 
 📦 Items:
 ${items}

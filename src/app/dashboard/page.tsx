@@ -211,16 +211,31 @@ function DashboardPageContent({
     desiredDeliveryDate?: Date;
     desiredDeliveryTime?: string[];
     paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
+    dueDate?: Date;
     additionalFiles?: OrderFile[];
   }) => {
     if (!user) return;
     
     try {
-      // Generar número de orden único
-      const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-      const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
-      const orderNumber = `ORD-${timestamp}-${randomSuffix}`;
+      // Generar número de orden único con código del proveedor
+      const { generateOrderNumber } = await import('@/lib/orderNumberGenerator');
+      const selectedProvider = providers.find(p => p.id === orderData.providerId);
+      const providerName = selectedProvider?.name || null;
+      const orderNumber = generateOrderNumber(providerName);
       
+      // Calcular fecha de vencimiento: usar la del modal si está presente, sino calcular desde el plazo del proveedor
+      const calculateDueDate = () => {
+        // Si el usuario especificó una fecha de vencimiento en el modal, usarla
+        if (orderData.dueDate) {
+          return orderData.dueDate;
+        }
+        // Si no, calcular desde el plazo de pago del proveedor
+        const paymentTermDays = selectedProvider?.paymentTermDays || 30; // Por defecto 30 días
+        const dueDate = new Date(); // Fecha de creación de la orden
+        dueDate.setDate(dueDate.getDate() + paymentTermDays);
+        return dueDate;
+      };
+
       const newOrder: Partial<Order> = {
         orderNumber: orderNumber,
         providerId: orderData.providerId,
@@ -229,7 +244,7 @@ function DashboardPageContent({
         totalAmount: orderData.items.reduce((sum, item) => sum + (item.total || 0), 0),
         currency: "ARS",
         orderDate: new Date(),
-        dueDate: orderData.desiredDeliveryDate || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+        dueDate: calculateDueDate(),
         invoiceNumber: "",
         bankInfo: {},
         receiptUrl: "",

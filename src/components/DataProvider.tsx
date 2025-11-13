@@ -92,6 +92,7 @@ function mapProviderFromDb(provider: any): Provider {
     defaultDeliveryDays: provider.default_delivery_days || [],
     defaultDeliveryTime: provider.default_delivery_time || [],
     defaultPaymentMethod: provider.default_payment_method || 'efectivo',
+    paymentTermDays: provider.payment_term_days || provider.paymentTermDays || null, // Plazo de pago en días
     autoOrderFlowEnabled: provider.auto_order_flow_enabled !== undefined ? provider.auto_order_flow_enabled : true, // Por defecto true
     catalogs: provider.catalogs || [],
     createdAt: provider.created_at,
@@ -334,6 +335,17 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       
       // Preparar datos de la orden para el servicio unificado
       // 🔧 FIX: Convertir fechas a ISO string si son objetos Date
+      
+      // ✅ CORRECCIÓN: Verificar que dueDate se está pasando correctamente
+      if (order.dueDate) {
+        console.log('🔍 [DataProvider] dueDate recibido:', {
+          dueDate: order.dueDate,
+          type: typeof order.dueDate,
+          isDate: order.dueDate instanceof Date,
+          value: order.dueDate instanceof Date ? order.dueDate.toISOString() : order.dueDate
+        });
+      }
+      
       const orderData = {
         ...order,
         id: crypto.randomUUID(), // Generar ID único para la orden
@@ -342,7 +354,9 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         totalAmount: order.totalAmount || 0,
         currency: order.currency || 'ARS',
         orderDate: order.orderDate || new Date(),
-        dueDate: order.dueDate || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 días
+        // ✅ CORRECCIÓN: Usar dueDate del order si existe, sino calcular desde el proveedor
+        // No usar fallback genérico de 5 días, ya que se calcula en dashboard/page.tsx
+        dueDate: order.dueDate || undefined,
         desiredDeliveryDate: order.desiredDeliveryDate instanceof Date 
           ? order.desiredDeliveryDate.toISOString() 
           : order.desiredDeliveryDate || null,
@@ -521,6 +535,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         default_delivery_days: provider.defaultDeliveryDays || [],
         default_delivery_time: provider.defaultDeliveryTime || [],
         default_payment_method: provider.defaultPaymentMethod || 'efectivo',
+        payment_term_days: provider.paymentTermDays || 30, // Plazo de pago en días
         auto_order_flow_enabled: provider.autoOrderFlowEnabled !== undefined ? provider.autoOrderFlowEnabled : true,
         catalogs: provider.catalogs || [],
         created_at: provider.createdAt,
@@ -745,6 +760,7 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         default_delivery_days: provider.defaultDeliveryDays || [],
         default_delivery_time: provider.defaultDeliveryTime || [],
         default_payment_method: provider.defaultPaymentMethod || 'efectivo',
+        payment_term_days: provider.paymentTermDays || 30, // Plazo de pago en días
         auto_order_flow_enabled: provider.autoOrderFlowEnabled !== undefined ? provider.autoOrderFlowEnabled : true,
         catalogs: provider.catalogs || [],
         updated_at: new Date(),

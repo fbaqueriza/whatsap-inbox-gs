@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, ShoppingCart, AlertTriangle, Clock, RefreshCw, Upload, FileText, Calendar, CreditCard, Copy, History } from 'lucide-react';
 import { Provider, OrderItem, StockItem, OrderFile, Order } from '../types';
 import DateSelector from './DateSelector';
@@ -15,6 +15,7 @@ interface CreateOrderModalProps {
     desiredDeliveryDate?: Date;
     desiredDeliveryTime?: string[];
     paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque' | 'none';
+    dueDate?: Date;
     additionalFiles?: OrderFile[];
   }) => void;
   providers: Provider[];
@@ -46,6 +47,8 @@ export default function CreateOrderModal({
   const [desiredDeliveryDate, setDesiredDeliveryDate] = useState<string>('');
   const [desiredDeliveryTime, setDesiredDeliveryTime] = useState<string[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'transferencia' | 'tarjeta' | 'cheque' | 'none'>('efectivo');
+  const [dueDate, setDueDate] = useState<string>('');
+  const dueDateManuallySet = useRef<boolean>(false); // Rastrear si el usuario modificó manualmente la fecha
   const [additionalFiles, setAdditionalFiles] = useState<OrderFile[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [showPreviousOrder, setShowPreviousOrder] = useState(true); // ✅ CAMBIO: Por defecto mostrar la orden anterior
@@ -78,6 +81,19 @@ export default function CreateOrderModal({
         // Set default payment method
         if (provider.defaultPaymentMethod) {
           setPaymentMethod(provider.defaultPaymentMethod);
+        }
+        
+        // Calcular fecha de vencimiento por defecto basada en el plazo de pago del proveedor
+        // ✅ CORRECCIÓN: Solo establecer si dueDate está vacío (no sobrescribir si el usuario ya lo cambió)
+        if (!dueDate || !dueDateManuallySet.current) {
+          const paymentTermDays = provider.paymentTermDays || 30;
+          const defaultDueDate = new Date();
+          defaultDueDate.setDate(defaultDueDate.getDate() + paymentTermDays);
+          // ✅ CORRECCIÓN: Usar fecha local para evitar problemas de zona horaria
+          const year = defaultDueDate.getFullYear();
+          const month = String(defaultDueDate.getMonth() + 1).padStart(2, '0');
+          const day = String(defaultDueDate.getDate()).padStart(2, '0');
+          setDueDate(`${year}-${month}-${day}`); // Formato YYYY-MM-DD para input type="date"
         }
         
         // 🔧 CORRECCIÓN: Pre-poblar notas del proveedor
@@ -158,23 +174,36 @@ export default function CreateOrderModal({
           
           // Set default delivery time ranges
           if (Array.isArray(deliveryTime) && deliveryTime.length > 0) {
-            // Convert single time to time range format (e.g., "14:00" -> "14:00-16:00")
-            const defaultTimeRanges = deliveryTime.map(time => {
-              if (time.includes('-')) return time; // Already a range
-              const [hours, minutes] = time.split(':');
-              const startHour = parseInt(hours);
-              const endHour = startHour + 2; // 2-hour range by default
-              return `${time}-${endHour.toString().padStart(2, '0')}:${minutes}`;
-            });
-            setDesiredDeliveryTime(defaultTimeRanges);
+            // ✅ CORRECCIÓN: Si hay exactamente 2 elementos, interpretar como rango inicio-fin
+            if (deliveryTime.length === 2 && deliveryTime[0] && deliveryTime[1]) {
+              // Es un rango: ['10:00', '14:00'] -> '10:00-14:00'
+              const timeRange = `${deliveryTime[0]}-${deliveryTime[1]}`;
+              setDesiredDeliveryTime([timeRange]);
+            } else {
+              // Múltiples horarios individuales: convertir cada uno a rango
+              const defaultTimeRanges = deliveryTime.map(time => {
+                if (time.includes('-')) return time; // Already a range
+                const [hours, minutes] = time.split(':');
+                const startHour = parseInt(hours);
+                const endHour = startHour + 2; // 2-hour range by default
+                return `${time}-${endHour.toString().padStart(2, '0')}:${minutes}`;
+              });
+              setDesiredDeliveryTime(defaultTimeRanges);
+            }
           } else if (typeof deliveryTime === 'string' && deliveryTime) {
             // Single time string
-            const timeString = deliveryTime as string;
-            const [hours, minutes] = timeString.split(':');
-            const startHour = parseInt(hours);
-            const endHour = startHour + 2; // 2-hour range by default
-            const timeRange = `${timeString}-${endHour.toString().padStart(2, '0')}:${minutes}`;
-            setDesiredDeliveryTime([timeRange]);
+            if (deliveryTime.includes('-')) {
+              // Ya es un rango
+              setDesiredDeliveryTime([deliveryTime]);
+            } else {
+              // Convertir tiempo individual a rango
+              const timeString = deliveryTime as string;
+              const [hours, minutes] = timeString.split(':');
+              const startHour = parseInt(hours);
+              const endHour = startHour + 2; // 2-hour range by default
+              const timeRange = `${timeString}-${endHour.toString().padStart(2, '0')}:${minutes}`;
+              setDesiredDeliveryTime([timeRange]);
+            }
           }
         }
       }
@@ -320,6 +349,8 @@ export default function CreateOrderModal({
       setDesiredDeliveryDate('');
       setDesiredDeliveryTime([]);
       setPaymentMethod('efectivo');
+      setDueDate(''); // ✅ CORRECCIÓN: Resetear dueDate cuando se cierra el modal
+      dueDateManuallySet.current = false; // ✅ CORRECCIÓN: Resetear flag de modificación manual
       setAdditionalFiles([]);
       setShowPreviousOrder(true); // ✅ CAMBIO: Reset a true para mostrar por defecto
     }
@@ -403,6 +434,11 @@ export default function CreateOrderModal({
       desiredDeliveryDate: desiredDeliveryDate ? new Date(desiredDeliveryDate) : undefined,
       desiredDeliveryTime: desiredDeliveryTime.length > 0 ? desiredDeliveryTime : undefined,
       paymentMethod: paymentMethod === 'none' ? undefined : paymentMethod,
+      // ✅ CORRECCIÓN: Crear fecha en zona horaria local para evitar que se reste un día
+      dueDate: dueDate ? (() => {
+        const [year, month, day] = dueDate.split('-').map(Number);
+        return new Date(year, month - 1, day); // month es 0-indexed
+      })() : undefined,
       additionalFiles,
     });
     
@@ -534,40 +570,68 @@ export default function CreateOrderModal({
               />
             </div>
 
-            {/* Payment Method */}
+            {/* Payment Method and Due Date in same row */}
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <CreditCard className="inline h-4 w-4 mr-1" />
-                Método de pago
-              </label>
-              <div className="grid grid-cols-5 gap-2">
-                {[
-                  { value: 'efectivo', label: 'Efectivo', icon: '💵' },
-                  { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
-                  { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
-                  { value: 'cheque', label: 'Cheque', icon: '📄' },
-                  { value: 'none', label: 'No especificar', icon: '○' },
-                ].map((method) => (
-                  <button
-                    key={method.value}
-                    type="button"
-                    onClick={() => setPaymentMethod(method.value as any)}
-                    className={`p-2 border rounded-lg text-center transition-colors ${
-                      paymentMethod === method.value
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                        : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
-                    }`}
-                  >
-                    <div className="text-xl mb-1">{method.icon}</div>
-                    <div className="text-xs font-medium leading-tight">{method.label}</div>
-                  </button>
-                ))}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Payment Method - Left side */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <CreditCard className="inline h-4 w-4 mr-1" />
+                    Método de pago
+                  </label>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {[
+                      { value: 'efectivo', label: 'Efectivo', icon: '💵' },
+                      { value: 'transferencia', label: 'Transferencia', icon: '🏦' },
+                      { value: 'tarjeta', label: 'Tarjeta', icon: '💳' },
+                      { value: 'cheque', label: 'Cheque', icon: '📄' },
+                      { value: 'none', label: 'No especificar', icon: '○' },
+                    ].map((method) => (
+                      <button
+                        key={method.value}
+                        type="button"
+                        onClick={() => setPaymentMethod(method.value as any)}
+                        className={`p-1.5 border rounded text-center transition-colors ${
+                          paymentMethod === method.value
+                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
+                        }`}
+                        title={method.label}
+                      >
+                        <div className="text-lg leading-none">{method.icon}</div>
+                        <div className="text-[10px] font-medium leading-tight mt-0.5">{method.label}</div>
+                      </button>
+                    ))}
+                  </div>
+                  {selectedProviderInfo?.defaultPaymentMethod && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Por defecto: {selectedProviderInfo.defaultPaymentMethod}
+                    </p>
+                  )}
+                </div>
+
+                {/* Due Date - Right side */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Calendar className="inline h-4 w-4 mr-1" />
+                    Fecha de vencimiento
+                  </label>
+                  <input
+                    type="date"
+                    value={dueDate}
+                    onChange={(e) => {
+                      setDueDate(e.target.value);
+                      dueDateManuallySet.current = true; // Marcar como modificado manualmente
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {selectedProviderInfo?.paymentTermDays !== undefined && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Plazo por defecto: {selectedProviderInfo.paymentTermDays} días
+                    </p>
+                  )}
+                </div>
               </div>
-              {selectedProviderInfo?.defaultPaymentMethod && (
-                <p className="mt-1 text-xs text-gray-500">
-                  Método por defecto del proveedor: {selectedProviderInfo.defaultPaymentMethod}
-                </p>
-              )}
             </div>
 
             {/* Order Items Text */}

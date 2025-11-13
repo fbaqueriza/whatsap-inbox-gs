@@ -3,10 +3,8 @@
  * Usa configuración para permitir modificaciones fáciles del flujo
  */
 
-// Importar cliente de Supabase del servidor para usar en el webhook
-import { metaWhatsAppService } from './metaWhatsAppService';
 import { PhoneNumberService } from './phoneNumberService';
-import { getNextTransition, getActionMessage } from './orderFlowConfig';
+import { getNextTransition, getActionMessage, ORDER_FLOW_CONFIG } from './orderFlowConfig';
 import { ORDER_STATUS, isValidOrderStatus, normalizeOrderStatus, OrderStatus } from './orderConstants';
 // Importación dinámica de KapsoService para evitar problemas de compilación
 
@@ -96,15 +94,25 @@ export class ExtensibleOrderFlowService {
           .eq('id', order.provider_id)
           .single();
         
+        if (!provider?.phone) {
+          continue;
+        }
+        
+        // Normalizar el teléfono del proveedor para comparar
+        const normalizedProviderPhone = PhoneNumberService.normalizePhoneNumber(provider.phone);
+        
         console.log('🔍 [ExtensibleOrderFlow] Verificando orden:', {
           orderId: order.id,
           orderStatus: order.status,
-          providerPhone: provider?.phone,
+          providerPhone: provider.phone,
+          normalizedProviderPhone: normalizedProviderPhone,
           normalizedPhone: normalizedPhone,
-          match: provider?.phone === normalizedPhone
+          match: normalizedProviderPhone === normalizedPhone
         });
         
-        if (provider?.phone === normalizedPhone) {
+        // Usar comparación normalizada o equivalencia inteligente
+        if (normalizedProviderPhone === normalizedPhone || 
+            PhoneNumberService.areEquivalent(provider.phone, phone)) {
           matchingOrders.push(order);
         }
       }
@@ -167,8 +175,16 @@ export class ExtensibleOrderFlowService {
 
       if (!transition) {
         console.log('⚠️ [ExtensibleOrderFlow] No hay transición configurada para este estado:', normalizedStatus);
+        console.log('🔍 [ExtensibleOrderFlow] Estados disponibles:', Object.keys(ORDER_FLOW_CONFIG.TRANSITIONS));
         return { success: false, message: 'No hay transición configurada para este estado' };
       }
+
+      console.log('✅ [ExtensibleOrderFlow] Transición encontrada:', {
+        from: normalizedStatus,
+        to: transition.next,
+        trigger: transition.trigger,
+        action: transition.action
+      });
 
       const triggerEvaluation = this.shouldTriggerTransition(normalizedStatus, message);
 
@@ -180,6 +196,8 @@ export class ExtensibleOrderFlowService {
         });
         return { success: false, message: triggerEvaluation.reason || 'El mensaje no activa una transición automática para este estado' };
       }
+
+      console.log('✅ [ExtensibleOrderFlow] Transición activada, procediendo a ejecutar...');
 
       const orderForTransition = normalizedStatus === foundOrder.status
         ? foundOrder
@@ -228,6 +246,7 @@ export class ExtensibleOrderFlowService {
       console.log('🔔 [ExtensibleFlow] Esta actualización debería disparar un evento Realtime para los suscriptores');
       
       // 🔧 WORKAROUND: Emitir broadcast manual para notificar a los clientes Realtime
+      // 🔧 CORRECCIÓN CRÍTICA: Incluir user_id en el payload
       try {
         const broadcastResult = await supabase
           .channel('orders-updates')
@@ -236,6 +255,7 @@ export class ExtensibleOrderFlowService {
             event: 'order_updated',
             payload: {
               orderId: order.id,
+              userId: order.user_id, // 🔧 CORRECCIÓN: Incluir user_id
               status: transition.next,
               timestamp: new Date().toISOString(),
               source: 'order_flow_transition'
@@ -443,14 +463,41 @@ export class ExtensibleOrderFlowService {
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
 
-      const { data: provider } = await supabase
+      // Buscar proveedor usando normalización inteligente
+      // Primero intentar búsqueda exacta
+      let provider = null;
+      const { data: exactProvider } = await supabase
         .from('providers')
-        .select('name, contact_name')
+        .select('name, contact_name, phone')
         .eq('phone', phone)
-        .eq('user_id', order.user_id)  // ✅ FILTRAR POR USUARIO
+        .eq('user_id', order.user_id)
         .single();
+      
+      if (exactProvider) {
+        provider = exactProvider;
+      } else {
+        // Si no se encuentra, buscar con variantes y comparar en memoria
+        const { data: allProviders } = await supabase
+          .from('providers')
+          .select('name, contact_name, phone')
+          .eq('user_id', order.user_id)
+          .limit(50);
+        
+        if (allProviders) {
+          provider = allProviders.find(p => 
+            PhoneNumberService.areEquivalent(p.phone, phone)
+          );
+        }
+      }
 
       console.log('👤 [ExtensibleOrderFlow] Proveedor para detalles:', provider);
+
+      // 🔍 Debug: Verificar campos de fecha de vencimiento en el objeto order
+      console.log('🔍 [ExtensibleOrderFlow] Campos de fecha de vencimiento en order:', {
+        due_date: order.due_date,
+        dueDate: order.dueDate,
+        orderKeys: Object.keys(order).filter(k => k.includes('due') || k.includes('date'))
+      });
 
       const message = getActionMessage('send_order_details', order, provider);
       console.log('📝 [ExtensibleOrderFlow] Mensaje a enviar:', message);

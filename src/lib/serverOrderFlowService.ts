@@ -1,5 +1,4 @@
 import { getSupabaseServerClient } from './supabase/serverClient';
-import { metaWhatsAppService } from './metaWhatsAppService';
 import { ORDER_STATUS } from './orderConstants';
 import { ExtensibleOrderFlowService } from './extensibleOrderFlowService';
 import { PhoneNumberService } from './phoneNumberService';
@@ -171,6 +170,23 @@ export class ServerOrderFlowService {
         }
       }
 
+      // 🔧 FIX: Convertir dueDate a string ISO si es un objeto Date
+      let dueDateValue = null;
+      if (order.dueDate) {
+        if (order.dueDate instanceof Date) {
+          dueDateValue = order.dueDate.toISOString();
+        } else if (typeof order.dueDate === 'string') {
+          dueDateValue = order.dueDate;
+        } else {
+          // Intentar convertir si es un formato válido
+          try {
+            dueDateValue = new Date(order.dueDate).toISOString();
+          } catch {
+            dueDateValue = null;
+          }
+        }
+      }
+
       const orderData = {
         id: order.id,
         user_id: userId,
@@ -184,6 +200,7 @@ export class ServerOrderFlowService {
           ? order.desiredDeliveryTime
           : null,
         payment_method: order.paymentMethod || 'efectivo',
+        due_date: dueDateValue, // ✅ AGREGADO: Fecha de vencimiento
         total_amount: order.totalAmount || 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -279,28 +296,13 @@ export class ServerOrderFlowService {
         orderId: order.id
       });
 
-      // 🔧 Obtener razón social del usuario para usar en el header del template
-      let companyName = 'Mi Empresa'; // Valor por defecto
-      try {
-        const { data: userData, error: userError } = await this.supabase
-          .from('users')
-          .select('razon_social, display_name')
-          .eq('id', order.user_id)
-          .single();
-
-        if (!userError && userData) {
-          companyName = userData.razon_social || userData.display_name || 'Mi Empresa';
-          console.log('✅ [ServerOrderFlow] Razón social obtenida:', companyName);
-        } else {
-          console.warn('⚠️ [ServerOrderFlow] No se pudo obtener razón social del usuario, usando valor por defecto');
-        }
-      } catch (error) {
-        console.warn('⚠️ [ServerOrderFlow] Error obteniendo razón social del usuario:', error);
-      }
+      // 🔧 Obtener nombre del proveedor para usar en el header del template
+      const providerName = provider.name || 'Proveedor';
+      const contactName = provider.contact_name || provider.name || 'Contacto';
 
       const templateVariables = {
-        company_name: companyName, // 🔧 CAMBIO: Usar razón social del usuario (nombre de la variable cambiado a company_name)
-        contact_name: provider.contact_name || provider.name || 'Contacto'
+        provider_name: providerName, // 🔧 CORRECCIÓN: Usar nombre del proveedor en el header
+        contact_name: contactName
       };
 
       console.log('📤 [ServerOrderFlow] Variables del template:', templateVariables);
@@ -311,12 +313,12 @@ export class ServerOrderFlowService {
       // (Removido para evitar que Meta ponga templates aprobados en PENDING)
 
       // ✅ ENVIAR TEMPLATE evio_orden usando la API de Kapso
-      // 🔧 CAMBIO: Enviar company_name primero (para header), luego contact_name (para body)
+      // 🔧 CORRECCIÓN: Enviar provider_name primero (para header), luego contact_name (para body)
       const templateResult = await this.sendTemplateMessage(
         phone,
         'evio_orden',
         'es_ES', // ✅ CAMBIO: Español de España para coincidir con la definición del template
-        [templateVariables.contact_name, templateVariables.company_name], // contact_name para body, company_name para header
+        [templateVariables.contact_name, templateVariables.provider_name], // contact_name para body, provider_name para header
         order.user_id
       );
 
@@ -347,8 +349,8 @@ export class ServerOrderFlowService {
             });
 
             // Construir mensaje de texto con el header del template y detalles de la orden
-            // Header del template evio_orden: incluye company_name (razón social del usuario)
-            const headerMessage = `${templateVariables.company_name}\n\nBuen día ${templateVariables.contact_name}! Espero que andes bien!\nPreparé el pedido de esta semana. ¿Me confirmás cuando puedas para pasarte el detalle completo?`;
+            // Header del template evio_orden: incluye provider_name (nombre del proveedor)
+            const headerMessage = `${templateVariables.provider_name}\n\nBuen día ${templateVariables.contact_name}! Espero que andes bien!\nPreparé el pedido de esta semana. ¿Me confirmás cuando puedas para pasarte el detalle completo?`;
             const fullMessage = headerMessage;
 
             console.log('📝 [ServerOrderFlow] Enviando fallback de texto:', fullMessage.substring(0, 100) + '...');
@@ -464,7 +466,7 @@ export class ServerOrderFlowService {
   /**
    * Enviar template de WhatsApp usando la API de Kapso
    */
-  private async sendTemplateMessage(
+  async sendTemplateMessage(
     phone: string, 
     templateName: string, 
     languageCode: string,
@@ -728,17 +730,18 @@ export class ServerOrderFlowService {
                     console.log('🔍 [ServerOrderFlow] Header param_name extraído del texto:', paramName);
                   } else {
                     // Usar nombre por defecto si no podemos extraerlo
-                    paramName = 'company_name'; // 🔧 CAMBIO: Usar company_name como valor por defecto
+                    paramName = 'provider_name'; // 🔧 CORRECCIÓN: Usar provider_name como valor por defecto (nombre del proveedor)
                     console.log('🔍 [ServerOrderFlow] Header usando param_name por defecto:', paramName);
                   }
                 }
                 
                 if (paramName) {
-                  // 🔧 FIX: Para header con company_name, usar parameters[1] (segundo parámetro)
-                  // parameters = [contact_name, company_name]
+                  // 🔧 CORRECCIÓN: Para header con provider_name, usar parameters[1] (segundo parámetro)
+                  // parameters = [contact_name, provider_name]
                   let value: string | undefined;
-                  if (paramName === 'company_name' || paramName === 'provider_name') {
-                    // Soporta tanto company_name como provider_name por compatibilidad
+                  if (paramName === 'provider_name' || paramName === 'company_name') {
+                    // Soporta tanto provider_name como company_name por compatibilidad
+                    // provider_name es el nombre del proveedor (correcto)
                     value = parameters.length > 1 ? parameters[1] : (parameters.length > 0 ? parameters[0] : undefined);
                   } else {
                     value = parameters.length > 0 ? parameters[0] : undefined;

@@ -77,7 +77,22 @@ export class KapsoService {
       throw new Error('KapsoService solo puede usarse en el servidor');
     }
     
-    this.baseUrl = process.env.KAPSO_API_URL || 'https://app.kapso.ai/api/v1';
+    // ✅ CORRECCIÓN: Validar y corregir URL de Kapso
+    const envUrl = process.env.KAPSO_API_URL?.trim();
+    const defaultUrl = 'https://app.kapso.ai/api/v1';
+    
+    // Si la URL está mal configurada o incompleta, usar la por defecto
+    if (envUrl && envUrl.includes('app.kapso.ai')) {
+      this.baseUrl = envUrl.endsWith('/api/v1') ? envUrl : `${envUrl.replace(/\/$/, '')}/api/v1`;
+    } else if (envUrl && !envUrl.includes('app.kap')) {
+      // Si tiene una URL válida pero no es de Kapso, usarla
+      this.baseUrl = envUrl;
+    } else {
+      // Si está mal configurada (como 'app.kap'), usar la por defecto
+      console.warn('⚠️ [KapsoService] KAPSO_API_URL mal configurada, usando URL por defecto');
+      this.baseUrl = defaultUrl;
+    }
+    
     this.apiKey = (process.env.KAPSO_API_KEY || '').trim();
     
     if (!this.apiKey) {

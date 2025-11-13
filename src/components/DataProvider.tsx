@@ -328,10 +328,16 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
   const addOrder = useCallback(async (order: Partial<Order>, user_id: string) => {
     try {
       
-      // Generar número de orden único
-      const timestamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-      const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
-      const orderNumber = `ORD-${timestamp}-${randomSuffix}`;
+      // ✅ CORRECCIÓN: Usar orderNumber del order si viene del dashboard (ya tiene código del proveedor)
+      // Si no viene, generar uno básico (esto no debería pasar ya que dashboard siempre lo genera)
+      let orderNumber = order.orderNumber;
+      if (!orderNumber) {
+        // Fallback: generar sin proveedor solo si no viene del dashboard
+        // Esto no debería pasar normalmente, pero por seguridad
+        const { generateOrderNumber } = await import('@/lib/orderNumberGenerator');
+        orderNumber = generateOrderNumber();
+        console.warn('⚠️ [DataProvider] orderNumber no venía del order, generado fallback:', orderNumber);
+      }
       
       // Preparar datos de la orden para el servicio unificado
       // 🔧 FIX: Convertir fechas a ISO string si son objetos Date

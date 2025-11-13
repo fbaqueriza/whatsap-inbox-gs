@@ -135,11 +135,13 @@ OrderRow.displayName = 'OrderRow';
 interface InvoiceManagementSystemProps {
   onEdit?: (orderId: string) => void;
   onUploadReceipt?: (orderId: string, file: File) => void;
+  onDelete?: (orderId: string) => void;
 }
 
 export default function InvoiceManagementSystem({ 
   onEdit, 
-  onUploadReceipt 
+  onUploadReceipt,
+  onDelete
 }: InvoiceManagementSystemProps = {}) {
   const { orders, providers, updateOrder } = useData();
   const { user } = useSupabaseAuth();
@@ -1034,6 +1036,17 @@ export default function InvoiceManagementSystem({
                alert('Error al actualizar la orden');
              }
            }}
+           onDelete={onDelete ? async (orderId: string) => {
+             try {
+               await onDelete(orderId);
+               setSelectedOrder(null);
+               setIsEditModalOpen(false);
+               setLastUpdate(new Date());
+             } catch (error) {
+               console.error('Error eliminando orden:', error);
+               alert('Error al eliminar la orden');
+             }
+           } : undefined}
          />
        )}
 

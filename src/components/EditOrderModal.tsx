@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, ShoppingCart, Upload, FileText, Calendar, CreditCard, Clock, ChevronDown, CheckCircle } from 'lucide-react';
+import { X, ShoppingCart, Upload, FileText, Calendar, CreditCard, Clock, ChevronDown, CheckCircle, Trash2, User } from 'lucide-react';
 import { Order, OrderItem, Provider, OrderFile } from '../types';
 import DeliveryDaysSelector from './DeliveryDaysSelector';
 import DateSelector from './DateSelector';
@@ -17,8 +17,10 @@ interface EditOrderModalProps {
     additionalFiles?: OrderFile[];
     notes?: string;
     status?: string;
+    providerId?: string;
   }) => void;
   onCancel?: (orderId: string) => void;
+  onDelete?: (orderId: string) => void;
 }
 
 export default function EditOrderModal({
@@ -28,6 +30,7 @@ export default function EditOrderModal({
   providers,
   onSave,
   onCancel,
+  onDelete,
 }: EditOrderModalProps) {
   const [desiredDeliveryDate, setDesiredDeliveryDate] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'transferencia' | 'tarjeta' | 'cheque'>('efectivo');
@@ -36,6 +39,7 @@ export default function EditOrderModal({
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [showItems, setShowItems] = useState(false);
   const [orderStatus, setOrderStatus] = useState<string>('');
+  const [selectedProviderId, setSelectedProviderId] = useState<string>('');
 
   // Initialize form when order changes
   useEffect(() => {
@@ -45,6 +49,7 @@ export default function EditOrderModal({
       setAdditionalFiles(order.additionalFiles || []);
       setNotes(order.notes || '');
       setOrderStatus(order.status || 'standby');
+      setSelectedProviderId(order.providerId || '');
     }
   }, [order]);
 
@@ -92,6 +97,7 @@ export default function EditOrderModal({
       additionalFiles,
       notes,
       status: orderStatus,
+      providerId: selectedProviderId !== order.providerId ? selectedProviderId : undefined,
     });
     
     onClose();
@@ -106,9 +112,19 @@ export default function EditOrderModal({
     }
   };
 
+  const handleDelete = () => {
+    if (!order || !onDelete) return;
+    
+    if (confirm('¿Estás seguro de que quieres eliminar esta orden? Esta acción no se puede deshacer.')) {
+      onDelete(order.id);
+      onClose();
+    }
+  };
+
   const getProvider = () => {
     if (!order) return null;
-    return providers.find(p => p.id === order.providerId);
+    const providerId = selectedProviderId || order.providerId;
+    return providers.find(p => p.id === providerId);
   };
 
   const provider = getProvider();
@@ -136,6 +152,25 @@ export default function EditOrderModal({
         {/* Content */}
         <div className="px-6 py-4">
           <div className="space-y-6">
+            {/* Provider Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <User className="inline h-4 w-4 mr-1" />
+                Proveedor
+              </label>
+              <select
+                value={selectedProviderId}
+                onChange={(e) => setSelectedProviderId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.name} - {provider.contactName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Order Info */}
             <div className="bg-gray-50 rounded-lg p-4">
               <h3 className="text-sm font-medium text-gray-900 mb-2">Información del Pedido</h3>
@@ -327,12 +362,21 @@ export default function EditOrderModal({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 flex justify-between">
-          <div>
+        <div className="px-6 py-4 border-t border-gray-200 flex justify-between items-center">
+          <div className="flex space-x-3">
+            {onDelete && (
+              <button
+                onClick={handleDelete}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Eliminar orden
+              </button>
+            )}
             {onCancel && (
               <button
                 onClick={handleCancel}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
               >
                 <X className="h-4 w-4 mr-1" />
                 Cancelar pedido

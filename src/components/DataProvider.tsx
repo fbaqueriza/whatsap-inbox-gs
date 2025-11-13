@@ -330,13 +330,47 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
       
       // ✅ CORRECCIÓN: Usar orderNumber del order si viene del dashboard (ya tiene código del proveedor)
       // Si no viene, generar uno básico (esto no debería pasar ya que dashboard siempre lo genera)
+      console.log('🔍 [DataProvider] Order recibido:', {
+        hasOrderNumber: !!order.orderNumber,
+        orderNumber: order.orderNumber,
+        providerId: order.providerId,
+        orderKeys: Object.keys(order)
+      });
+      
       let orderNumber = order.orderNumber;
       if (!orderNumber) {
-        // Fallback: generar sin proveedor solo si no viene del dashboard
-        // Esto no debería pasar normalmente, pero por seguridad
-        const { generateOrderNumber } = await import('@/lib/orderNumberGenerator');
-        orderNumber = generateOrderNumber();
-        console.warn('⚠️ [DataProvider] orderNumber no venía del order, generado fallback:', orderNumber);
+        // Si no viene orderNumber pero hay providerId, intentar generar con proveedor
+        if (order.providerId) {
+          console.log('⚠️ [DataProvider] orderNumber no venía, pero hay providerId, generando con proveedor...');
+          // Usar el cliente de Supabase del lado del cliente (no service role)
+          const { supabase } = await import('@/lib/supabase/client');
+          try {
+            const { data: provider } = await supabase
+              .from('providers')
+              .select('name')
+              .eq('id', order.providerId)
+              .single();
+            
+            if (provider?.name) {
+              const { generateOrderNumber } = await import('@/lib/orderNumberGenerator');
+              orderNumber = generateOrderNumber(provider.name);
+              console.log('✅ [DataProvider] orderNumber generado con proveedor:', orderNumber);
+            } else {
+              throw new Error('Proveedor no encontrado');
+            }
+          } catch (error) {
+            console.error('❌ [DataProvider] Error obteniendo proveedor, usando fallback:', error);
+            const { generateOrderNumber } = await import('@/lib/orderNumberGenerator');
+            orderNumber = generateOrderNumber();
+          }
+        } else {
+          // Fallback: generar sin proveedor
+          const { generateOrderNumber } = await import('@/lib/orderNumberGenerator');
+          orderNumber = generateOrderNumber();
+          console.warn('⚠️ [DataProvider] orderNumber no venía del order, generado fallback:', orderNumber);
+        }
+      } else {
+        console.log('✅ [DataProvider] Usando orderNumber del dashboard:', orderNumber);
       }
       
       // Preparar datos de la orden para el servicio unificado
@@ -438,8 +472,9 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
   const updateOrder = useCallback(async (order: Order) => {
     try {
       // 🔧 SOLUCIÓN PERMANENTE: Mapear campos a snake_case usando columnas nativas
-      const snakeCaseOrder = {
-        provider_id: (order as any).providerId,
+      // ✅ CORRECCIÓN: Solo incluir columnas que existen en la tabla orders
+      const snakeCaseOrder: any = {
+        provider_id: order.providerId || (order as any).providerId,
         user_id: order.user_id,
         items: order.items,
         status: order.status,
@@ -450,17 +485,22 @@ export const DataProvider: React.FC<{ userEmail?: string; userId?: string; child
         invoice_number: (order as any).invoiceNumber,
         bank_info: (order as any).bankInfo,
         receipt_url: (order as any).receiptUrl,
-        invoice_file_url: order.invoiceFileUrl || order.receiptUrl || null,
-        payment_receipt_url: order.paymentReceiptUrl || null,
+        // ✅ CORRECCIÓN: No incluir invoice_file_url si no existe en la BD
+        // invoice_file_url: order.invoiceFileUrl || order.receiptUrl || null,
+        // payment_receipt_url: order.paymentReceiptUrl || null,
         notes: order.notes,
         // 🔧 NUEVAS COLUMNAS NATIVAS para campos del modal
         desired_delivery_date: order.desiredDeliveryDate ? order.desiredDeliveryDate.toISOString() : null,
         desired_delivery_time: order.desiredDeliveryTime && order.desiredDeliveryTime.length > 0 ? order.desiredDeliveryTime : null,
         payment_method: order.paymentMethod || 'efectivo',
         additional_files: order.additionalFiles && order.additionalFiles.length > 0 ? order.additionalFiles : null,
-        created_at: (order as any).createdAt,
         updated_at: new Date().toISOString(), // 🔧 MEJORA: Actualizar timestamp
       };
+      
+      // Solo incluir created_at si existe
+      if ((order as any).createdAt) {
+        snakeCaseOrder.created_at = (order as any).createdAt;
+      }
       const { error } = await supabase.from('orders').update(snakeCaseOrder).eq('id', order.id);
       if (error) {
         console.error('Error updating order:', error);

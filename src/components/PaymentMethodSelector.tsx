@@ -38,31 +38,27 @@ const PAYMENT_METHODS = [
 export default function PaymentMethodSelector({ value, onChange, className = '' }: PaymentMethodSelectorProps) {
   return (
     <div className={className}>
-      <label className="block text-sm font-medium text-gray-700 mb-2">
-        <CreditCard className="inline h-4 w-4 mr-1" />
-        Método de pago
-      </label>
-             <div className="grid grid-cols-2 gap-2">
-         {PAYMENT_METHODS.map((method) => {
-           const Icon = method.icon;
-           return (
-             <button
-               key={method.value}
-               type="button"
-               onClick={() => onChange(method.value)}
-                               className={`p-2 border rounded-lg text-center transition-colors min-h-[70px] flex flex-col justify-center ${
-                  value === method.value
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
-                }`}
-              >
-                <Icon className="h-4 w-4 mx-auto mb-1" />
-                <div className="text-xs font-medium mb-1">{method.label}</div>
-                <div className="text-[9px] text-gray-500 leading-tight">{method.description}</div>
-             </button>
-           );
-         })}
-       </div>
+      <div className="grid grid-cols-4 gap-1.5">
+        {PAYMENT_METHODS.map((method) => {
+          const Icon = method.icon;
+          return (
+            <button
+              key={method.value}
+              type="button"
+              onClick={() => onChange(method.value)}
+              className={`p-1.5 border rounded-md text-center transition-colors ${
+                value === method.value
+                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                  : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
+              }`}
+              title={method.description}
+            >
+              <Icon className="h-3.5 w-3.5 mx-auto mb-0.5" />
+              <div className="text-[10px] font-medium leading-tight">{method.label}</div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 } 

@@ -43,6 +43,7 @@ export default function ProviderConfigModal({
     defaultDeliveryDays: [] as string[],
     defaultDeliveryTime: [] as string[],
     defaultPaymentMethod: 'efectivo' as 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque',
+    paymentTermDays: 30, // Plazo de pago en días (por defecto: 30)
     autoOrderFlowEnabled: true, // Por defecto activado
   });
 
@@ -110,6 +111,7 @@ export default function ProviderConfigModal({
         defaultDeliveryDays: provider.defaultDeliveryDays || [],
         defaultDeliveryTime: Array.isArray(provider.defaultDeliveryTime) ? provider.defaultDeliveryTime : (provider.defaultDeliveryTime ? [provider.defaultDeliveryTime] : []) as string[],
         defaultPaymentMethod: provider.defaultPaymentMethod || 'efectivo',
+        paymentTermDays: provider.paymentTermDays || 30, // Plazo de pago en días
         autoOrderFlowEnabled: provider.autoOrderFlowEnabled !== undefined ? provider.autoOrderFlowEnabled : true,
       });
       
@@ -138,6 +140,7 @@ export default function ProviderConfigModal({
         defaultDeliveryDays: [],
         defaultDeliveryTime: [] as string[],
         defaultPaymentMethod: 'efectivo',
+        paymentTermDays: 30, // Plazo de pago por defecto: 30 días
         autoOrderFlowEnabled: true,
       });
     }
@@ -262,6 +265,7 @@ export default function ProviderConfigModal({
         defaultDeliveryDays: formData.defaultDeliveryDays,
         defaultDeliveryTime: formData.defaultDeliveryTime as string[],
         defaultPaymentMethod: formData.defaultPaymentMethod,
+        paymentTermDays: formData.paymentTermDays,
         autoOrderFlowEnabled: formData.autoOrderFlowEnabled,
         updatedAt: new Date(),
       };
@@ -512,72 +516,82 @@ export default function ProviderConfigModal({
               Configuración de Entrega y Pago
             </h3>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Días de entrega por defecto
-                </label>
-                <WeekDaySelector
-                  value={formData.defaultDeliveryDays}
-                  onChange={(days) => handleInputChange('defaultDeliveryDays', days)}
-                  className="w-full"
-                />
-              </div>
+            <div className="space-y-3">
+              {/* Entrega: Días y Horario en la misma línea */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Días de entrega
+                  </label>
+                  <WeekDaySelector
+                    value={formData.defaultDeliveryDays}
+                    onChange={(days) => handleInputChange('defaultDeliveryDays', days)}
+                    className="w-full"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Rango de horario de entrega por defecto
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                      Hora inicio
-                    </label>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Horario de entrega
+                  </label>
+                  <div className="flex items-center gap-2">
                     <input
                       type="time"
                       value={formData.defaultDeliveryTime[0] || ''}
                       onChange={(e) => {
                         const startTime = e.target.value;
                         const endTime = formData.defaultDeliveryTime[1] || '';
-                        // Mantener siempre un array de 2 elementos para el rango
                         handleInputChange('defaultDeliveryTime', [startTime, endTime]);
                       }}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="flex-1 px-2.5 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                       placeholder="09:00"
                     />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                      Hora fin
-                    </label>
+                    <span className="text-gray-500 text-sm">-</span>
                     <input
                       type="time"
                       value={formData.defaultDeliveryTime[1] || ''}
                       onChange={(e) => {
                         const endTime = e.target.value;
                         const startTime = formData.defaultDeliveryTime[0] || '';
-                        // Mantener siempre un array de 2 elementos para el rango
                         handleInputChange('defaultDeliveryTime', [startTime, endTime]);
                       }}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="flex-1 px-2.5 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                       placeholder="18:00"
                     />
                   </div>
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Define el rango horario en que el proveedor realiza entregas (formato 24 horas)
-                </p>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Método de pago por defecto
-                </label>
-                <PaymentMethodSelector
-                  value={formData.defaultPaymentMethod}
-                  onChange={(method) => handleInputChange('defaultPaymentMethod', method)}
-                  className="w-full"
-                />
+              {/* Pago: Método y Plazo en la misma línea */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Método de pago
+                  </label>
+                  <PaymentMethodSelector
+                    value={formData.defaultPaymentMethod}
+                    onChange={(method) => handleInputChange('defaultPaymentMethod', method)}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Plazo de pago (días)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="365"
+                    value={formData.paymentTermDays}
+                    onChange={(e) => handleInputChange('paymentTermDays', parseInt(e.target.value) || 0)}
+                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="30"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Días hasta vencimiento (0 = inmediato)
+                  </p>
+                </div>
               </div>
 
               <div>

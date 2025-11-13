@@ -52,71 +52,49 @@ export default function WeekDaySelector({ value, onChange, className = '' }: Wee
 
   return (
     <div className={className}>
-      <label className="block text-sm font-medium text-gray-700 mb-2">
-        <Calendar className="inline h-4 w-4 mr-1" />
-        Días de entrega
-      </label>
-      
-      <div className="space-y-3">
-        {/* Quick Selection Buttons */}
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={selectWeekdays}
-            className="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200"
-          >
-            Lunes a Viernes
-          </button>
-          <button
-            type="button"
-            onClick={selectAll}
-            className="px-3 py-1 text-xs bg-green-100 text-green-700 rounded-md hover:bg-green-200"
-          >
-            Todos los días
-          </button>
-          <button
-            type="button"
-            onClick={clearAll}
-            className="px-3 py-1 text-xs bg-red-100 text-red-700 rounded-md hover:bg-red-200"
-          >
-            Limpiar
-          </button>
-        </div>
-
-        {/* Day Selection Grid */}
-        <div className="grid grid-cols-1 gap-2">
+      <div className="space-y-2">
+        {/* Day Selection - Compact horizontal layout */}
+        <div className="flex flex-wrap gap-1.5">
           {DAYS_OF_WEEK.map((day) => (
             <button
               key={day.value}
               type="button"
               onClick={() => toggleDay(day.value)}
-              className={`p-3 rounded-lg text-left transition-colors min-h-[50px] flex items-center ${
+              className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
                 value.includes(day.value)
-                  ? 'bg-blue-500 text-white shadow-md'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  ? 'bg-blue-500 text-white shadow-sm'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300'
               }`}
               title={day.label}
             >
-              <div className="flex-1">
-                <div className="text-sm font-bold">{day.short}</div>
-                <div className="text-xs opacity-75">{day.label}</div>
-              </div>
-              <div className={`w-4 h-4 rounded-full border-2 ${
-                value.includes(day.value)
-                  ? 'bg-white border-white'
-                  : 'border-gray-400'
-              }`}>
-                {value.includes(day.value) && (
-                  <div className="w-2 h-2 bg-blue-500 rounded-full m-0.5"></div>
-                )}
-              </div>
+              {day.short}
             </button>
           ))}
         </div>
 
-        {/* Selected Days Summary */}
-        <div className="text-sm text-gray-600">
-          <strong>Días seleccionados:</strong> {getSelectedDaysText()}
+        {/* Quick Selection Buttons - Compact */}
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={selectWeekdays}
+            className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded border border-blue-200 hover:bg-blue-100"
+          >
+            L-V
+          </button>
+          <button
+            type="button"
+            onClick={selectAll}
+            className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded border border-green-200 hover:bg-green-100"
+          >
+            Todos
+          </button>
+          <button
+            type="button"
+            onClick={clearAll}
+            className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded border border-red-200 hover:bg-red-100"
+          >
+            Limpiar
+          </button>
         </div>
       </div>
     </div>

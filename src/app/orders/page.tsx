@@ -88,13 +88,16 @@ export default function OrdersPageWrapper() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    // Solo loggear cuando cambian los valores primitivos, no el objeto completo
+    const userId = user?.id;
+    const email = user?.email;
     console.log('🧪 [OrdersPageWrapper] Estado auth:', {
       authLoading,
       hasUser: !!user,
-      userId: user?.id,
-      email: user?.email,
+      userId,
+      email,
     });
-  }, [authLoading, user]);
+  }, [authLoading, user?.id, user?.email]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -147,7 +150,7 @@ export default function OrdersPageWrapper() {
 type OrdersPageProps = { user: any };
 
 function OrdersPage({ user }: OrdersPageProps) {
-  const { orders, providers, stockItems, addOrder, updateOrder, fetchAll } = useData();
+  const { orders, providers, stockItems, addOrder, updateOrder, deleteOrder, fetchAll } = useData();
   const [localOrders, setLocalOrders] = useState<Order[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [suggestedOrder, setSuggestedOrder] = useState<any>(null);
@@ -321,17 +324,50 @@ function OrdersPage({ user }: OrdersPageProps) {
     setIsEditModalOpen(true);
   };
 
-  const handleSaveOrderEdit = async (orderId: string, updates: any) => {
+  const handleSaveOrderEdit = async (orderId: string, updates: {
+    desiredDeliveryDate?: Date;
+    paymentMethod?: 'efectivo' | 'transferencia' | 'tarjeta' | 'cheque';
+    additionalFiles?: OrderFile[];
+    notes?: string;
+    status?: string;
+    providerId?: string;
+  }) => {
     try {
       const order = localOrders.find(o => o.id === orderId);
       if (!order) return;
       
-      const updatedOrder = { ...order, ...updates, updatedAt: new Date() };
+      const updatedOrder: Order = {
+        ...order,
+        desiredDeliveryDate: updates.desiredDeliveryDate,
+        paymentMethod: updates.paymentMethod,
+        additionalFiles: updates.additionalFiles,
+        notes: updates.notes,
+        status: (updates.status || order.status) as Order['status'],
+        providerId: updates.providerId || order.providerId,
+        updatedAt: new Date(),
+      };
+      
       await updateOrder(updatedOrder);
       setIsEditModalOpen(false);
       setEditingOrder(null);
+      await fetchAll(); // Refrescar lista de órdenes
     } catch (error) {
       console.error('Error actualizando pedido:', error);
+      alert('Error al guardar los cambios. Intenta nuevamente.');
+    }
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    try {
+      if (!user) return;
+      await deleteOrder(orderId, user.id);
+      setIsEditModalOpen(false);
+      setEditingOrder(null);
+      await fetchAll(); // Refrescar lista de órdenes
+      console.log('✅ Orden eliminada exitosamente');
+    } catch (error) {
+      console.error('Error eliminando orden:', error);
+      alert('Error al eliminar la orden. Intenta nuevamente.');
     }
   };
 
@@ -348,9 +384,13 @@ function OrdersPage({ user }: OrdersPageProps) {
     }
   };
 
-  // 🔧 NUEVO: Manejador para abrir chat con proveedor
-  const handleOrderClick = (order: Order) => {
-    window.location.href = '/chat';
+  // 🔧 NUEVO: Manejador para abrir modal de edición
+  const handleOrderClick = (orderId: string) => {
+    const order = localOrders.find(o => o.id === orderId);
+    if (order) {
+      setEditingOrder(order);
+      setIsEditModalOpen(true);
+    }
   };
 
 
@@ -439,6 +479,7 @@ function OrdersPage({ user }: OrdersPageProps) {
         <div className="mt-8">
           <InvoiceManagementSystem 
             onEdit={handleOrderClick}
+            onDelete={handleDeleteOrder}
             onUploadReceipt={(orderId, file) => console.log('Upload receipt:', orderId, file)}
           />
         </div>
@@ -466,6 +507,7 @@ function OrdersPage({ user }: OrdersPageProps) {
           }}
           onSave={handleSaveOrderEdit}
           onCancel={handleCancelOrder}
+          onDelete={handleDeleteOrder}
           order={editingOrder}
           providers={providers}
         />
